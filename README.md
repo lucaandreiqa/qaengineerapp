@@ -5,7 +5,7 @@ workflow. Give it a URL and it crawls the site, runs the checks you pick, and pr
 plus JUnit XML. It can push results to Jira, Slack, Teams, TestRail, Xray, Zephyr Scale and AWS S3, and
 the same engine runs headless in CI.
 
-`run_app.bat` (or `python -m qa_app`) opens the app in your browser at http://127.0.0.1:8765:
+`run_app.bat` on Windows, `run_app.command` on macOS (or `python -m qa_app`) opens the app in your browser at http://127.0.0.1:8765:
 
 | Screen | What it does |
 |---|---|
@@ -14,7 +14,7 @@ the same engine runs headless in CI.
 | **History** ⌘3 | Issues per run per site, past runs, open report or folder, publish to integrations |
 | **Integrations** ⌘4 | Every service, plus the Testing board and Claude settings. Test connection, then Save |
 
-The original PySide window is still there: `run_classic.bat` or `python -m qa_app --classic`.
+The original PySide window is still there: `run_classic.bat` / `run_classic.command` or `python -m qa_app --classic`.
 
 ## Checks
 
@@ -42,6 +42,24 @@ Or manually: `python -m venv .venv`, `.venv\Scripts\pip install -r requirements.
 
 **Already set up?** Run `setup.bat` once more (or `.venv\Scripts\pip install -r requirements.txt`) to add the
 new packages: FastAPI, uvicorn and Jinja2.
+
+## Setup (macOS)
+
+Needs Python 3.10 or newer (`brew install python@3.12`, or the installer from python.org). Node.js is optional,
+for Lighthouse and ticket specs (`brew install node`).
+
+```bash
+./setup.command        # one-time: venv + packages + Chromium
+./run_app.command      # start the app in your browser (close the Terminal window to stop)
+./run_classic.command  # the original desktop window
+./run_tests.command    # workflow tests (pytest)
+```
+
+You can also double-click them in Finder. If macOS says it can't verify the file, right-click it, choose **Open**,
+then **Open** again (only needed the first time). If a script won't start, run `chmod +x *.command` in the folder.
+
+Or manually: `python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`,
+`.venv/bin/python -m playwright install chromium`, `.venv/bin/python -m qa_app`.
 
 ## Testing board (ticket workflow)
 
@@ -72,7 +90,7 @@ safely. To use your real column, set up **Jira** (and **TestRail**) on the Integ
   `test.info().annotations.push({ type: 'qa-result', description: 'blocked: reason' })`.
 - **SSO**: when no session is saved, gate 2 opens a browser on the environment. Sign in, press *I've signed in*, and the session is reused.
 
-Board data lives in `%USERPROFILE%\.qa_app\workflow\`. Demo and live tickets are kept apart, and demo files never go into your workspace.
+Board data lives in `%USERPROFILE%\.qa_app\workflow\` (`~/.qa_app/workflow/` on macOS). Demo and live tickets are kept apart, and demo files never go into your workspace.
 
 ## Desktop window (classic)
 
@@ -80,7 +98,7 @@ Board data lives in `%USERPROFILE%\.qa_app\workflow\`. Demo and live tickets are
 - **History**: every past run. Open its report or folder, or publish it to integrations after the fact.
 - **Integrations**: configure each service, click *Test connection*, then Save.
 
-Data lives in `%USERPROFILE%\.qa_app\` (`runs/`, `baselines/`, `settings.json`), shared by the web UI, the classic window and the CLI.
+Data lives in `%USERPROFILE%\.qa_app\` (`~/.qa_app/` on macOS: `runs/`, `baselines/`, `settings.json`), shared by the web UI, the classic window and the CLI.
 To accept intended UI changes, tick *Accept current screenshots as new baselines* and run again.
 
 ## Integrations

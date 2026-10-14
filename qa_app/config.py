@@ -1,6 +1,6 @@
 """App settings and data directories.
 
-Settings live in %USERPROFILE%/.qa_app/settings.json. Any value can be overridden by an
+Settings live in ~/.qa_app/settings.json (%USERPROFILE%\.qa_app on Windows). Any value can be overridden by an
 environment variable (QA_APP_<SECTION>_<KEY>, e.g. QA_APP_JIRA_API_TOKEN), which is how CI
 pipelines should pass secrets instead of storing them on disk.
 """
