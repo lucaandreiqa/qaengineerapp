@@ -41,7 +41,17 @@ def web(host: str, port: int, open_browser: bool) -> int:
     if open_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
     print(f"QA Engineer App running at {url}  (Ctrl+C to stop)")
-    uvicorn.run("qa_app.web.server:app", host=host, port=port, log_level="warning")
+    from .web import server as web_server
+
+    # timeout_graceful_shutdown: never wait more than 3 s for open connections after Ctrl+C.
+    server = uvicorn.Server(uvicorn.Config(web_server.app, host=host, port=port, log_level="warning",
+                                           timeout_graceful_shutdown=3))
+    web_server._server = server  # lets the live-update stream end itself on Ctrl+C
+    try:
+        server.run()
+    except KeyboardInterrupt:  # uvicorn re-raises Ctrl+C after a clean shutdown
+        pass
+    print("QA Engineer App stopped.")
     return 0
 
 
