@@ -64,6 +64,32 @@ const LANES = [
   { name: 'Comment & move Jira ticket', desc: 'Posts the QA summary comment, then moves the ticket. Each one is approved on its own.', gate: 'Gate 3 · comment, then transition', empty: 'Nothing to report' },
   { name: 'Update TestRail tests', desc: 'Drafts cases from the passing items. Pushes only when you say so.', gate: 'Gate 4 · draft review, then push', empty: 'TestRail is up to date' },
 ];
+/* ------------------------------------------------------------------ Jira look: issue types, priorities, status lozenges */
+// Jira's own colours: Story green, Bug red, Task blue, Epic purple; priority arrows red → green; status lozenges by category.
+const JIRA_TYPE = [
+  [/bug|defect|incident/i, 'bug', '<circle cx="8" cy="8" r="3" fill="#fff"></circle>'],
+  [/epic/i, 'epic', '<path d="M9.2 2.8L4.8 9h2.7l-.8 4.2L11.2 7H8.4z" fill="#fff"></path>'],
+  [/sub-?task/i, 'subtask', '<rect x="4" y="4" width="4.2" height="4.2" rx=".6" fill="none" stroke="#fff" stroke-width="1.4"></rect><rect x="7.8" y="7.8" width="4.2" height="4.2" rx=".6" fill="#fff"></rect>'],
+  [/story/i, 'story', '<path d="M5.2 3.8h5.6v8.6L8 10.5l-2.8 1.9z" fill="#fff"></path>'],
+  [/improvement|feature|enhancement/i, 'improvement', '<path d="M8 3.8v8.4M4.4 7.4L8 3.8l3.6 3.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>'],
+  [/task|chore/i, 'task', '<path d="M4.6 8.3l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>'],
+];
+function issueTypeIcon(name, size = 16) {
+  if (!name) return '';
+  const hit = JIRA_TYPE.find(([re]) => re.test(name)) || [null, 'other', '<circle cx="8" cy="8" r="2" fill="#fff"></circle>'];
+  return `<svg class="jt jt-${hit[1]}" width="${size}" height="${size}" viewBox="0 0 16 16" role="img" aria-label="${esc(name)}"><title>${esc(name)}</title><rect width="16" height="16" rx="3"></rect>${hit[2]}</svg>`;
+}
+const JIRA_PRIO = { highest: 'M3.5 9.5L8 5l4.5 4.5M3.5 13L8 8.5l4.5 4.5', high: 'M3.5 10.5L8 6l4.5 4.5', medium: 'M3.5 6.5h9M3.5 10h9',
+  low: 'M3.5 6L8 10.5 12.5 6', lowest: 'M3.5 3L8 7.5 12.5 3M3.5 6.5L8 11l4.5-4.5' };
+function priorityIcon(name, size = 16) {
+  const k = (name || '').toLowerCase().replace(/[^a-z]/g, '');
+  const key = JIRA_PRIO[k] ? k : /block|critical|urgent/.test(k) ? 'highest' : /major/.test(k) ? 'high' : /minor|trivial/.test(k) ? 'low' : '';
+  if (!key) return '';
+  return `<svg class="jp jp-${key}" width="${size}" height="${size}" viewBox="0 0 16 16" role="img" aria-label="Priority ${esc(name)}"><title>Priority: ${esc(name)}</title><path d="${JIRA_PRIO[key]}" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>`;
+}
+const statusCat = (t) => t.status_cat || (/done|closed|resolved|merged|released/i.test(t.status || '') ? 'done' : /to ?do|open|backlog|new/i.test(t.status || '') ? 'new' : t.status ? 'indeterminate' : 'new');
+const lozenge = (text, cat) => text ? `<span class="lz lz-${cat || 'new'}" title="Jira status">${esc(text)}</span>` : '';
+
 /* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
 const TYPES = ['FE', 'BE', 'FE+BE', ''];
 const typeName = (ty) => ({ FE: 'Frontend', BE: 'Backend', 'FE+BE': 'Frontend and backend' }[ty] || 'No FE/BE component');
@@ -222,7 +248,7 @@ function deco(t) {
   const st = t.stage, sub = t.sub;
   const d = { stateLabel: '', summary: '', act: 'Review', cls: 'state state-you', note: '', primary: '', disabled: false, counts, items, passes };
   if (st === 0 && sub === 'working') { d.stateLabel = 'Gathering'; d.summary = t.doing; }
-  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; d.summary = (t.env_candidates || []).length ? `${t.env_candidates.length} link${t.env_candidates.length === 1 ? '' : 's'} found, none clearly the test environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Stopped instead of guessing an environment.'; d.primary = 'Use this environment'; d.disabled = !/^https?:\/\/\S+/.test((S.board.env[t.key] || '').trim()); }
+  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; d.summary = (t.env_candidates || []).length ? `${t.env_candidates.length} link${t.env_candidates.length === 1 ? '' : 's'} found, none clearly the test environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Stopped instead of guessing an environment.'; d.primary = 'Use this environment'; d.disabled = !envUrl(S.board.env[t.key]); }
   if (st === 0 && sub === 'gate') { d.stateLabel = 'Gate 1 · your review'; d.summary = `Checklist ready · ${items.length} items in ${t.checklist.length} sections`; d.act = 'Review checklist'; d.note = 'Gate 1 of 4. Approving builds and runs the spec.'; d.primary = 'Approve checklist'; }
   if (st === 1) { d.stateLabel = 'Building'; d.summary = t.doing || `Building ${t.key}.spec.ts`; }
   if (st === 2 && sub === 'sso') { d.stateLabel = 'SSO login needed'; d.cls = 'state state-warn'; d.summary = 'Waiting for you to sign in'; d.act = 'Sign in'; d.note = 'The run continues once the session is ready.'; d.primary = "I've signed in"; }
@@ -296,7 +322,7 @@ function viewCard(t) {
   const cls = 'tk' + (d.you ? ' is-you' : '') + (S.board.sel === t.key ? ' is-sel' : '');
   return `<article class="${cls}">
 <button type="button" class="tk-open" data-act="open" data-key="${esc(t.key)}" aria-label="${esc(t.key + ', ' + (t.type || 'no type') + ', ' + t.title + ', ' + d.stateLabel)}">
-<span class="tk-meta"><span class="mono">${esc(t.key)}</span>${typeBadge(t)}<span style="margin-left:auto">${esc(t.status)}</span></span>
+<span class="tk-meta">${issueTypeIcon(t.issue_type)}<span class="mono">${esc(t.key)}</span>${typeBadge(t)}<span class="tk-jira">${priorityIcon(t.priority)}${lozenge(t.status, statusCat(t))}</span></span>
 <span class="tk-title">${esc(t.title)}</span>
 </button>
 <div class="tk-stage">
@@ -325,8 +351,13 @@ function gateTracker(t) {
 function viewTicketContext(t) {
   const c = t.context;
   if (!c || !Object.keys(c).length) return '';
-  const tags = [c.issue_type, c.priority && `Priority ${c.priority}`, ...(c.labels || []), ...(c.fix_versions || []).map((v) => `Fix ${v}`), c.sprint]
-    .filter(Boolean).map((x) => `<span class="tag">${esc(x)}</span>`).join('');
+  const tags = [
+    c.issue_type ? `<span class="tag jtag">${issueTypeIcon(c.issue_type, 14)}${esc(c.issue_type)}</span>` : '',
+    c.priority ? `<span class="tag jtag">${priorityIcon(c.priority, 14)}${esc(c.priority)}</span>` : '',
+    ...(c.labels || []).map((l) => `<span class="jlabel" title="Label">${esc(l)}</span>`),
+    ...(c.fix_versions || []).map((v) => `<span class="tag" title="Fix version">Fix ${esc(v)}</span>`),
+    c.sprint ? `<span class="tag" title="Sprint">${esc(c.sprint)}</span>` : '',
+  ].join('');
   const rows = [];
   const row = (label, html) => rows.push(`<div class="brow ctx-row"><span class="ctx-k">${label}</span><span class="ctx-v">${html}</span></div>`);
   const ref = (r) => `<span class="mono">${esc(r.key)}</span> ${esc(r.title)}${r.status ? ` <span style="color:var(--faint)">· ${esc(r.status)}</span>` : ''}`;
@@ -457,7 +488,9 @@ function viewDrawer() {
 <div style="min-width:0;flex:1"><div class="mono trunc">${esc(c.url)}</div><div style="color:var(--faint);font-size:11.5px">${esc(c.source)}${c.why && c.why.length ? ' · ' + esc(c.why.join(', ')) : ''}${c.api ? ' · API' : ''}</div></div>
 <button type="button" class="btn btn-sm" data-act="pickEnv" data-key="${esc(t.key)}" data-v="${esc(c.url)}" ${B.busy ? 'disabled' : ''}>Use</button></div>`).join('')}</div>`;
     }
-    if (sub === 'blocked') body += `<label class="lbl" for="env-input" style="margin-top:12px">Or paste the test environment URL</label><input id="env-input" class="inp mono" type="text" inputmode="url" placeholder="https://preview.your-app.com/" value="${esc(B.env[t.key] || '')}" data-in="env" data-key="${esc(t.key)}">`;
+    if (sub === 'blocked') body += `<label class="lbl" for="env-input" style="margin-top:12px">Or paste the test environment URL</label><input id="env-input" class="inp mono" type="text" inputmode="url" placeholder="preview.your-app.com" value="${esc(B.env[t.key] || '')}" data-in="env" data-key="${esc(t.key)}">
+${(B.env[t.key] || '').trim() && !envUrl(B.env[t.key]) ? `<p class="c-crit" style="margin:6px 0 0;font-size:12px">That isn't a web address. Use something like staging.your-app.com</p>`
+  : envUrl(B.env[t.key]) && envUrl(B.env[t.key]) !== (B.env[t.key] || '').trim() ? `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">Will use <span class="mono">${esc(envUrl(B.env[t.key]))}</span> · press Enter or <b>Use this environment</b></p>` : ''}`;
   }
   body += '</div>';
 
@@ -527,7 +560,7 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
   return `<aside class="drawer" aria-label="Ticket details">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
-<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}<span style="color:var(--muted);font-size:12px">Jira status: ${esc(t.status)}</span>
+${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${lozenge(t.status, statusCat(t))}
 <a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in Jira${svg(IC.ext, 'ic ic-s')}</a>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" data-act="close">${svg(IC.close)}</button>
 </div>
@@ -545,12 +578,20 @@ ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="
 </aside>`;
 }
 
+/* A test environment address as typed: https:// is added when missing. '' when it isn't an address. */
+function envUrl(v) {
+  let s = (v || '').trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s.replace(/^\/+/, '');
+  try { const u = new URL(s); return (u.hostname.includes('.') || u.hostname === 'localhost') && !/\s/.test(s) ? u.href : ''; } catch (e) { return ''; }
+}
+
 async function primaryAction(key) {
   const B = S.board;
   const t = B.data.tickets.find((x) => x.key === key);
   if (!t || B.busy) return;
   const payload = {};
-  if (t.sub === 'blocked') payload.url = (B.env[key] || '').trim();
+  if (t.sub === 'blocked') payload.url = envUrl(B.env[key]);
   if (t.stage === 3 && t.sub === 'comment') payload.comment = B.comment[key] != null ? B.comment[key] : t.comment;
   if (t.stage === 3 && t.sub === 'transition') payload.target = t.target;
   B.busy = true; B.actErr = ''; schedule();
@@ -939,7 +980,7 @@ ${err}
   const col = J.col || st.column;
   const byStatus = c.columns_from === 'statuses';
   const live = !st.demo && st.column && st.column === col;
-  const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="jiraCol" data-v="${esc(x.name)}"><span>${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
+  const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="jiraCol" data-v="${esc(x.name)}"><span class="lz lz-${esc(x.category || 'new')}">${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
   const comps = c.components && c.components.length
     ? `Components in ${esc(c.project.key)}: <span class="mono">${esc(c.components.join(', '))}</span>. They set each ticket's FE / BE type (names are set on the Testing board card).`
     : `${esc(c.project.key)} has no components yet, so tickets show as <b>No type</b>. Add Frontend / Backend components in Jira to get FE, BE and FE+BE.`;
@@ -1228,6 +1269,12 @@ $app.addEventListener('input', onInput);
 $app.addEventListener('change', (ev) => { if (ev.target.matches('select, input[type=checkbox]')) onInput(ev); });
 
 document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && ev.target && ev.target.id === 'env-input') {
+    ev.preventDefault();
+    const key = ev.target.dataset.key;
+    if (envUrl(S.board.env[key]) && !S.board.busy) primaryAction(key);
+    return;
+  }
   if (ev.key === 'Enter' && ev.target && ev.target.id === 'jira-link') { ev.preventDefault(); const p = parseJiraLink(S.jira.link); if (p && !p.err && !S.jira.busy) jiraConnect(); return; }
   const mod = ev.metaKey || ev.ctrlKey;
   if (mod && ['1', '2', '3', '4', '5'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }

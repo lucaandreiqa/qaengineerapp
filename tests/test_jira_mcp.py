@@ -369,7 +369,10 @@ def test_pick_column_then_board_reads_and_writes_jira(env):
                   cfg=WorkflowConfig(demo=False, data_dir=store.path.parent))
     jira = wf.jira()  # signed in with Atlassian, so the board uses the MCP client
     assert isinstance(jira, am.McpJira) and jira.board_id == "1" and jira.status_ids == ["10002"]
-    assert jira.search_column("SCRUM", "In Review") == [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
+    rows = jira.search_column("SCRUM", "In Review")
+    assert [{k: r[k] for k in ("key", "title", "status", "components")} for r in rows] == \
+        [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
+    assert rows[0]["status_cat"] == "indeterminate"
     issue = jira.get_issue("SCRUM-2")
     assert issue["components"] == ["Frontend", "Backend"] and env_url(issue) == "https://feature-x.pages.dev/"
     jira.add_comment("SCRUM-2", "QA result: **2/2 pass**")
@@ -423,7 +426,10 @@ def test_classic_tool_set_uses_project_statuses_and_classic_tool_names(classic_e
     jira_connect.choose_column("In Review", True)
     s = config.load_settings()
     jira = am.McpJira(s["jira"], s["workflow"], am.AtlassianMcp.signed_in(CLOUD, store))
-    assert jira.search_column("SCRUM", "In Review") == [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
+    rows = jira.search_column("SCRUM", "In Review")
+    assert [{k: r[k] for k in ("key", "title", "status", "components")} for r in rows] == \
+        [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
+    assert rows[0]["status_cat"] == "indeterminate"
     issue = jira.get_issue("SCRUM-2")
     assert issue["components"] == ["Frontend", "Backend"] and env_url(issue) == "https://feature-x.pages.dev/"
     jira.add_comment("SCRUM-2", "QA result: **pass**")

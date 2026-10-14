@@ -2,60 +2,60 @@
 from __future__ import annotations
 
 from .models import (DEFAULT_BE_COMPONENTS, DEFAULT_FE_COMPONENTS, CheckItem, CleanupItem, DraftCase, Env, Section,
-                     Ticket, classify_type, component_list, type_label)
+                     Ticket, classify_type, component_list, status_category, type_label)
 
 STAGING = Env(kind="shared staging · ticket is merged", url="https://staging.shop-demo.test/", source="settings",
           api="Default environment from settings: confirm before changing sensitive settings", shared=True)
 
 # key, title, components (Jira), status, stage, sub, extras, checklist[(section, [(text, result, bug)])], cleanup, left
 _T = [
-    dict(key="OPTR-48512", title="Worked hours report export to CSV", components=["Frontend", "Backend"], status="Open", stage=0, sub="working", p1=1,
+    dict(key="OPTR-48512", issue_type="Story", priority="Medium", title="Worked hours report export to CSV", components=["Frontend", "Backend"], status="Open", stage=0, sub="working", p1=1,
          env=Env(kind="Test environment", url="https://feature-48512.preview.shop-demo.test/", api="API: https://api.staging.shop-demo.test/", source="comment by Developer"),
          doing="Reading commits on shop-admin PR #9214",
          check=[("Export", [("Export button appears on the Worked hours report", "pass"), ("CSV has one row per employee per day", "pass"), ("CSV columns follow the on-screen order", "partial")]),
                 ("Permissions", [("Export is hidden without the export permission", "pass")])],
          cleanup=[("WorkedHoursExportEnabled", "false")]),
-    dict(key="OPTR-48507", title="Stock mutation reasons configurable per store", components=["Backend"], status="Open", stage=0, sub="blocked", p1=1, env=None,
+    dict(key="OPTR-48507", issue_type="Task", priority="Low", title="Stock mutation reasons configurable per store", components=["Backend"], status="Open", stage=0, sub="blocked", p1=1, env=None,
          check=[("Configuration", [("Reasons can be created per store", "pass"), ("Child stores inherit the parent reasons", "pass")]),
                 ("Stock mutations", [("A mutation without a reason is rejected when reasons are required", "pass")])],
          cleanup=[("StockMutationReasonsRequired", "false")]),
-    dict(key="OPTR-48498", title="Device list filter by station", components=["Frontend"], status="Merged", stage=0, sub="gate", env=STAGING,
+    dict(key="OPTR-48498", issue_type="Bug", priority="High", title="Device list filter by station", components=["Frontend"], status="Merged", stage=0, sub="gate", env=STAGING,
          check=[("Filter", [("Station filter lists every station in the selected store", "pass"), ("Filtering updates the device count", "pass"),
                             ("Filter is kept in the URL", "fail", "Reload drops ?station= and shows all devices. UI writes the param with replaceState only after the first change. Severity: Minor")]),
                 ("Empty states", [("A station without devices shows the empty state", "pass"), ("Clearing the filter restores all devices", "pass")])]),
-    dict(key="OPTR-48490", title="Discount usage limit per customer", components=["Backend"], status="Merged", stage=1, sub="working", serial=True, env=STAGING,
+    dict(key="OPTR-48490", issue_type="Story", priority="High", title="Discount usage limit per customer", components=["Backend"], status="Merged", stage=1, sub="working", serial=True, env=STAGING,
          doing="Building OPTR-48490.spec.ts and .serial.spec.ts",
          check=[("Usage limit", [("Discount applies until the per-customer limit is reached", "pass"), ("The next order over the limit gets no discount", "pass"), ("The limit counts per customer, not per device", "pass")]),
                 ("Concurrency", [("Two parallel orders cannot both use the last allowance", "blocked", "Second session could not start: the shared staging store has one cash drawer. Needs a second drawer to unblock.")])],
          cleanup=[("DiscountUsageCheckEnabled", "true")], left="2 orders (orders cannot be deleted), prefixed OPTR-48490"),
-    dict(key="OPTR-48471", title="Cashier PIN reset from the admin app", components=["Frontend"], status="Open", stage=2, sub="sso", needs_sso=True,
+    dict(key="OPTR-48471", issue_type="Story", priority="Highest", title="Cashier PIN reset from the admin app", components=["Frontend"], status="Open", stage=2, sub="sso", needs_sso=True,
          env=Env(kind="Test environment", url="https://pr-48471.preview.shop-demo.test/", api="API: https://api.pr-48471.preview.shop-demo.test/", source="comment by Developer"),
          check=[("PIN reset", [("Reset PIN shows for users with the permission", "pass"), ("The new PIN is shown once and can be copied", "pass"), ("The old PIN stops working right after the reset", "pass")]),
                 ("Audit", [("The reset is written to the user audit log", "partial")])],
          cleanup=[("UserPinLength", "4")], left="1 minted PIN (PINs cannot be deleted), prefixed OPTR-48471"),
-    dict(key="OPTR-48466", title="Order search by external reference", components=["Frontend", "Backend"], status="Open", stage=2, sub="gate",
+    dict(key="OPTR-48466", issue_type="Bug", priority="High", title="Order search by external reference", components=["Frontend", "Backend"], status="Open", stage=2, sub="gate",
          env=Env(kind="Test environment", url="https://feature-optr-48466.shop-admin.pages.dev/", api="API: the staging API, seen in the network requests", source="comment by Developer"),
          check=[("Search", [("An exact external reference finds the order", "pass"), ("A partial reference matches from the start", "pass"), ("Search ignores letter case", "pass"),
                             ("Leading and trailing spaces are trimmed", "fail", 'Searching " EXT-1042 " returns 0 orders; the UI sends the value untrimmed to SearchOrders. Severity: Major')]),
                 ("Results", [("A result row opens the order detail", "pass"), ("Orders from other stores are not returned", "pass"), ("Results arrive in under 2 s with 10k+ orders", "partial"), ("Export of filtered results", "nt")])],
          cleanup=[("OrderSearchIncludeExternalRef", "false"), ("OrderSearchMaxResults", "50")], left="3 orders (orders cannot be deleted), prefixed OPTR-48466"),
-    dict(key="OPTR-48455", title="Worked hours settings per store", components=["Core"], status="Open", stage=3, sub="comment", target="Docs",
+    dict(key="OPTR-48455", issue_type="Task", priority="Medium", title="Worked hours settings per store", components=["Core"], status="Open", stage=3, sub="comment", target="Docs",
          env=Env(kind="Test environment", url="https://pr-9031.preview.shop-demo.test/", api="API: same site", source="comment by Developer"),
          check=[("Settings", [("The setting can be set for a country", "pass"), ("Stores inherit the country value", "pass"), ("A store override wins over the parent", "pass")]),
                 ("Read service", [("GetWorkedHours rounds hours per the setting", "pass"), ("An invalid rounding value is rejected", "pass")])],
          cleanup=[("WorkedHoursRounding", "15")]),
-    dict(key="OPTR-48449", title="Receipt footer text per store", components=["Frontend"], status="Merged", stage=3, sub="transition", comment_at="13:21", env=STAGING,
+    dict(key="OPTR-48449", issue_type="Story", priority="Low", title="Receipt footer text per store", components=["Frontend"], status="Merged", stage=3, sub="transition", comment_at="13:21", env=STAGING,
          check=[("Footer text", [("Footer text saves per store", "pass"), ("Line breaks are kept on the printed receipt", "pass"), ("Text over 200 characters is rejected", "pass")])],
          cleanup=[("ReceiptFooterText", "(empty)")]),
-    dict(key="OPTR-48437", title="Gift card balance check endpoint", components=["Backend"], status="Merged", stage=4, sub="gate", section="Finance › Gift cards", dups=1, env=STAGING,
+    dict(key="OPTR-48437", issue_type="Story", priority="High", title="Gift card balance check endpoint", components=["Backend"], status="Merged", stage=4, sub="gate", section="Finance › Gift cards", dups=1, env=STAGING,
          check=[("Balance", [("A valid card returns its current balance", "pass"), ("An expired card returns an expired error", "pass"), ("An unknown card returns not found", "pass")]),
                 ("Security", [("The endpoint requires the gift card view permission", "pass"), ("Rate limit applies after 10 calls per minute", "pass"), ("The balance is masked in logs", "partial")])]),
-    dict(key="OPTR-48430", title="Bulk copy of store settings", components=["Frontend"], status="Merged", stage=4, sub="approved", section="Stores › Settings", dups=0, env=STAGING,
+    dict(key="OPTR-48430", issue_type="Task", priority="Medium", title="Bulk copy of store settings", components=["Frontend"], status="Merged", stage=4, sub="approved", section="Stores › Settings", dups=0, env=STAGING,
          check=[("Copy", [("Selected settings copy to every chosen store", "pass"), ("Existing values are only overwritten after confirming", "pass"), ("The summary lists each store and setting", "pass")])],
          cleanup=[("StoreSettingsBulkCopyEnabled", "false")]),
 ]
 
-LATE = dict(key="OPTR-48520", title="Shift planner shows break times", components=["Frontend"], status="Testing", stage=0, sub="working", p1=0,
+LATE = dict(key="OPTR-48520", issue_type="Story", priority="Medium", title="Shift planner shows break times", components=["Frontend"], status="Testing", stage=0, sub="working", p1=0,
             env=Env(kind="Test environment", url="https://feature-48520.preview.shop-demo.test/", api="API: https://api.staging.shop-demo.test/", source="comment by Developer"),
             doing="Gathering context from Jira",
             check=[("Breaks", [("Break blocks show on the shift", "pass"), ("Break length matches the shift template", "pass")])])
@@ -86,6 +86,7 @@ def _ticket(d: dict) -> Ticket:
         section=d.get("section", ""), dups=d.get("dups", 0), mock_results=mock,
         mock_cleanup=cleanup, mock_left=d.get("left", ""),
     )
+    t.issue_type, t.priority, t.status_cat = d["issue_type"], d["priority"], status_category(d["status"])
     t.context = _demo_context(d)
     if d["stage"] == 4 and d["sub"] != "drafting":
         existing = {"An unknown card returns not found"} if d.get("dups") else set()  # already in the mock TestRail section
@@ -101,8 +102,8 @@ def _demo_context(d: dict) -> dict:
 
     area = d["check"][0][0]
     raw = {"key": d["key"], "fields": {
-        "summary": d["title"], "status": {"name": d["status"]}, "issuetype": {"name": "Story"},
-        "priority": {"name": "High" if d["key"] in ("OPTR-48466", "OPTR-48490") else "Medium"},
+        "summary": d["title"], "status": {"name": d["status"]}, "issuetype": {"name": d["issue_type"]},
+        "priority": {"name": d["priority"]},
         "labels": [area.lower().replace(" ", "-"), "release-2026.11"], "fixVersions": [{"name": "2026.11"}],
         "reporter": {"displayName": "Product Owner"}, "assignee": {"displayName": "Developer"},
         "description": f"{d['title']}.\n\n" + "\n".join(f"- {i[0]}" for _, items in d["check"] for i in items[:2]),
@@ -127,6 +128,7 @@ def jira_issues() -> tuple[list[dict], list[dict]]:
         if env is not None and not env.shared:  # how teams usually share it: a comment with the link
             comments.append(f"Deployed to the preview environment: {env.url}")
         return {"key": d["key"], "title": d["title"], "status": d["status"], "components": d["components"],
+                "issue_type": d["issue_type"], "priority": d["priority"],
                 "merged": d["status"] == "Merged", "comments": comments,
                 "description": f"{d['title']}. See the linked PR for details."}
     return [rec(d) for d in _T], [rec(LATE)]

@@ -97,7 +97,10 @@ class MockJira:
             "issuetype": {"name": i.get("issue_type", "Story")}, "priority": {"name": i.get("priority", "Medium")},
             "labels": i.get("labels", []), "components": [{"name": c} for c in i.get("components", [])],
             "comment": {"comments": [{"body": c, "author": {"displayName": "Developer"}} for c in comments]}}}
+        from .models import status_category
         return {"key": i["key"], "title": i["title"], "status": i["status"], "description": i.get("description", ""),
+                "status_cat": status_category(i["status"]), "issue_type": i.get("issue_type", "Story"),
+                "priority": i.get("priority", "Medium"),
                 "components": list(i.get("components", [])), "merged": i.get("merged", i["status"] == "Merged"),
                 "pr_url": i.get("pr_url", ""),
                 "comments": comments, "context": build(raw)}

@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from .models import status_category
+
 # Jira bookkeeping that says nothing about what to test.
 NOISE = {"rank", "workratio", "watches", "votes", "progress", "aggregateprogress", "issuerestriction", "statuscategorychangedate",
          "timetracking", "worklog", "lastviewed", "aggregatetimespent", "aggregatetimeestimate", "aggregatetimeoriginalestimate",
@@ -133,7 +135,7 @@ def build(raw: dict, comments: Optional[list[dict]] = None, remote_links: Option
     total = (f.get("comment") or {}).get("total") if isinstance(f.get("comment"), dict) else None
     ctx = {
         "key": raw.get("key", ""), "title": f.get("summary", ""), "issue_type": text(f.get("issuetype")),
-        "status": text(f.get("status")), "priority": text(f.get("priority")), "resolution": text(f.get("resolution")),
+        "status": text(f.get("status")), "status_cat": status_category(f.get("status") or {}), "priority": text(f.get("priority")), "resolution": text(f.get("resolution")),
         "labels": [text(x) for x in f.get("labels") or [] if text(x)],
         "components": [text(x) for x in f.get("components") or [] if text(x)],
         "fix_versions": [text(x) for x in f.get("fixVersions") or [] if text(x)],
@@ -215,6 +217,15 @@ def for_prompt(ctx: dict, extra: Optional[dict] = None, max_chars: int = 60000) 
         n = max(0, n - max(1, n // 4))
         md = to_markdown(ctx, extra, comment_limit=n)
     return md[:max_chars]
+
+
+def brief(i: dict) -> dict:
+    """One row of a ticket search: what the board card shows."""
+    f = i.get("fields") or {}
+    return {"key": i.get("key", ""), "title": f.get("summary", ""), "status": text(f.get("status")),
+            "status_cat": status_category(f.get("status") or {}), "issue_type": text(f.get("issuetype")),
+            "priority": text(f.get("priority")),
+            "components": [text(c) for c in f.get("components") or [] if text(c)]}
 
 
 def summary(ctx: dict) -> dict:

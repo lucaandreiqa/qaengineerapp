@@ -1,6 +1,7 @@
 """Ticket models for the workflow board."""
 from __future__ import annotations
 
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -25,6 +26,26 @@ def classify_type(components: list[str], fe_names: list[str], be_names: list[str
     fe = bool(names & {n.lower() for n in fe_names})
     be = bool(names & {n.lower() for n in be_names})
     return "FE+BE" if fe and be else "FE" if fe else "BE" if be else ""
+
+
+def status_category(status: object) -> str:
+    """Jira's status category, which decides a status lozenge's colour: new (grey), indeterminate (blue), done (green)."""
+    if isinstance(status, dict):
+        cat = status.get("statusCategory") or {}
+        key = str(cat.get("key") or cat.get("name") or "").lower() if isinstance(cat, dict) else ""
+        if key in ("new", "to do"):
+            return "new"
+        if key in ("done", "complete"):
+            return "done"
+        if key in ("indeterminate", "in progress"):
+            return "indeterminate"
+        status = status.get("name", "")
+    name = str(status or "").lower()
+    if re.search(r"\b(done|closed|resolved|released|merged|complete|cancel)", name):
+        return "done"
+    if re.search(r"\b(to ?do|open|backlog|new|selected|ready for dev|created|reopened)\b", name):
+        return "new"
+    return "indeterminate" if name else ""
 
 
 def has_fe(ticket_type: str) -> bool:
@@ -84,6 +105,9 @@ class Ticket(BaseModel):
     components: list[str] = Field(default_factory=list)  # the Jira components the type came from
     context: dict = Field(default_factory=dict)  # what the ticket says (ticket_context.summary), for the drawer
     env_candidates: list[dict] = Field(default_factory=list)  # links on the ticket that could be the test environment
+    issue_type: str = ""  # Jira issue type (Story, Bug, Task…), coloured like Jira
+    priority: str = ""
+    status_cat: str = ""  # new | indeterminate | done (Jira's status category)
     skills: dict[str, str] = Field(default_factory=dict)  # step → which skill Claude used ("general", "general + KEY", "KEY")
     status: str = "Open"
     description: str = ""

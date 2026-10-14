@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import time
+from urllib.parse import urlparse
 from datetime import datetime
 from typing import Any, Callable, Optional
 
@@ -139,16 +140,23 @@ class Workflow:
         issues = await self._call(self.jira().search_column, self.cfg.jira_project, self.cfg.jira_column)
         new: list[Ticket] = []
         for i in issues:
-            if i["key"] in self.tickets.tickets or i["key"] in self.tickets.done_keys:
+            if i["key"] in self.tickets.tickets:  # keep what the card shows in step with Jira
+                cur = self.tickets.get(i["key"])
+                upd = {k: i[k] for k in ("status", "status_cat", "issue_type", "priority") if i.get(k) and getattr(cur, k) != i[k]}
+                if upd:
+                    self.patch(i["key"], **upd)
+                continue
+            if i["key"] in self.tickets.done_keys:
                 continue
             comps = list(i.get("components", []))
             t = Ticket(key=i["key"], title=i["title"], type=self.cfg.ticket_type(comps), components=comps, status=i.get("status", ""),
+                       status_cat=i.get("status_cat", ""), issue_type=i.get("issue_type", ""), priority=i.get("priority", ""),
                        description=i.get("description", ""), stage=0, sub="working", doing="Gathering context from Jira")
             if self.cfg.is_mock:
                 from .seed import late_ticket
                 late = late_ticket()
                 if late.key == t.key:  # mock checklist and expected results for the demo ticket
-                    t = late.model_copy(update={"env": None, "status": t.status})
+                    t = late.model_copy(update={"env": None, "status": t.status, "status_cat": t.status_cat})
             new.append(t)
         if new:  # newest at the top of lane 1
             self.tickets.tickets = {**{t.key: t for t in new}, **self.tickets.tickets}
@@ -228,8 +236,11 @@ class Workflow:
 
     async def _a_use_env(self, t: Ticket, p: dict) -> Ticket:
         url = str(p.get("url", "")).strip()
-        if not url.startswith(("http://", "https://")):
-            raise GateError("Enter the test environment URL, starting with https://", 422)
+        if url and not url.lower().startswith(("http://", "https://")):
+            url = "https://" + url.lstrip("/")  # staging.myapp.com → https://staging.myapp.com
+        host = urlparse(url).hostname or ""
+        if not url or " " in url or not ("." in host or host == "localhost"):
+            raise GateError("Enter the test environment address, e.g. staging.your-app.com", 422)
         picked = next((c for c in t.env_candidates if c.get("url") == url), None)
         t = self.patch(t.key, env=Env(kind="Test environment", url=url, source="you" + (f" · from {picked['source']}" if picked else ""),
                                       api="Chosen by you"), sub="working", p1=2, error="")
@@ -339,7 +350,10 @@ class Workflow:
         if t.p1 <= 0:
             self.patch(key, p1=0, doing="Reading the whole ticket: fields, comments, links and attachments",
                        description=issue.get("description", ""),
-                       context=ticket_context.summary(issue["context"]) if issue.get("context") else {})
+                       context=ticket_context.summary(issue["context"]) if issue.get("context") else {},
+                       **({k: issue["context"][v] for k, v in (("issue_type", "issue_type"), ("priority", "priority"),
+                                                               ("status", "status"), ("status_cat", "status_cat"))
+                           if issue["context"].get(v)} if issue.get("context") else {}))
             agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue))
             await self.pause(2.5)
         if t.p1 <= 1 or self.tickets.get(key).env is None:  # type: ignore[union-attr]

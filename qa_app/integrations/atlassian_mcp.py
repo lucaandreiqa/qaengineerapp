@@ -162,8 +162,12 @@ class AtlassianMcp:
 
 def _columns(cfg: dict) -> list[dict]:
     cols = (cfg.get("columnConfig") or {}).get("columns") or []
+    from ..workflow.models import status_category
     return [{"name": c.get("name", ""), "status_ids": [str(s.get("id")) for s in c.get("statuses", []) if s.get("id")],
-             "statuses": [s.get("name", "") for s in c.get("statuses", [])]} for c in cols if c.get("name")]
+             "statuses": [s.get("name", "") for s in c.get("statuses", [])],
+             "category": status_category({"name": (c.get("statuses") or [{}])[0].get("name", c.get("name", "")),
+                                          "statusCategory": {"key": (c.get("statuses") or [{}])[0].get("category", "")}})}
+            for c in cols if c.get("name")]
 
 
 def _count(res: Any) -> Optional[int]:
@@ -287,7 +291,8 @@ def _status_columns(mcp: AtlassianMcp, project_key: str) -> tuple[list[dict], li
     complete = len(issues) < 100
     cols = []
     for name, v in sorted(found.items(), key=lambda kv: (kv[1]["rank"], kv[1]["seen"])):
-        cols.append({"name": name, "status_ids": [v["id"] or name], "statuses": [name], "count": v["count"] if complete else None})
+        cols.append({"name": name, "status_ids": [v["id"] or name], "statuses": [name], "count": v["count"] if complete else None,
+                     "category": ["new", "indeterminate", "done"][min(v["rank"], 2)]})
     return cols, components
 
 
@@ -312,7 +317,7 @@ class McpJira:
         self.mcp = mcp or AtlassianMcp.signed_in(self.cloud_id)
 
     def search_column(self, project: str, column: str) -> list[dict]:
-        fields = ["summary", "status", "components", "labels"]
+        fields = ["summary", "status", "components", "labels", "issuetype", "priority"]
         if self.board_id and self.status_ids and self.mcp.has("getJiraBoardIssueData"):
             res = self.mcp.op("getJiraBoardIssueData", boardId=int(self.board_id), dataset="board",
                               jql=f"status in ({status_jql(self.status_ids)})", fields=fields, maxResults=50)
@@ -323,9 +328,8 @@ class McpJira:
             jql = f'project = "{project}" AND status = "{column}" ORDER BY updated DESC'
             res = self.mcp.op("searchJiraIssuesUsingJql", jql=jql, fields=fields, maxResults=50)
         issues = res.get("issues", []) if isinstance(res, dict) else []
-        return [{"key": i["key"], "title": (i.get("fields") or {}).get("summary", ""),
-                 "status": ((i.get("fields") or {}).get("status") or {}).get("name", ""),
-                 "components": _fields_components(i.get("fields") or {})} for i in issues]
+        from ..workflow.ticket_context import brief
+        return [brief(i) for i in issues]
 
     def get_issue(self, key: str) -> dict:
         """Everything on the ticket: all fields (custom ones by name), every comment, attachments, links."""

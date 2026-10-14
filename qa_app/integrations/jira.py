@@ -102,11 +102,10 @@ def search_column(cfg: dict, project: str, column: str) -> list[dict]:
     s = _session(cfg)
     jql = f'project = "{project}" AND status = "{column}" ORDER BY updated DESC'
     r = s.post(f"{_base(cfg)}/rest/api/3/search/jql", timeout=20,
-               json={"jql": jql, "maxResults": 50, "fields": ["summary", "status", "components", "labels"]})
+               json={"jql": jql, "maxResults": 50, "fields": ["summary", "status", "components", "labels", "issuetype", "priority"]})
     r.raise_for_status()
-    return [{"key": i["key"], "title": i["fields"].get("summary", ""),
-             "status": (i["fields"].get("status") or {}).get("name", ""), "components": _components(i["fields"])}
-            for i in r.json().get("issues", [])]
+    from ..workflow.ticket_context import brief
+    return [brief(i) for i in r.json().get("issues", [])]
 
 
 def _pull_requests(s: requests.Session, cfg: dict, issue_id: str) -> dict:

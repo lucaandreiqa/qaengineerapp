@@ -186,3 +186,24 @@ html,body{background:#0B0C0E}
 .lane-skill{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:var(--muted);text-decoration:none;font-size:11.5px}
 .lane-skill:hover{color:var(--fg)}
 @media (max-width:900px){.sk-wrap{grid-template-columns:1fr}.sk-list{flex-direction:row;overflow-x:auto}.sk-step{flex:0 0 220px}}
+
+/* Jira look: issue type icons, priority arrows, status lozenges, labels */
+.jt{flex:none;border-radius:3px;vertical-align:middle}
+.jt-story rect:first-of-type{fill:var(--jt-story)}.jt-bug rect:first-of-type{fill:var(--jt-bug)}.jt-task rect:first-of-type{fill:var(--jt-task)}
+.jt-epic rect:first-of-type{fill:var(--jt-epic)}.jt-subtask>rect:first-of-type{fill:var(--jt-sub)}.jt-improvement rect:first-of-type{fill:var(--jt-imp)}.jt-other rect:first-of-type{fill:var(--jt-other)}
+.jp{flex:none;vertical-align:middle}
+.jp-highest path{stroke:var(--jp-highest)}.jp-high path{stroke:var(--jp-high)}.jp-medium path{stroke:var(--jp-medium)}.jp-low path{stroke:var(--jp-low)}.jp-lowest path{stroke:var(--jp-lowest)}
+.lz{display:inline-flex;align-items:center;height:18px;padding:0 5px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.lz-new{background:var(--lz-new-bg);color:var(--lz-new)}.lz-indeterminate{background:var(--lz-prog-bg);color:var(--lz-prog)}.lz-done{background:var(--lz-done-bg);color:var(--lz-done)}
+.jlabel{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:3px;background:var(--jl-bg);color:var(--jl);font-size:12px}
+.jtag{gap:5px;padding-left:5px}
+.tk-jira{margin-left:auto;display:inline-flex;align-items:center;gap:6px}
+.jc-col .lz{max-width:none}
+/* Board lanes follow Jira's status colours: waiting (grey), in progress (blue), finishing (green) */
+.board > .lane:nth-child(1){box-shadow:inset 0 3px 0 color-mix(in srgb,var(--lz-new) 55%,transparent)}
+.board > .lane:nth-child(2),.board > .lane:nth-child(3),.board > .lane:nth-child(4){box-shadow:inset 0 3px 0 color-mix(in srgb,var(--lz-prog) 70%,transparent)}
+.board > .lane:nth-child(5){box-shadow:inset 0 3px 0 color-mix(in srgb,var(--lz-done) 70%,transparent)}
+.tk-meta{flex-wrap:nowrap;min-width:0}
+.tk-meta .mono{white-space:nowrap;flex:none}
+.tk-jira{min-width:0}
+.tk-jira .lz{max-width:92px}

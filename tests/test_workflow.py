@@ -258,3 +258,32 @@ def test_redo_step_1_rereads_a_changed_ticket(tmp_path):
         with pytest.raises(GateError, match="busy"):
             await wf.act("OPTR-48490", "redo_gather", 1, "working")
     run(go())
+
+
+def test_use_env_accepts_an_address_without_https(wf):
+    async def go():
+        with pytest.raises(GateError, match="e.g. staging"):
+            await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "not an address"})
+        await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "staging.myapp.com"})
+        await settle(wf)
+        assert wf.tickets.get("OPTR-48507").env.url == "https://staging.myapp.com"
+    run(go())
+
+
+def test_jira_colours_come_from_type_priority_and_status_category(wf):
+    from qa_app.workflow.models import status_category
+    from qa_app.workflow.ticket_context import brief
+    assert status_category({"name": "In Review", "statusCategory": {"key": "indeterminate"}}) == "indeterminate"
+    assert status_category({"name": "Whatever", "statusCategory": {"name": "To Do"}}) == "new"
+    assert [status_category(n) for n in ("Done", "Backlog", "In QA", "")] == ["done", "new", "indeterminate", ""]
+    row = brief({"key": "A-1", "fields": {"summary": "x", "status": {"name": "Done", "statusCategory": {"key": "done"}},
+                                         "issuetype": {"name": "Bug"}, "priority": {"name": "High"}, "components": [{"name": "Frontend"}]}})
+    assert (row["issue_type"], row["priority"], row["status_cat"], row["components"]) == ("Bug", "High", "done", ["Frontend"])
+
+    async def go():  # a sync keeps the card's status, type and priority in step with Jira
+        wf.mock_jira.issues["OPTR-48498"].update(status="Reopened", priority="Highest")
+        await wf.sync()
+        t = wf.tickets.get("OPTR-48498")
+        assert (t.status, t.status_cat, t.priority, t.issue_type) == ("Reopened", "new", "Highest", "Bug")
+        assert wf.tickets.get("OPTR-48520").issue_type == "Story"  # new tickets arrive with them
+    run(go())
