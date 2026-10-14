@@ -14,6 +14,12 @@ html,body{background:#0B0C0E}
 .mode{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:5px;font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;background:var(--minor-bg);color:var(--minor)}
 .c-err{background:var(--crit-bg);color:var(--crit)}
 .drawer-body{flex:1;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:18px}
+.drawer-in{flex:1;min-height:0;display:flex;flex-direction:column;width:100%}
+/* Full screen: the whole window, content kept to a readable width */
+.drawer.is-full{left:0;width:auto;border-left:0;box-shadow:none;z-index:30;align-items:center;background:var(--bg)}
+.drawer.is-full .drawer-in{background:var(--panel)}
+.drawer.is-full .drawer-in{max-width:1040px;border-left:1px solid var(--border);border-right:1px solid var(--border)}
+.drawer.is-full .drawer-body{padding:20px 28px}
 .file-link{color:inherit!important}
 .btn-stop{background:var(--crit-bg);border-color:var(--crit-dot);color:var(--crit)!important}
 .btn-done{background:var(--pass-bg);border-color:transparent;color:var(--pass)!important}

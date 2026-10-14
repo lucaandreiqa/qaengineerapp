@@ -42,6 +42,8 @@ const IC = {
   perf: '<path d="M4 17.5a8 8 0 1 1 16 0"></path><path d="M12 17.5l4-5.5"></path>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>',
   chev: '<path d="M6 9l6 6 6-6"></path>',
+  expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-6 6M4 20l6-6"></path>',
+  shrink: '<path d="M4 14h6v6M20 10h-6V4M10 14l-6 6M14 10l6-6"></path>',
   filter: '<path d="M4 6h16M7 12h10M10 18h4"></path>',
   desktop: '<rect x="3" y="4.5" width="18" height="12" rx="1.5"></rect><path d="M9 20h6M12 16.5V20"></path>',
   tablet: '<rect x="5" y="3" width="14" height="18" rx="2"></rect><path d="M11 17.5h2"></path>',
@@ -140,7 +142,7 @@ const S = {
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
-    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, env: {}, comment: {}, busy: false, err: '' },
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -637,12 +639,13 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
   body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
 
   const canAct = d.primary && !t.error;
-  return `<aside class="drawer" aria-label="Ticket details">
+  return `<aside class="drawer${B.full ? ' is-full' : ''}" aria-label="Ticket details"><div class="drawer-in">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
 ${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${lozenge(t.status, statusCat(t))}
 <a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
-<button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" data-act="close">${svg(IC.close)}</button>
+<button type="button" class="btn btn-quiet btn-icon" aria-label="${B.full ? 'Exit full screen' : 'Full screen'}" title="${B.full ? 'Exit full screen' : 'Full screen'}" aria-pressed="${!!B.full}" data-act="drawerFull">${svg(B.full ? IC.shrink : IC.expand)}</button>
+<button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" title="Close (Esc)" data-act="close">${svg(IC.close)}</button>
 </div>
 <h2 style="margin:0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em">${esc(t.title)}</h2>
 <div class="gates" aria-label="Review gates">${gateTracker(t)}</div>
@@ -655,7 +658,7 @@ ${t.canRedo ? redoButton(t) : ''}
 ${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
 </div>
-</aside>`;
+</div></aside>`;
 }
 
 /* A test environment address as typed: https:// is added when missing. '' when it isn't an address. */
@@ -1407,6 +1410,7 @@ const ACTS = {
   pickEnv: (el) => { S.board.env[el.dataset.key] = el.dataset.v; primaryAction(el.dataset.key); },
   open: (el) => { S.board.sel = el.dataset.key; S.board.actErr = ''; },
   close: () => { S.board.sel = null; S.board.actErr = ''; },
+  drawerFull: () => { S.board.full = !S.board.full; store.set('drawerFull', S.board.full); },
   primary: (el) => primaryAction(el.dataset.key),
   redo: async (el) => {
     const B = S.board, t = B.data.tickets.find((x) => x.key === el.dataset.key);
@@ -1603,6 +1607,10 @@ $app.addEventListener('click', async (ev) => {
 });
 document.addEventListener('pointerdown', (ev) => {
   if (S.board.fopen && !ev.target.closest('.fwrap')) { S.board.fopen = false; schedule(); }
+  if (S.route === 'board' && S.board.sel && ev.button === 0 && ev.target.isConnected
+      && !ev.target.closest('.drawer, .tk-open, .toast, .fwrap')) {
+    S.board.sel = null; S.board.actErr = ''; schedule();
+  }
 });
 function setTip(i) {
   S.board.tip = i;
