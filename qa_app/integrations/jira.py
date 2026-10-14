@@ -47,7 +47,7 @@ def _existing_open(s: requests.Session, cfg: dict, label: str) -> str | None:
 
 
 def _create(s: requests.Session, cfg: dict, f: Finding, result: RunResult, report_url: str | None) -> str:
-    desc = (f"*Automated finding from QA App*\n\n"
+    desc = (f"*Automated finding from YourQA*\n\n"
             f"*Check:* {f.check}\n*Severity:* {f.severity.value}\n*Page:* {f.url}\n"
             f"*Run:* {result.run_id} on {result.config.url}\n\n{{noformat}}{f.details or '—'}{{noformat}}\n")
     if report_url:
@@ -103,7 +103,7 @@ class _McpBugs:
         return issues[0].get("key") if issues else None
 
     def create(self, f: Finding, result: RunResult, report_url: str | None) -> str:
-        desc = (f"**Automated finding from QA Engineer App**\n\n- **Check:** {f.check}\n- **Severity:** {f.severity.value}\n"
+        desc = (f"**Automated finding from YourQA**\n\n- **Check:** {f.check}\n- **Severity:** {f.severity.value}\n"
                 f"- **Page:** {f.url}\n- **Run:** {result.run_id} on {result.config.url}\n\n```\n{f.details or '-'}\n```\n")
         if report_url:
             desc += f"\n[Full report]({report_url})\n"

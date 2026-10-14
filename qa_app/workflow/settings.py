@@ -11,6 +11,14 @@ from ..config import APP_DIR, WORKFLOW_DIR, load_settings
 from .models import DEFAULT_BE_COMPONENTS, DEFAULT_BOTH_NAMES, DEFAULT_FE_COMPONENTS, classify_type, component_list
 
 
+OLD_SIGNATURES = {"Commented by QA Engineer App"}  # the app's earlier name: follow the rename unless you wrote your own
+
+
+def _signature(v: object) -> str:
+    s = str(v or "").strip()
+    return "Commented by YourQA" if not s or s in OLD_SIGNATURES else s
+
+
 def _minutes(v: object) -> int:
     try:
         return max(0, min(int(float(str(v).strip() or 0)), 24 * 60))
@@ -76,7 +84,7 @@ class WorkflowConfig:
         return cls(
             demo=demo, jira_project=w.get("jira_project") or "OPTR", auto_sync_minutes=_minutes(w.get("auto_sync_minutes", 5)),
             jira_column=w.get("jira_column") or "Testing", test_account=w.get("test_account", ""),
-            test_ou=w.get("test_ou", ""), signature=w.get("comment_signature") or "Commented by QA Engineer App",
+            test_ou=w.get("test_ou", ""), signature=_signature(w.get("comment_signature")),
             default_env_url=str(w.get("default_env_url") or "").strip(),
             default_env_name=str(w.get("default_env_name") or "").strip(),
             env_hints=tuple(component_list(w.get("env_hints") or "")),

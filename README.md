@@ -1,4 +1,4 @@
-# QA Engineer App
+# YourQA
 
 A Python + Playwright app that tests websites for you, and takes Jira tickets through a gated QA
 workflow. Give it a URL and it crawls the site, runs the checks you pick, and produces an HTML report

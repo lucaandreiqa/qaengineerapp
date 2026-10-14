@@ -149,7 +149,7 @@ class RunTab(QWidget):
         url = self.url.text().strip()
         checks = [k for k, cb in self.check_boxes.items() if cb.isChecked()]
         if not url or not checks:
-            QMessageBox.warning(self, "QA App", "Enter a URL and select at least one check.")
+            QMessageBox.warning(self, "YourQA", "Enter a URL and select at least one check.")
             return
         cfg = RunConfig(url=url, checks=checks, max_pages=self.max_pages.value(),
                         viewports=[k for k, cb in self.viewport_boxes.items() if cb.isChecked()] or ["desktop"],
@@ -357,7 +357,7 @@ class IntegrationsTab(QScrollArea):
 
     def save(self) -> None:
         save_settings(self.collect())
-        QMessageBox.information(self, "QA App", "Settings saved.")
+        QMessageBox.information(self, "YourQA", "Settings saved.")
 
     def test(self, name: str, status: QLabel) -> None:
         status.setText("Testing…")
@@ -372,7 +372,7 @@ class IntegrationsTab(QScrollArea):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"QA Engineer App {__version__}")
+        self.setWindowTitle(f"YourQA {__version__}")
         self.resize(1400, 860)
         self.history = HistoryTab()
         self.run_tab = RunTab(self)

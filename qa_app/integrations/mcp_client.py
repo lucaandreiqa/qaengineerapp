@@ -28,7 +28,7 @@ from urllib.parse import urlencode, urlparse
 import requests
 
 PROTOCOL_VERSION = "2025-06-18"
-CLIENT_NAME = "QA Engineer App"
+CLIENT_NAME = "YourQA"
 TIMEOUT = 30
 
 
@@ -289,7 +289,7 @@ class McpSession:
         self._id += 1
         res = self._post({"jsonrpc": "2.0", "id": self._id, "method": "initialize", "params": {
             "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-            "clientInfo": {"name": "qa-engineer-app", "title": CLIENT_NAME, "version": "1.0"}}}) or {}
+            "clientInfo": {"name": "yourqa", "title": CLIENT_NAME, "version": "1.0"}}}) or {}
         self._ready = True
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         return res

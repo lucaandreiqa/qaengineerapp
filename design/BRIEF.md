@@ -1,4 +1,4 @@
-# Design brief: QA Engineer App
+# Design brief: YourQA
 
 Paste this into Claude Design (claude.ai/design) as the starting prompt.
 

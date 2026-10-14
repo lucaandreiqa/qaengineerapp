@@ -1,4 +1,4 @@
-/* QA Engineer app tokens + shared components (from the Board screen).
+/* YourQA tokens + shared components (from the Board screen).
    Fonts: https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap
    Apply a theme with data-theme="dark|light" on the .qa root. Severity tokens: --crit*, --major*, --minor*, --info*, --pass* */
 body{margin:0}

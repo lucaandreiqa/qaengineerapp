@@ -39,7 +39,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     "workflow": {"enabled": True, "demo": True, "tracker": "jira",
                  # Pull the board column every N minutes while a real board is connected (0 = only "Sync now").
                  "auto_sync_minutes": 5, "jira_project": "OPTR", "jira_column": "Testing",
-                 "test_account": "", "test_ou": "", "comment_signature": "Commented by QA Engineer App",
+                 "test_account": "", "test_ou": "", "comment_signature": "Commented by YourQA",
                  # Where to test when the ticket names no environment: used only once a ticket is merged/done.
                  "default_env_url": "", "default_env_name": "",
                  # Words or domains that mark your test environments in links, e.g. "preview.myapp.com, staging".

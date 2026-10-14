@@ -19,7 +19,7 @@ def classic() -> int:
     from .ui.main_window import MainWindow
 
     app = QApplication(sys.argv)
-    app.setApplicationName("QA Engineer App")
+    app.setApplicationName("YourQA")
     app.setStyle("Fusion")
     window = MainWindow()
     window.show()
@@ -40,7 +40,7 @@ def web(host: str, port: int, open_browser: bool) -> int:
         sys.stdout = sys.stderr = log
     if open_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    print(f"QA Engineer App running at {url}  (Ctrl+C to stop)")
+    print(f"YourQA running at {url}  (Ctrl+C to stop)")
     from .web import server as web_server
 
     # timeout_graceful_shutdown: never wait more than 3 s for open connections after Ctrl+C.
@@ -51,7 +51,7 @@ def web(host: str, port: int, open_browser: bool) -> int:
         server.run()
     except KeyboardInterrupt:  # uvicorn re-raises Ctrl+C after a clean shutdown
         pass
-    print("QA Engineer App stopped.")
+    print("YourQA stopped.")
     return 0
 
 

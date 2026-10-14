@@ -175,7 +175,7 @@ async def lifespan(_: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="QA Engineer App", lifespan=lifespan)
+app = FastAPI(title="YourQA", lifespan=lifespan)
 
 
 def S() -> Services:
@@ -482,7 +482,7 @@ def _callback_page(ok: bool, text: str, back: str) -> HTMLResponse:
     return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>Jira sign-in</title>
 <body style="font:15px system-ui;max-width:520px;margin:12vh auto;padding:0 16px;color:#17181B">
 <h1 style="font-size:20px">{'Jira connected' if ok else 'Jira sign-in did not finish'}</h1>
-<p>{html.escape(text)}</p><p><a href="{html.escape(back)}">Back to QA Engineer App</a></p></body>""", status_code=200 if ok else 400)
+<p>{html.escape(text)}</p><p><a href="{html.escape(back)}">Back to YourQA</a></p></body>""", status_code=200 if ok else 400)
 
 
 class JiraTokenIn(BaseModel):

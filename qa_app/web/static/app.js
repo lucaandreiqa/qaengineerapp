@@ -1,4 +1,4 @@
-/* QA Engineer front end: Board, Run, History and Integrations. Plain JS, no build step.
+/* YourQA front end: Board, Run, History and Integrations. Plain JS, no build step.
    State lives in S; render() redraws the screen; clicks, inputs and changes are delegated by data-act / data-in. */
 'use strict';
 
@@ -237,7 +237,7 @@ function render() {
 function viewSide() {
   const link = (r, label, icon, n) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}<span class="kbd">⌘${n}</span></a>`;
   return `<nav class="side" aria-label="Main">
-<div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">QA Engineer</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">YourQA</span></div>
 ${link('board', 'Board', IC.board, 1)}${link('run', 'Run', IC.run, 2)}${link('history', 'History', IC.history, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
 ${S.board.data && S.board.data.config.mode !== 'live' ? '<div style="padding:0 4px 10px"><a class="mode" href="#/integrations" title="The Testing board uses sample tickets and simulated Jira and TestRail. Turn it off on the Integrations screen.">Demo data</a></div>' : ''}

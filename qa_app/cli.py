@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(f"## QA App\n\n{result.summary_line()}\n\n| Severity | Check | Finding | Page |\n|---|---|---|---|\n")
+            fh.write(f"## YourQA\n\n{result.summary_line()}\n\n| Severity | Check | Finding | Page |\n|---|---|---|---|\n")
             for f in sorted(result.findings, key=lambda f: f.severity.rank)[:50]:
                 fh.write(f"| {f.severity.value} | {f.check} | {f.title} | {f.url} |\n")
 

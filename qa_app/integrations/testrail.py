@@ -5,7 +5,8 @@ import requests
 
 from ..models import RunResult, Severity
 
-SECTION_NAME = "QA App – automated website checks"
+SECTION_NAME = "YourQA – automated website checks"
+OLD_SECTION_NAMES = ("QA App – automated website checks",)  # keep using a section made under the old name
 PASSED, FAILED = 1, 5
 
 
@@ -41,6 +42,7 @@ def publish(result: RunResult, cfg: dict, shared: dict, log) -> str:
     tr = TestRail(cfg)
     sections = tr.paged(f"get_sections/{tr.project}{tr.suite_q()}", "sections")
     section = next((s for s in sections if s["name"] == SECTION_NAME), None) \
+        or next((s for s in sections if s["name"] in OLD_SECTION_NAMES), None) \
         or tr.post(f"add_section/{tr.project}", {"name": SECTION_NAME, **({"suite_id": tr.suite} if tr.suite else {})})
     cases = {c["title"]: c["id"] for c in tr.paged(f"get_cases/{tr.project}{tr.suite_q()}&section_id={section['id']}", "cases")}
 
@@ -60,7 +62,7 @@ def publish(result: RunResult, cfg: dict, shared: dict, log) -> str:
                             "comment": comment[:4000], **({"defects": ",".join(refs[:10])} if blocking and refs else {})})
 
     run = tr.post(f"add_run/{tr.project}", {
-        "name": f"QA App {result.run_id} – {result.config.url}", "include_all": False,
+        "name": f"YourQA {result.run_id} – {result.config.url}", "include_all": False,
         "case_ids": [r["case_id"] for r in results], **({"suite_id": tr.suite} if tr.suite else {})})
     tr.post(f"add_results_for_cases/{run['id']}", {"results": results})
     return f"run R{run['id']} with {len(results)} results"

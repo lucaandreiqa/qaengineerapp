@@ -33,6 +33,6 @@ def publish(result: RunResult, cfg: dict, shared: dict, log) -> str:
 
 
 def test_connection(cfg: dict) -> str:
-    resp = requests.post(cfg["webhook_url"], json={"text": "QA App: connection test ✅"}, timeout=15)
+    resp = requests.post(cfg["webhook_url"], json={"text": "YourQA: connection test ✅"}, timeout=15)
     resp.raise_for_status()
     return "Test message sent"
