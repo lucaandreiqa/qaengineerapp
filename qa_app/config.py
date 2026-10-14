@@ -27,9 +27,18 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     "zephyr": {"enabled": False, "api_token": "", "project_key": ""},
     "aws": {"enabled": False, "bucket": "", "prefix": "qa-reports/", "region": "eu-central-1",
             "profile": "", "public_base_url": ""},
+    # Testing board: takes tickets from a Jira column through the gated QA workflow.
+    # demo=True uses sample tickets and simulated Jira/TestRail, so nothing real is touched.
+    "workflow": {"enabled": True, "demo": True, "jira_project": "OPTR", "jira_column": "Testing",
+                 "test_account": "andrei.luca@red-to-blue.com", "test_ou": "lucatestaustriastore",
+                 "comment_signature": "Commented by Claude for Luca", "shared_env": "euw",
+                 "workspace": ""},
+    # Claude writes the scenarios, QA checklist and Playwright spec for each ticket.
+    "claude": {"enabled": False, "api_key": "", "model": "claude-sonnet-5-5"},
 }
 
 SECRET_KEYS = {"api_token", "api_key", "client_secret", "webhook_url"}
+WORKFLOW_DIR = APP_DIR / "workflow"
 
 
 def ensure_dirs() -> None:
@@ -55,3 +64,11 @@ def load_settings() -> dict:
 def save_settings(settings: dict) -> None:
     ensure_dirs()
     SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
+def save_section(section: str, values: dict) -> None:
+    """Save one section without writing env-var overrides (e.g. CI secrets) to disk."""
+    ensure_dirs()
+    stored = json.loads(SETTINGS_FILE.read_text(encoding="utf-8")) if SETTINGS_FILE.exists() else {}
+    stored[section] = {**stored.get(section, {}), **values}
+    save_settings(stored)

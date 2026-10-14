@@ -22,8 +22,9 @@ PAGE_CHECKS = {"accessibility": accessibility.run, "visual": visual.run}
 class Runner:
     def __init__(self, config: RunConfig, log: Callable[[str], None] = print,
                  on_finding: Callable[[Finding], None] | None = None,
-                 on_progress: Callable[[int, int], None] | None = None):
+                 on_progress: Callable[[int, int], None] | None = None, run_id: str | None = None):
         self.config = config
+        self.run_id = run_id
         self.log = log
         self.on_finding = on_finding or (lambda f: None)
         self.on_progress = on_progress or (lambda done, total: None)
@@ -41,7 +42,7 @@ class Runner:
         cfg = self.config
         if not cfg.url.startswith(("http://", "https://")):
             cfg.url = "https://" + cfg.url
-        run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_id = self.run_id or datetime.now().strftime("%Y%m%d-%H%M%S")
         run_dir = RUNS_DIR / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         result = RunResult(run_id=run_id, config=cfg, started=datetime.now(), output_dir=str(run_dir))

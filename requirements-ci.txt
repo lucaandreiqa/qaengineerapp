@@ -2,3 +2,4 @@ playwright==1.64.0
 pillow==12.3.0
 requests==2.34.2
 boto3==1.43.113
+jinja2>=3.1

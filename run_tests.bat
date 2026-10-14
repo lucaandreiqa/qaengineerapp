@@ -1,0 +1,5 @@
+@echo off
+cd /d "%~dp0"
+.venv\Scripts\python -m pip install -q -r requirements-dev.txt
+.venv\Scripts\python -m pytest -q
+pause

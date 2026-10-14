@@ -1,9 +1,20 @@
 # QA Engineer App
 
-A desktop app (Python + Playwright + PySide6) that tests websites for you. Give it a URL and it crawls
-the site, runs the checks you pick, and produces an HTML report plus JUnit XML. It can push results
-to Jira, Slack, Teams, TestRail, Xray, Zephyr Scale and AWS S3, and the same engine runs headless in
-CI.
+A Python + Playwright app that tests websites for you, and takes Jira tickets through a gated QA
+workflow. Give it a URL and it crawls the site, runs the checks you pick, and produces an HTML report
+plus JUnit XML. It can push results to Jira, Slack, Teams, TestRail, Xray, Zephyr Scale and AWS S3, and
+the same engine runs headless in CI.
+
+`run_app.bat` (or `python -m qa_app`) opens the app in your browser at http://127.0.0.1:8765:
+
+| Screen | What it does |
+|---|---|
+| **Board** ⌘1 | Tickets from a Jira column (OPTR · Testing) in five lanes with four review gates: checklist → spec → run → Jira comment and move → TestRail cases |
+| **Run** ⌘2 | The website checks below, with live findings, visual diffs (baseline / current / diff) and a log. Any finding can become a Jira issue |
+| **History** ⌘3 | Issues per run per site, past runs, open report or folder, publish to integrations |
+| **Integrations** ⌘4 | Every service, plus the Testing board and Claude settings. Test connection, then Save |
+
+The original PySide window is still there: `run_classic.bat` or `python -m qa_app --classic`.
 
 ## Checks
 
@@ -20,20 +31,56 @@ Severity: **critical** / **major** fail the run; **minor** / **info** are report
 ## Setup (Windows)
 
 ```bat
-setup.bat      :: one-time: venv + packages + Chromium
-run_app.bat    :: start the desktop app
+setup.bat        :: one-time: venv + packages + Chromium
+run_app.bat      :: start the app in your browser
+run_classic.bat  :: the original desktop window
+run_tests.bat    :: workflow tests (pytest)
 ```
 
 Or manually: `python -m venv .venv`, `.venv\Scripts\pip install -r requirements.txt`,
 `.venv\Scripts\python -m playwright install chromium`, `.venv\Scripts\python -m qa_app`.
 
-## Desktop app
+**Already set up?** Run `setup.bat` once more (or `.venv\Scripts\pip install -r requirements.txt`) to add the
+new packages: FastAPI, uvicorn and Jinja2.
+
+## Testing board (ticket workflow)
+
+Each ticket in the Jira column goes through five lanes. Nothing reaches Jira or TestRail until you approve it in the ticket drawer.
+
+| Gate | You review | Then the app |
+|---|---|---|
+| 1 Checklist | Scenarios and QA checklist, every item NOT TESTED | builds `<KEY>.spec.ts` (+ `.serial.spec.ts`) and runs it |
+| 2 Results | Real results, bug notes, cleanup (each setting reverted and re-read), test data left behind | drafts the Jira comment |
+| 3a Comment | The exact comment text (editable) | posts it, then lists the transitions Jira returns |
+| 3b Move | The target state | moves the ticket, drafts TestRail cases (read-only lookup) |
+| 4 Draft | Cases from PASS items only, duplicates removed | pushes only when you press **Push**, then verifies with `get_cases` |
+
+The server enforces these rules, not just the UI:
+- Each approval carries the state you saw, so it can't carry over to the next gate. Auto mode never skips a gate.
+- Posting the comment does not move the ticket; the move is its own approval.
+- Checklist results change only through a run.
+- Jira transitions must match by exact name; a near miss returns the available list.
+- A push never re-adds a case that already exists, so a retry after a partial failure only adds what is missing.
+- An unmerged ticket without a PR or preview link stops at **Needs environment** instead of falling back to the shared environment.
+
+**Demo data** is on by default: the board shows sample OPTR tickets and simulates Jira and TestRail, so you can try it
+safely. To use your real column, set up **Jira** (and **TestRail**) on the Integrations screen, then untick
+*Demo data* on the **Testing board** card. Live mode also needs:
+- **Claude** turned on with an API key, so it writes the scenarios, checklist and spec. Without it the spec is a template with `test.fixme` stubs.
+- A **Playwright workspace folder** (your Playwright repo). Ticket files go to `tests/tickets/<KEY>/` there and run with `npx playwright test --reporter=json`.
+  Each checklist item is one test titled `[n] …`. A test can report PARTIAL or BLOCKED with
+  `test.info().annotations.push({ type: 'qa-result', description: 'blocked: reason' })`.
+- **SSO**: when no session is saved, gate 2 opens a browser on the environment. Sign in, press *I've signed in*, and the session is reused.
+
+Board data lives in `%USERPROFILE%\.qa_app\workflow\`. Demo and live tickets are kept apart, and demo files never go into your workspace.
+
+## Desktop window (classic)
 
 - **Run**: enter a URL, pick checks and viewports, then Run. Findings stream in live. Click one to see details and the screenshot or visual diff.
 - **History**: every past run. Open its report or folder, or publish it to integrations after the fact.
 - **Integrations**: configure each service, click *Test connection*, then Save.
 
-Data lives in `%USERPROFILE%\.qa_app\` (`runs/`, `baselines/`, `settings.json`).
+Data lives in `%USERPROFILE%\.qa_app\` (`runs/`, `baselines/`, `settings.json`), shared by the web UI, the classic window and the CLI.
 To accept intended UI changes, tick *Accept current screenshots as new baselines* and run again.
 
 ## Integrations
@@ -69,12 +116,15 @@ also written to the job page.
 
 ```
 qa_app/
-  __main__.py        desktop entry point (python -m qa_app)
+  __main__.py        entry point: web UI (default) or --classic
   cli.py             headless entry point for CI
   runner.py          crawl + orchestrate checks
   checks/            functional, visual, accessibility, seo, lighthouse
   integrations/      jira, slack, teams, testrail, xray, zephyr, aws_s3
-  report.py          HTML + JUnit output
-  ui/                PySide6 window and background workers
+  report.py          HTML (templates/report.html.j2) + JUnit output
+  web/               FastAPI server, Run bridge to runner.py, static front end
+  workflow/          Testing board: ticket models, gated engine, checklist/spec/comment logic, demo data
+  ui/                PySide6 window and background workers (classic)
+tests/               pytest suite for the workflow rules and the report
 ci/                  pipeline templates
 ```

@@ -1,0 +1,392 @@
+"""Web UI server: Board (ticket workflow), Run, History, Integrations.
+
+Start it with  python -m qa_app  (opens the browser). The classic PySide window is  python -m qa_app --classic.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import platform
+import subprocess
+import time
+from contextlib import asynccontextmanager
+from datetime import date
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .. import integrations
+from ..config import APP_DIR, DEFAULT_SETTINGS, RUNS_DIR, SECRET_KEYS, WORKFLOW_DIR, ensure_dirs, load_settings, save_section
+from ..workflow import agent, seed
+from ..workflow.clients import MockJira, MockTestRail
+from ..workflow.engine import GateError, Workflow
+from ..workflow.models import Ticket
+from ..workflow.settings import WorkflowConfig
+from ..workflow.store import TicketStore, bus
+from .runs import RunManager
+
+log = logging.getLogger("qa_app.web")
+STATIC = Path(__file__).parent / "static"
+
+# Integrations screen. Keys match DEFAULT_SETTINGS in config.py, so the CLI, the classic window
+# and this UI all read and write the same settings.json.
+SEV_OPTS = [{"v": v, "label": v.title()} for v in ("critical", "major", "minor", "info")]
+CATALOGUE: list[dict[str, Any]] = [
+    {"key": "workflow", "name": "Testing board", "mono": "QA", "tint": "#5865E0", "desc": "Which Jira column the board takes tickets from",
+     "fields": [{"k": "demo", "label": "Demo data (sample tickets, simulated Jira and TestRail)", "check": True, "full": True},
+                {"k": "jira_project", "label": "Jira project"}, {"k": "jira_column", "label": "Board column (status)"},
+                {"k": "test_account", "label": "Test account (SSO)"}, {"k": "test_ou", "label": "Test OU"},
+                {"k": "comment_signature", "label": "Comment signature"}, {"k": "shared_env", "label": "Shared environment name"},
+                {"k": "workspace", "label": "Playwright workspace folder (tests/tickets/<KEY>/ is written here)", "full": True,
+                 "ph": str(APP_DIR / "workspace")}],
+     "required": ["jira_project", "jira_column"]},
+    {"key": "claude", "name": "Claude", "mono": "C", "tint": "#C2643F", "desc": "Writes the scenarios, QA checklist and Playwright spec",
+     "fields": [{"k": "api_key", "label": "Anthropic API key", "secret": True, "full": True},
+                {"k": "model", "label": "Model", "full": True}],
+     "required": ["api_key"]},
+    {"key": "jira", "name": "Jira", "mono": "J", "tint": "#2F64D6", "desc": "Board tickets, comments and moves; bugs from findings",
+     "fields": [{"k": "base_url", "label": "Base URL", "full": True, "ph": "https://your-site.atlassian.net"},
+                {"k": "email", "label": "Email"}, {"k": "api_token", "label": "API token", "secret": True},
+                {"k": "project_key", "label": "Project key (for bugs)"},
+                {"k": "issue_type", "label": "Issue type", "options": [{"v": v, "label": v} for v in ("Bug", "Task", "Story")]},
+                {"k": "min_severity", "label": "Minimum severity", "options": SEV_OPTS, "full": True}],
+     "required": ["base_url", "email", "api_token", "project_key"]},
+    {"key": "slack", "name": "Slack", "mono": "S", "tint": "#7B3F8C", "desc": "Post a run summary to a channel",
+     "fields": [{"k": "webhook_url", "label": "Webhook URL", "secret": True, "full": True, "ph": "https://hooks.slack.com/services/…"},
+                {"k": "only_on_failure", "label": "Only on failure", "check": True, "full": True}],
+     "required": ["webhook_url"]},
+    {"key": "teams", "name": "Microsoft Teams", "mono": "T", "tint": "#4F57C2", "desc": "Post a run summary to a channel",
+     "fields": [{"k": "webhook_url", "label": "Webhook URL", "secret": True, "full": True, "ph": "https://…webhook.office.com/…"},
+                {"k": "only_on_failure", "label": "Only on failure", "check": True, "full": True}],
+     "required": ["webhook_url"]},
+    {"key": "testrail", "name": "TestRail", "mono": "TR", "tint": "#1F7F70", "desc": "Run results, and board cases on your go-ahead",
+     "fields": [{"k": "base_url", "label": "Base URL", "full": True, "ph": "https://your-org.testrail.io"},
+                {"k": "username", "label": "Username"}, {"k": "api_key", "label": "API key", "secret": True},
+                {"k": "project_id", "label": "Project ID"}, {"k": "suite_id", "label": "Suite ID"}],
+     "required": ["base_url", "username", "api_key", "project_id"]},
+    {"key": "xray", "name": "Xray", "mono": "X", "tint": "#2E7D3E", "desc": "Import executions into Xray",
+     "fields": [{"k": "client_id", "label": "Client ID"}, {"k": "client_secret", "label": "Client secret", "secret": True},
+                {"k": "project_key", "label": "Project key", "full": True}],
+     "required": ["client_id", "client_secret", "project_key"]},
+    {"key": "zephyr", "name": "Zephyr Scale", "mono": "Z", "tint": "#B5501C", "desc": "Sync test cycles to Zephyr Scale",
+     "fields": [{"k": "api_token", "label": "API token", "secret": True, "full": True, "ph": "Paste an API token"},
+                {"k": "project_key", "label": "Project key"}],
+     "required": ["api_token", "project_key"]},
+    {"key": "aws", "name": "AWS S3", "mono": "S3", "tint": "#9A5B00", "desc": "Upload reports and screenshots",
+     "fields": [{"k": "bucket", "label": "Bucket"}, {"k": "prefix", "label": "Prefix"},
+                {"k": "region", "label": "Region", "options": [{"v": r, "label": r} for r in
+                                                               ("us-east-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-north-1")]},
+                {"k": "profile", "label": "Profile"}, {"k": "public_base_url", "label": "Public base URL", "full": True}],
+     "required": ["bucket"]},
+]
+STATUS_FILE = WORKFLOW_DIR / "integration-status.json"
+
+
+def _status() -> dict:
+    return json.loads(STATUS_FILE.read_text(encoding="utf-8")) if STATUS_FILE.exists() else {}
+
+
+def _set_status(key: str, value: dict) -> None:
+    STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATUS_FILE.write_text(json.dumps({**_status(), key: value}, indent=2), encoding="utf-8")
+
+
+class Services:
+    def __init__(self) -> None:
+        ensure_dirs()
+        WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
+        issues, late = seed.jira_issues()
+        self.workflow = Workflow(TicketStore(WORKFLOW_DIR / "tickets-demo.json"), TicketStore(WORKFLOW_DIR / "tickets.json"),
+                                 MockJira(issues, late), MockTestRail())
+        self.runs = RunManager()
+
+    def seed_demo(self) -> None:
+        store = self.workflow.demo_store
+        if store.tickets or store.done_keys:
+            return
+        seeded = seed.seed_tickets()
+        for t in seeded:
+            store.tickets[t.key] = t
+        cfg = WorkflowConfig.load()
+        cfg.demo, cfg.workspace = True, WORKFLOW_DIR / "demo-workspace"  # demo files never land in a real repo
+        seed.write_seed_files(cfg, seeded)
+        store.finished = {date.today().isoformat(): 3}
+        store.last_sync = time.time() - 120
+        store.save()
+
+    def ticket_view(self, t: Ticket) -> dict:
+        cfg = self.workflow.cfg
+        d = t.public()
+        d["files"] = agent.ticket_files(cfg, t)
+        d["expected"] = self.workflow.expected_action(t)
+        base = load_settings().get("jira", {}).get("base_url") or "https://example.atlassian.net"
+        d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
+        d["envShort"] = agent.env_name(t, cfg) if t.env else ""
+        return d
+
+
+svc: Optional[Services] = None
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global svc
+    svc = Services()
+    svc.seed_demo()
+    svc.workflow.resume()
+    yield
+    for task in svc.workflow.tasks.values():
+        task.cancel()
+
+
+app = FastAPI(title="QA Engineer App", lifespan=lifespan)
+
+
+def S() -> Services:
+    assert svc is not None
+    return svc
+
+
+@app.exception_handler(GateError)
+async def gate_error(_: Request, e: GateError):
+    return JSONResponse({"detail": str(e), **e.extra}, status_code=e.status)
+
+
+# ------------------------------------------------------------------ board
+@app.get("/api/state")
+def state() -> dict:
+    s, cfg = S(), S().workflow.cfg
+    store = s.workflow.tickets
+    return {
+        "config": {"mode": "mock" if cfg.is_mock else "live", "project": cfg.jira_project, "column": cfg.jira_column,
+                   "account": cfg.test_account, "ou": cfg.test_ou, "claude": bool(cfg.anthropic_api_key)},
+        "tickets": [s.ticket_view(t) for t in store.all()],
+        "finishedToday": store.finished_today(),
+        "lastSync": store.last_sync,
+    }
+
+
+@app.post("/api/sync")
+async def sync() -> dict:
+    try:
+        new = await S().workflow.sync()
+    except Exception as e:
+        raise HTTPException(502, f"Jira sync failed: {str(e)[:300]}")
+    return {"new": new, "lastSync": S().workflow.tickets.last_sync}
+
+
+class ActionIn(BaseModel):
+    action: str
+    stage: int
+    sub: str
+    payload: dict[str, Any] = {}
+
+
+@app.post("/api/tickets/{key}/action")
+async def ticket_action(key: str, body: ActionIn) -> dict:
+    try:
+        await S().workflow.act(key, body.action, body.stage, body.sub, body.payload)
+    except GateError:
+        raise
+    except Exception as e:  # Jira / TestRail errors
+        raise HTTPException(502, str(e)[:400])
+    live = S().workflow.tickets.get(key)
+    return {"ticket": S().ticket_view(live) if live else None, "done": live is None}
+
+
+class DraftIn(BaseModel):
+    comment: Optional[str] = None
+    target: Optional[str] = None
+
+
+@app.patch("/api/tickets/{key}/draft")
+def ticket_draft(key: str, body: DraftIn) -> dict:
+    t = S().workflow.save_draft(key, comment=body.comment, target=body.target)
+    return {"ticket": S().ticket_view(t)}
+
+
+@app.get("/api/tickets/{key}/files/{name}")
+def ticket_file(key: str, name: str):
+    root = S().workflow.cfg.ticket_dir(key).resolve()
+    p = (root / name).resolve()
+    if root not in p.parents or not p.exists():
+        raise HTTPException(404)
+    return FileResponse(p, media_type="text/plain; charset=utf-8")
+
+
+# ------------------------------------------------------------------ events
+@app.get("/api/events")
+async def events(request: Request):
+    q = bus.subscribe()
+
+    async def stream():
+        try:
+            yield "retry: 2000\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                if ev.get("type") == "ticket":
+                    t = S().workflow.tickets.get(ev["ticket"]["key"])
+                    if t is None:
+                        continue
+                    ev = {"type": "ticket", "ticket": S().ticket_view(t)}
+                yield f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
+        finally:
+            bus.unsubscribe(q)
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+# ------------------------------------------------------------------ runs (your Runner)
+@app.get("/api/runs")
+def list_runs() -> list[dict]:
+    return S().runs.all()
+
+
+@app.post("/api/runs")
+async def start_run(opts: dict[str, Any] = Body(...)) -> dict:
+    if not str(opts.get("url", "")).strip():
+        raise HTTPException(422, "Enter a URL to test")
+    try:
+        return S().runs.start(opts)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str) -> dict:
+    r = S().runs.get(run_id)
+    if not r:
+        raise HTTPException(404, "Run not found")
+    return r
+
+
+@app.post("/api/runs/{run_id}/stop")
+def stop_run(run_id: str) -> dict:
+    return {"stopping": S().runs.stop(run_id)}
+
+
+@app.post("/api/runs/{run_id}/publish")
+async def publish(run_id: str) -> dict:
+    if not (RUNS_DIR / run_id / "result.json").exists():
+        raise HTTPException(404, "Run not found")
+    return {"result": await asyncio.to_thread(S().runs.publish, run_id)}
+
+
+@app.post("/api/runs/{run_id}/findings/{fid}/jira")
+async def finding_jira(run_id: str, fid: str) -> dict:
+    try:
+        return {"key": await asyncio.to_thread(S().runs.create_jira, run_id, fid)}
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(404, "Finding not found")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(502, str(e)[:300])
+
+
+@app.post("/api/runs/{run_id}/open-folder")
+def open_folder(run_id: str) -> dict:
+    d = RUNS_DIR / run_id
+    if not d.exists():
+        raise HTTPException(404)
+    try:
+        if platform.system() == "Windows":
+            os.startfile(str(d))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["open" if platform.system() == "Darwin" else "xdg-open", str(d)])
+    except OSError as e:
+        raise HTTPException(500, f"Could not open {d}: {e}")
+    return {"path": str(d)}
+
+
+# ------------------------------------------------------------------ integrations
+@app.get("/api/integrations")
+def list_integrations() -> dict:
+    settings, status = load_settings(), _status()
+    cards = []
+    for c in CATALOGUE:
+        values = {f["k"]: settings.get(c["key"], {}).get(f["k"], DEFAULT_SETTINGS[c["key"]].get(f["k"], ""))
+                  for f in c["fields"]}
+        cards.append({**c, "values": values, "enabled": bool(settings.get(c["key"], {}).get("enabled")),
+                      "result": status.get(c["key"])})
+    return {"cards": cards, "mode": "mock" if WorkflowConfig.load().is_mock else "live"}
+
+
+class IntegrationIn(BaseModel):
+    values: dict[str, Any]
+    enabled: bool
+
+
+@app.put("/api/integrations/{key}")
+def save_integration(key: str, body: IntegrationIn) -> dict:
+    if key not in DEFAULT_SETTINGS:
+        raise HTTPException(404)
+    allowed = set(DEFAULT_SETTINGS[key])
+    values = {k: v for k, v in body.values.items() if k in allowed}
+    save_section(key, {**values, "enabled": body.enabled})
+    return {"ok": True}
+
+
+@app.post("/api/integrations/{key}/test")
+async def test_integration(key: str, values: dict[str, Any] = Body(...)) -> dict:
+    card = next((c for c in CATALOGUE if c["key"] == key), None)
+    if not card:
+        raise HTTPException(404)
+    missing = [f["label"] for f in card["fields"] if f["k"] in card["required"] and not str(values.get(f["k"], "")).strip()]
+    if missing:
+        res = {"ok": False, "text": ", ".join(missing) + (" is required" if len(missing) == 1 else " are required")}
+    elif key == "workflow":
+        ws = str(values.get("workspace") or "").strip()
+        res = {"ok": True, "text": "Demo data is on" if values.get("demo") else
+               f"Live · {values['jira_project']} / {values['jira_column']}" + (f" · workspace {ws}" if ws else "")}
+    elif key == "claude":
+        res = await asyncio.to_thread(_test_claude, values)
+    else:
+        try:
+            res = {"ok": True, "text": await asyncio.to_thread(integrations.test_connection, key, values)}
+        except Exception as e:  # show the service's own error on the card
+            res = {"ok": False, "text": (str(e).splitlines() or ["error"])[0][:300]}
+    _set_status(key, res)
+    return res
+
+
+def _test_claude(values: dict) -> dict:
+    import requests
+
+    r = requests.get("https://api.anthropic.com/v1/models", timeout=15,
+                     headers={"x-api-key": values["api_key"], "anthropic-version": "2023-06-01"})
+    return {"ok": r.ok, "text": "API key works" if r.ok else f"HTTP {r.status_code} · {r.text[:150]}"}
+
+
+# ------------------------------------------------------------------ static
+@app.get("/files/{path:path}")
+def app_file(path: str):
+    """Screenshots, diffs and baselines for the Run screen. Only files inside the app folder."""
+    p = (APP_DIR / path).resolve()
+    if APP_DIR.resolve() not in p.parents or not p.is_file():
+        raise HTTPException(404)
+    return FileResponse(p)
+
+
+app.mount("/runs", StaticFiles(directory=str(RUNS_DIR), html=True, check_dir=False), name="runs")
+app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC / "index.html")
+
+
+__all__ = ["app", "SECRET_KEYS"]

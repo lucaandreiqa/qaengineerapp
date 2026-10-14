@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA report · {{ host }}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0}
+.qa{font-family:'Geist',ui-sans-serif,system-ui,sans-serif;font-size:13.5px;line-height:1.5;color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;min-height:100vh}
+.qa *,.qa *::before,.qa *::after{box-sizing:border-box}
+.qa[data-theme=dark]{color-scheme:dark;--bg:#0B0C0E;--panel:#111214;--raised:#17191C;--hover:#1C1F23;--border:#22252A;--border2:#30343A;--fg:#ECEDEF;--muted:#9EA3AC;--faint:#6E737C;--accent:#5865E0;--link:#A9B2FF;--focus:#7C88FF;--track:#22252A;--crit:#FF9592;--crit-bg:rgba(229,72,77,.15);--crit-dot:#E5484D;--major:#FFA057;--major-bg:rgba(247,107,21,.15);--major-dot:#F76B15;--minor:#FFD25F;--minor-bg:rgba(255,178,36,.13);--minor-dot:#FFB224;--info:#B5BAC2;--info-bg:rgba(139,141,152,.17);--info-dot:#8B8D98;--pass:#5BD39A;--pass-bg:rgba(48,164,108,.16);--pass-dot:#30A46C}
+.qa[data-theme=light]{color-scheme:light;--bg:#F6F6F7;--panel:#FFFFFF;--raised:#F3F4F6;--hover:#ECEDF0;--border:#E3E4E8;--border2:#D2D4DA;--fg:#17181B;--muted:#5C616B;--faint:#80858F;--accent:#4C58D6;--link:#3C47B5;--focus:#4C58D6;--track:#E6E7EB;--crit:#C62A2F;--crit-bg:#FDECEC;--crit-dot:#E5484D;--major:#BD4B00;--major-bg:#FFF0E3;--major-dot:#F76B15;--minor:#855400;--minor-bg:#FFF6D9;--minor-dot:#FFB224;--info:#585D66;--info-bg:#EEEFF2;--info-dot:#8B8D98;--pass:#17734A;--pass-bg:#E5F5EC;--pass-dot:#30A46C}
+.qa a{color:var(--link);text-decoration:none}.qa a:hover{text-decoration:underline}
+.qa button,.qa input,.qa select{font:inherit;color:inherit}
+.qa :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.mono{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.btn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:7px;border:1px solid var(--border2);background:var(--panel);color:var(--fg);font-weight:500;cursor:pointer;white-space:nowrap;font-size:13px}
+.btn:hover{background:var(--hover)}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px}
+.h2{margin:0;font-size:15px;font-weight:600}
+.lbl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin:0 0 4px;font-weight:500}
+.seg{display:flex;padding:3px;border-radius:8px;background:var(--raised);border:1px solid var(--border)}
+.seg button{height:26px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;font-weight:500}
+.seg button[aria-pressed=true]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.18),inset 0 0 0 1px var(--border)}
+.status{display:inline-flex;align-items:center;height:30px;padding:0 12px;border-radius:7px;font-weight:600;letter-spacing:.06em;font-size:12px;text-transform:uppercase}
+.st-failed{color:var(--crit);background:var(--crit-bg)}.st-passed{color:var(--pass);background:var(--pass-bg)}.st-stopped{color:var(--minor);background:var(--minor-bg)}
+.chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:999px;font-size:11.5px;font-weight:500;white-space:nowrap}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%}
+.sev-critical{color:var(--crit);background:var(--crit-bg)}.sev-critical::before{background:var(--crit-dot)}
+.sev-major{color:var(--major);background:var(--major-bg)}.sev-major::before{background:var(--major-dot)}
+.sev-minor{color:var(--minor);background:var(--minor-bg)}.sev-minor::before{background:var(--minor-dot)}
+.sev-info{color:var(--info);background:var(--info-bg)}.sev-info::before{background:var(--info-dot)}
+.sev-none{color:var(--pass);background:var(--pass-bg)}.sev-none::before{background:var(--pass-dot)}
+.tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:var(--raised);border:1px solid var(--border);color:var(--muted);font-size:11.5px;font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.d-all{background:var(--faint)}.d-critical{background:var(--crit-dot)}.d-major{background:var(--major-dot)}.d-minor{background:var(--minor-dot)}.d-info{background:var(--info-dot)}
+.tile{padding:14px 16px;border-left:1px solid var(--border);flex:1 1 130px;min-width:0}.tile:first-child{border-left:0}
+.num{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.15}
+.gauge{display:flex;flex-direction:column;align-items:center;gap:8px;flex:1 1 120px;min-width:110px}
+.gauge svg{width:92px;height:92px}
+.g-track{stroke:var(--track)}.g-good{stroke:var(--pass-dot)}.g-mid{stroke:var(--minor-dot)}.g-bad{stroke:var(--crit-dot)}
+.t-good{color:var(--pass)}.t-mid{color:var(--minor)}.t-bad{color:var(--crit)}
+.metric{flex:1 1 160px;min-width:150px;padding:14px;border-radius:9px;background:var(--raised);border:1px solid var(--border);display:flex;flex-direction:column;gap:4px}
+.fchip{height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500}
+.fchip[aria-pressed=true]{background:var(--raised);color:var(--fg);border-color:var(--border2)}
+.fchip .n{font-family:'Geist Mono',monospace;font-size:11px;color:var(--faint)}
+.search{display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--border2);background:var(--bg);color:var(--faint)}
+.search input{border:0;background:transparent;outline:none;min-width:0;flex:1;color:var(--fg)}
+.sel{height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--border2);background:var(--bg);cursor:pointer}
+.fcard{display:grid;grid-template-columns:184px minmax(0,1fr);gap:16px;padding:14px 16px;border-top:1px solid var(--border)}
+.fcard[hidden]{display:none}
+.ph{aspect-ratio:16/10;border-radius:6px;border:1px dashed var(--border2);display:grid;place-items:center;color:var(--faint);background:var(--raised);font-size:11.5px}
+.thumb{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top;border-radius:6px;border:1px solid var(--border);background:var(--raised)}
+details>summary{cursor:pointer;color:var(--muted);font-size:12px;list-style:none;display:inline-flex;align-items:center;gap:6px}
+details>summary::-webkit-details-marker{display:none}
+details[open]>summary .chev{transform:rotate(90deg)}
+.pre{margin:8px 0 0;padding:10px 12px;border-radius:8px;background:var(--raised);border:1px solid var(--border);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.tbl{width:100%;border-collapse:collapse;min-width:680px}
+.tbl th{height:34px;padding:0 16px;text-align:left;font-size:11.5px;font-weight:500;color:var(--muted);background:var(--raised);border-bottom:1px solid var(--border)}
+.tbl td{height:42px;padding:0 16px;border-bottom:1px solid var(--border);white-space:nowrap}
+.tbl .r{text-align:right;font-family:'Geist Mono',monospace;font-variant-numeric:tabular-nums}
+.ok{color:var(--pass)}.bad{color:var(--crit)}
+@media (max-width:640px){.fcard{grid-template-columns:1fr}}
+@media print{.noprint{display:none!important}.fcard[hidden]{display:grid}}
+</style>
+</head>
+<body>
+<div class="qa" id="root" data-theme="light">
+<div style="max-width:1200px;margin:0 auto;padding:24px 24px 48px;display:flex;flex-direction:column;gap:18px">
+
+<div class="noprint" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+<svg width="22" height="22" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--accent)"/><path d="M7.5 13.5l3.5 3.5 7.5-8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<span style="font-weight:600">QA Engineer App</span><span style="color:var(--faint)">/</span><span style="color:var(--muted)">Test report</span>
+<div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+<div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-btn="light" aria-pressed="true">Light</button><button type="button" data-theme-btn="dark" aria-pressed="false">Dark</button></div>
+<button type="button" class="btn" id="copy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span>Copy link</span></button>
+<button type="button" class="btn" onclick="window.print()"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8.5V3.5h10v5M7 17H4.5V10a1.5 1.5 0 0 1 1.5-1.5h12a1.5 1.5 0 0 1 1.5 1.5v7H17M7 14h10v6.5H7z"/></svg>Print</button>
+</div>
+</div>
+
+<header class="card" style="padding:22px 24px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+<h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:-.02em">{{ host }}</h1>
+<span class="status st-{{ 'failed' if failed else 'passed' }}">{{ 'Failed' if failed else 'Passed' }}</span>
+<a class="mono" href="{{ base }}" style="margin-left:auto;font-size:12.5px">{{ base }}</a>
+</div>
+<dl style="margin:0;display:flex;flex-wrap:wrap;gap:10px 32px">
+<div><dt class="lbl">Run</dt><dd class="mono" style="margin:0">{{ run_id }}</dd></div>
+<div><dt class="lbl">Started</dt><dd class="mono" style="margin:0">{{ started }}</dd></div>
+<div><dt class="lbl">Duration</dt><dd class="mono" style="margin:0">{{ duration }}</dd></div>
+<div><dt class="lbl">Viewports</dt><dd style="margin:0">{{ viewports }}</dd></div>
+<div><dt class="lbl">Checks</dt><dd style="margin:0">{{ checks }}</dd></div>
+</dl>
+</header>
+
+<section class="card" aria-label="Severity counts" style="display:flex;flex-wrap:wrap;overflow:hidden">
+{% for k in sev_keys %}<div class="tile"><div class="lbl"><span class="dot d-{{ k }}"></span>{{ SEVL[k] }}</div><div class="num">{{ counts[k] }}</div></div>{% endfor %}
+<div class="tile"><div class="lbl">Pages tested</div><div class="num">{{ pages|length }}</div></div>
+<div class="tile"><div class="lbl">Pages with findings</div><div class="num">{{ pages_with }}</div></div>
+</section>
+
+{% if gauges or vitals %}
+<section class="card" aria-labelledby="lh-h" style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+<h2 id="lh-h" class="h2">{{ 'Lighthouse' if gauges else 'Core Web Vitals' }}</h2>
+<span style="color:var(--muted);font-size:12px" class="mono">{{ lh_url }}</span>
+{% if gauges %}<span style="margin-left:auto;display:flex;gap:14px;font-size:12px;color:var(--muted)">
+<span style="display:inline-flex;align-items:center;gap:6px"><span class="dot" style="background:var(--crit-dot)"></span>0–49</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span class="dot" style="background:var(--minor-dot)"></span>50–89</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span class="dot" style="background:var(--pass-dot)"></span>90–100</span></span>{% endif %}
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+{% for g in gauges %}
+<div class="gauge"><svg viewBox="0 0 92 92" role="img" aria-label="{{ g.label }} score {{ g.score }} out of 100">
+<circle class="g-track" cx="46" cy="46" r="38" fill="none" stroke-width="7"/>
+<circle class="{{ g.cls }}" cx="46" cy="46" r="38" fill="none" stroke-width="7" stroke-linecap="round" stroke-dasharray="{{ g.dash }}" transform="rotate(-90 46 46)"/>
+<text x="46" y="53" text-anchor="middle" font-size="22" font-weight="600" fill="currentColor" font-family="Geist, sans-serif">{{ g.score }}</text></svg>
+<span style="font-weight:500;font-size:12.5px">{{ g.label }}</span></div>
+{% endfor %}
+<div style="display:flex;flex-wrap:wrap;gap:12px;flex:2 1 340px">
+{% for v in vitals %}
+<div class="metric"><span class="lbl" style="margin:0">{{ v.label }}</span>
+<span class="t-{{ v.band }}" style="font-size:24px;font-weight:600;font-variant-numeric:tabular-nums">{{ v.value }}</span>
+<span style="font-size:12px;color:var(--muted)"><span class="t-{{ v.band }}" style="font-weight:500">{{ v.word }}</span> · {{ v.goal }}</span></div>
+{% endfor %}
+</div></div>
+{% if lh_rows|length > 1 %}<div style="overflow-x:auto;border-top:1px solid var(--border);margin:0 -20px -18px"><table class="tbl"><thead><tr><th scope="col">Page</th><th scope="col" class="r">Perf</th><th scope="col" class="r">A11y</th><th scope="col" class="r">Best pr.</th><th scope="col" class="r">SEO</th><th scope="col" class="r">LCP</th><th scope="col" class="r">CLS</th><th scope="col">Report</th></tr></thead><tbody>
+{% for r in lh_rows %}<tr><td class="mono">{{ r.url }}</td>{% for k in ['performance','accessibility','best-practices','seo'] %}<td class="r">{{ r.s.get(k, '—') }}</td>{% endfor %}<td class="r">{{ r.s.get('lcp_ms', '—') }} ms</td><td class="r">{{ r.s.get('cls', '—') }}</td><td>{% if r.report %}<a href="{{ r.report }}">open</a>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="fd-h" style="overflow:hidden">
+<div style="padding:16px 16px 10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+<h2 id="fd-h" class="h2">Findings</h2>
+<span class="mono" style="color:var(--muted);font-size:12px"><span id="shown">{{ findings|length }}</span> of {{ findings|length }}</span>
+<label class="search" style="margin-left:auto;flex:0 1 240px"><svg class="ic" style="width:14px;height:14px" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg><span class="sr-only">Search findings</span><input type="search" id="q" placeholder="Search findings"></label>
+<label class="sr-only" for="check">Filter by check</label>
+<select id="check" class="sel"><option value="all">All checks</option>{% for k, v in CHECKS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+</div>
+<div role="group" aria-label="Filter by severity" style="display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 14px;border-bottom:1px solid var(--border)">
+<button type="button" class="fchip" data-sev="all" aria-pressed="true"><span class="dot d-all"></span>All<span class="n">{{ findings|length }}</span></button>
+{% for k in sev_keys %}<button type="button" class="fchip" data-sev="{{ k }}" aria-pressed="false"><span class="dot d-{{ k }}"></span>{{ SEVL[k] }}<span class="n">{{ counts[k] }}</span></button>{% endfor %}
+</div>
+<div id="list">
+{% for f in findings %}
+<article class="fcard" data-sev="{{ f.sev }}" data-check="{{ f.check }}" data-text="{{ (f.title ~ ' ' ~ f.url ~ ' ' ~ f.details)|lower }}">
+<div>
+{% if f.kind == 'diff' and f.diff %}<a href="{{ f.diff }}"><img class="thumb" src="{{ f.diff }}" alt="Visual diff for {{ f.title }}" loading="lazy"></a>
+{% elif f.shot %}<a href="{{ f.shot }}"><img class="thumb" src="{{ f.shot }}" alt="Screenshot for {{ f.title }}" loading="lazy"></a>
+{% else %}<div class="ph">No screenshot</div>{% endif %}
+</div>
+<div style="min-width:0;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+<span class="chip sev-{{ f.sev }}">{{ f.sevLabel }}</span><span class="tag">{{ f.checkLabel }}</span>
+<span class="mono" style="margin-left:auto;font-size:11.5px;color:var(--faint)">{{ f.id }}</span>
+</div>
+<h3 style="margin:0;font-size:14.5px;font-weight:600">{{ f.title }}</h3>
+<a class="mono trunc" href="{{ f.href }}" style="font-size:12px;display:block">{{ f.href }}</a>
+<details{% if loop.index <= 2 %} open{% endif %}><summary><svg class="ic chev" style="width:12px;height:12px" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>Details</summary><pre class="pre mono">{{ f.details }}</pre></details>
+</div>
+</article>
+{% endfor %}
+<div id="none" style="padding:32px 16px;text-align:center;color:var(--muted)"{% if findings %} hidden{% endif %}>{{ 'No findings match these filters.' if findings else 'No findings. Every enabled check passed.' }}</div>
+</div>
+</section>
+
+<section class="card" aria-labelledby="pg-h" style="overflow:hidden">
+<div style="padding:16px;display:flex;align-items:baseline;gap:10px"><h2 id="pg-h" class="h2">Pages crawled</h2><span class="mono" style="color:var(--muted);font-size:12px">{{ pages|length }} pages</span></div>
+<div style="overflow-x:auto;border-top:1px solid var(--border)">
+<table class="tbl"><thead><tr><th scope="col">Page</th><th scope="col">HTTP</th><th scope="col" class="r">Load</th><th scope="col" class="r">Findings</th><th scope="col">Worst</th></tr></thead><tbody>
+{% for p in pages %}<tr><td><a class="mono" href="{{ p.href }}">{{ p.path }}</a></td><td class="mono"><span class="{{ 'ok' if p.code < 400 else 'bad' }}">{{ p.code }}</span></td><td class="r" style="color:var(--muted)">{{ p.load }}</td><td class="r">{{ p.n }}</td><td><span class="chip sev-{{ p.worst }}">{{ p.worstLabel }}</span></td></tr>{% endfor %}
+</tbody></table></div>
+</section>
+
+<footer style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;color:var(--muted);font-size:12px;padding-top:4px">
+<span>Generated by QA Engineer App · {{ generated }}</span><span class="mono">runs/{{ run_id }}/report.html</span>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  var root = document.getElementById('root');
+  try { var t = localStorage.getItem('qa-report-theme'); if (t) setTheme(t); } catch (e) {}
+  function setTheme(t) {
+    root.dataset.theme = t;
+    document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.themeBtn === t)); });
+    try { localStorage.setItem('qa-report-theme', t); } catch (e) {}
+  }
+  document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.onclick = function () { setTheme(b.dataset.themeBtn); }; });
+  document.getElementById('copy').onclick = function () {
+    var span = this.querySelector('span');
+    (navigator.clipboard ? navigator.clipboard.writeText(location.href) : Promise.reject()).then(
+      function () { span.textContent = 'Link copied'; }, function () { span.textContent = 'Copy failed'; });
+  };
+  var sev = 'all';
+  var q = document.getElementById('q'), check = document.getElementById('check');
+  function apply() {
+    var text = q.value.trim().toLowerCase(), n = 0;
+    document.querySelectorAll('.fcard').forEach(function (c) {
+      var ok = (sev === 'all' || c.dataset.sev === sev) && (check.value === 'all' || c.dataset.check === check.value) && (!text || c.dataset.text.indexOf(text) > -1);
+      c.hidden = !ok; if (ok) n++;
+    });
+    document.getElementById('shown').textContent = n;
+    var total = document.querySelectorAll('.fcard').length;
+    document.getElementById('none').hidden = total === 0 ? false : n > 0;
+  }
+  document.querySelectorAll('.fchip').forEach(function (b) {
+    b.onclick = function () {
+      sev = b.dataset.sev;
+      document.querySelectorAll('.fchip').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      apply();
+    };
+  });
+  q.oninput = apply; check.onchange = apply;
+})();
+</script>
+</body>
+</html>

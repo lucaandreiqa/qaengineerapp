@@ -70,3 +70,61 @@ def test_connection(cfg: dict) -> str:
     tr = TestRail(cfg)
     p = tr.get(f"get_project/{tr.project}")
     return f"Connected — project {p['name']}"
+
+
+# ---------------------------------------------------------------------------------------------
+# Ticket workflow (Testing board): draft cases from PASS items, push on explicit go-ahead.
+# Sections are addressed by path, e.g. "Finance › Gift cards".
+# ---------------------------------------------------------------------------------------------
+
+def section_paths(cfg: dict) -> dict[str, int]:
+    tr = TestRail(cfg)
+    secs = tr.paged(f"get_sections/{tr.project}{tr.suite_q()}", "sections")
+    by_id = {s["id"]: s for s in secs}
+
+    def path(s: dict) -> str:
+        parts = [s["name"]]
+        while s.get("parent_id") and s["parent_id"] in by_id:
+            s = by_id[s["parent_id"]]
+            parts.append(s["name"])
+        return " › ".join(reversed(parts))
+
+    return {path(s): s["id"] for s in secs}
+
+
+def find_section(cfg: dict, path: str) -> int | None:
+    return section_paths(cfg).get(path)
+
+
+def ensure_section(cfg: dict, path: str) -> int:
+    tr = TestRail(cfg)
+    existing = section_paths(cfg)
+    parent = None
+    built: list[str] = []
+    for name in [p.strip() for p in path.split("›")]:
+        built.append(name)
+        key = " › ".join(built)
+        if key in existing:
+            parent = existing[key]
+            continue
+        body = {"name": name, **({"suite_id": tr.suite} if tr.suite else {}), **({"parent_id": parent} if parent else {})}
+        parent = existing[key] = tr.post(f"add_section/{tr.project}", body)["id"]
+    return parent
+
+
+def section_cases(cfg: dict, section_id: int | None) -> list[dict]:
+    if section_id is None:
+        return []
+    tr = TestRail(cfg)
+    return [{"id": c["id"], "title": c["title"]}
+            for c in tr.paged(f"get_cases/{tr.project}{tr.suite_q()}&section_id={section_id}", "cases")]
+
+
+def add_case(cfg: dict, section_id: int, title: str, steps: str, expected: str) -> int:
+    tr = TestRail(cfg)
+    try:
+        return tr.post(f"add_case/{section_id}", {"title": title, "custom_steps": steps, "custom_expected": expected})["id"]
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 400:  # template without those fields
+            return tr.post(f"add_case/{section_id}", {"title": title})["id"]
+        raise
