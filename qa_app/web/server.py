@@ -367,8 +367,9 @@ def list_integrations() -> dict:
     for c in CATALOGUE:
         values = {f["k"]: settings.get(c["key"], {}).get(f["k"], DEFAULT_SETTINGS[c["key"]].get(f["k"], ""))
                   for f in c["fields"]}
+        logo = next((f"/static/logos/{c['key']}.{ext}" for ext in ("svg", "png") if (STATIC / "logos" / f"{c['key']}.{ext}").exists()), None)
         cards.append({**c, "values": values, "enabled": bool(settings.get(c["key"], {}).get("enabled")),
-                      "result": status.get(c["key"])})
+                      "result": status.get(c["key"]), "logo": logo})
     return {"cards": cards, "mode": "mock" if WorkflowConfig.load().is_mock else "live"}
 
 

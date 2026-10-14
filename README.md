@@ -100,6 +100,10 @@ formats stay in the code, so editing a skill changes how Claude works, not what 
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
+**Integrations page.** Grouped by purpose (project management, AI, test case management, communication, reports &
+storage, board settings). Connected services are one-line rows with a green check; click one to change it. Each has
+its own icon; to show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
+
 **Two ways to connect Claude** (Integrations › Claude › *Connection*):
 - **API key**: an Anthropic API key from platform.claude.com, billed per use. Works for a team and in the background.
 - **Claude Code on this computer**: for your own use, each step runs the `claude` command you're signed into with your

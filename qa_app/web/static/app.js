@@ -976,7 +976,7 @@ function parseJiraLink(text) {
 function viewJiraConnect() {
   const J = S.jira, st = J.st;
   const head = (right) => `<div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)">
-<span class="mono-tile" style="background:#2F64D6" aria-hidden="true">J</span>
+${integTile('jira', '#2F64D6', 'J', jiraLogo())}
 <div style="min-width:0;flex:1"><h2 id="int-jira-connect" style="margin:0;font-size:14px;font-weight:600">Jira</h2><div style="color:var(--muted);font-size:12px">The board you test from: tickets, comments and moves, with your own Atlassian access</div></div>${right}</div>`;
   const err = J.err ? `<div class="callout c-err" role="alert">${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<span>${esc(J.err)}</span></div>` : '';
   if (!st) return `<section class="card jc" aria-labelledby="int-jira-connect">${head('')}<div class="jc-body"><div class="notice">Loading…</div></div></section>`;
@@ -1047,6 +1047,26 @@ async function jiraConnect() {
 
 /* Integrations: grouped by what they're for. A connected integration is a one-line row with a green check;
    click it to see or change its settings. Ones that need attention open by themselves. */
+/* Integration icons: simple original glyphs for what each service does, in its colour.
+   An official logo file in static/logos/<key>.svg (or .png) replaces the glyph when present. */
+const INTEG_ICON = {
+  jira: '<rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M9.3 4v16M14.7 4v16"></path><path d="M6 8h1.6M11.2 8h1.6M11.2 11.5h1.6M16.4 8h1.6"></path>',
+  claude: '<path d="M5 19l8.5-8.5"></path><path d="M15.5 3.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4L12 7l2.4-1.1z"></path><path d="M19 13.5l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6z"></path>',
+  slack: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4A1.5 1.5 0 0 1 4 14.5z"></path><path d="M10.2 7.2l-1 6.4M14.2 7.2l-1 6.4M8.2 9.4h7.2M7.6 11.9h7.2"></path>',
+  teams: '<circle cx="9" cy="8.5" r="2.8"></circle><path d="M3.8 18.5a5.2 5.2 0 0 1 10.4 0"></path><circle cx="16.6" cy="9.4" r="2.2"></circle><path d="M15.3 13.8a4.2 4.2 0 0 1 4.9 4.7"></path>',
+  testrail: '<rect x="5" y="3.5" width="14" height="17" rx="2"></rect><path d="M8.3 9.2l1.6 1.6 3-3.2M8.3 15.2l1.6 1.6 3-3.2"></path><path d="M15.2 9.6h.8M15.2 15.6h.8"></path>',
+  xray: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"></path><path d="M7.5 12h9"></path><path d="M9.5 9.2l2.5 5.6 2.5-5.6"></path>',
+  zephyr: '<path d="M19 12a7 7 0 0 1-12.4 4.4M5 12a7 7 0 0 1 12.4-4.4"></path><path d="M17.6 4v3.8h-3.8M6.4 20v-3.8h3.8"></path>',
+  aws: '<ellipse cx="12" cy="6.2" rx="7" ry="2.6"></ellipse><path d="M5 6.2l1.5 11.7c.2 1.5 2.6 2.6 5.5 2.6s5.3-1.1 5.5-2.6L19 6.2"></path><path d="M6 11.2c1.4.9 3.6 1.4 6 1.4s4.6-.5 6-1.4"></path>',
+  workflow: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
+};
+function integTile(key, tint, mono, logo) {
+  if (logo) return `<span class="mono-tile itile-logo" aria-hidden="true"><img src="${esc(logo)}" alt=""></span>`;
+  const d = INTEG_ICON[key];
+  return `<span class="mono-tile" style="background:${tint}" aria-hidden="true">${d ? svg(d, 'itile-ic') : esc(mono || '?')}</span>`;
+}
+const jiraLogo = () => { const c = (S.integ.cards || []).find((x) => x.key === 'jira'); return c && c.logo; };
+
 const INTEG_GROUPS = [
   ['Project management', 'Where tickets come from, and where QA comments and moves go', ['jira-mcp', 'jira']],
   ['AI', 'Who does the work in each board step', ['claude']],
@@ -1105,7 +1125,7 @@ function integRow(c) {
   return `<section class="irow${open ? ' is-open' : ''}" aria-labelledby="int-${c.key}">
 <div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="${c.key}" aria-expanded="${open}" aria-controls="ib-${c.key}">
-<span class="mono-tile" style="background:${c.tint}" aria-hidden="true">${esc(c.mono)}</span>
+${integTile(c.key, c.tint, c.mono, c.logo)}
 <span class="irow-text"><span id="int-${c.key}" class="irow-name">${esc(c.name)}</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
 ${chip}${svg(IC.chev, 'ic irow-chev')}</button>
 ${c.key === 'workflow' ? '' : !on && !open ? `<button type="button" class="btn btn-sm" data-act="integSetup" data-key="${c.key}">Set up</button>`
@@ -1125,7 +1145,7 @@ function jiraRow() {
   const summary = c ? `${c.site} · ${c.project.name} (${c.project.key}) · ${c.board.name}${st.column ? ' · ' + st.column : ''}` : 'Paste your board link and sign in with Atlassian';
   return `<section class="irow" aria-labelledby="int-jira-mcp"><div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="jira-mcp" aria-expanded="false">
-<span class="mono-tile" style="background:#2F64D6" aria-hidden="true">J</span>
+${integTile('jira', '#2F64D6', 'J', jiraLogo())}
 <span class="irow-text"><span id="int-jira-mcp" class="irow-name">Jira</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
 ${statusChip(kind, kind === 'ok' ? 'Connected' : kind === 'err' ? 'Signed out' : 'Not connected')}${svg(IC.chev, 'ic irow-chev')}</button>
 </div></section>`;
