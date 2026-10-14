@@ -104,6 +104,12 @@ the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back t
 settings). Connected services are one-line rows with a green check; click one to change it. Each has its own icon; to
 show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
 
+**Board sync and filters.** The board pulls its column automatically every 5 minutes while a real board is connected
+(change or turn it off on Integrations → Testing board; a failed sync shows on the board's status pill and waits a full
+interval before retrying). **Filter** opens views by what a ticket needs (waiting on me, at a review gate, needs
+attention, blocked, failing checks, Claude working) plus FE / BE, issue type and priority; active filters show as
+removable pills.
+
 **Where tickets come from: Jira or Azure Boards.** One card each; whichever column you pick last feeds the Testing board.
 
 - *Jira*: paste the board link once, then choose how to sign in: **Atlassian sign-in** (no token to copy) or

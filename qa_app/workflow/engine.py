@@ -65,6 +65,9 @@ class Workflow:
         self.mock_testrail = mock_testrail or MockTestRail()
         self.tasks: dict[str, asyncio.Task] = {}
         self.toast: Callable[[str], None] = lambda msg: bus.publish({"type": "toast", "message": msg})
+        self.sync_error = ""          # the last automatic sync's error, shown on the board until one works
+        self._sync_failed_at = 0.0
+        self._syncing = False
         agent.usage_listeners.append(self._on_usage)
 
     def _on_usage(self, key: str, step: str, model: str, usage: dict, billing: str = "api") -> None:
@@ -146,7 +149,51 @@ class Workflow:
         return self.tickets.patch(key, **fields)
 
     # ---------------------------------------------------------------- sync
+    AUTO_SYNC_TICK = 30  # seconds between checks; the interval itself is the board setting (minutes)
+
+    async def auto_sync(self) -> None:
+        """Pull the board column every few minutes while a real board is connected. Runs for the app's lifetime."""
+        while True:
+            await asyncio.sleep(self.AUTO_SYNC_TICK)
+            try:
+                await self.auto_sync_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # never let the loop die
+                pass
+
+    async def auto_sync_once(self, now: Optional[float] = None) -> Optional[list[str]]:
+        """Sync if the interval has passed. None when it wasn't due (or is off), else the new ticket keys.
+        A failure waits a full interval before trying again, and is shown on the board."""
+        cfg = self.cfg
+        mins = cfg.auto_sync_minutes
+        if cfg.is_mock or mins <= 0 or self._syncing:
+            return None
+        now = now or time.time()
+        if now - max(self.tickets.last_sync or 0.0, self._sync_failed_at) < mins * 60:
+            return None
+        try:
+            new = await self.sync()
+        except Exception as e:
+            self._sync_failed_at = now
+            self.sync_error = (str(e).splitlines() or ["error"])[0][:300]
+            bus.publish({"type": "sync", "lastSync": self.tickets.last_sync, "error": self.sync_error, "auto": True})
+            return None
+        if new:
+            self.toast(f"Auto-sync: {len(new)} new ticket{'s' if len(new) != 1 else ''} · {', '.join(new[:4])}{'…' if len(new) > 4 else ''}")
+        return new
+
     async def sync(self) -> list[str]:
+        self._syncing = True
+        try:
+            new = await self._sync()
+        finally:
+            self._syncing = False
+        self.sync_error = ""
+        bus.publish({"type": "sync", "lastSync": self.tickets.last_sync, "error": "", "new": new})
+        return new
+
+    async def _sync(self) -> list[str]:
         issues = await self._call(self.jira().search_column, self.cfg.jira_project, self.cfg.jira_column)
         new: list[Ticket] = []
         for i in issues:

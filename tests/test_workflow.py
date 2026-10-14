@@ -298,3 +298,46 @@ def test_type_comes_from_labels_too():
     assert classify_type([], fe, be, labels=["BE", "login"]) == "BE"
     assert classify_type(["Frontend"], fe, be, labels=["BE"]) == "FE+BE"  # component + label
     assert Config().ticket_type([], ["FE/BE"]) == "FE+BE"
+
+
+def test_auto_sync_runs_on_its_interval_and_backs_off_after_a_failure(tmp_path):
+    from qa_app.workflow.store import bus
+
+    class Jira(MockJira):
+        fail = False
+
+        def search_column(self, project, column):
+            if self.fail:
+                raise RuntimeError("401 Unauthorized")
+            return super().search_column(project, column)
+
+    issues, late = seed.jira_issues()
+    jira = Jira(issues[:1], [])
+    cfg = Config(demo=False, data_dir=tmp_path, workspace=tmp_path / "ws", auto_sync_minutes=5, jira_project="SCRUM", jira_column="QA")
+    w = Workflow(TicketStore(tmp_path / "demo.json"), TicketStore(tmp_path / "live.json"), jira, MockTestRail(), cfg=cfg)
+    w.jira = lambda: jira
+    w.spawn = lambda key, coro: coro.close()  # don't start step 1 here
+    seen = []
+
+    async def go():
+        events = bus.subscribe()
+        t0 = 1_000_000.0
+        assert await w.auto_sync_once(now=t0) == [issues[0]["key"]]       # never synced: due now
+        w.tickets.last_sync = t0
+        assert await w.auto_sync_once(now=t0 + 60) is None                # 1 min later: not due
+        jira.fail = True
+        assert await w.auto_sync_once(now=t0 + 301) is None               # due, but Jira fails
+        assert w.sync_error.startswith("401")
+        assert await w.auto_sync_once(now=t0 + 400) is None               # waits a full interval after a failure
+        jira.fail = False
+        assert await w.auto_sync_once(now=t0 + 301 + 300) == []           # works again, nothing new
+        assert w.sync_error == ""
+        w._cfg = Config(demo=False, data_dir=tmp_path, auto_sync_minutes=0)
+        assert await w.auto_sync_once(now=t0 + 10_000) is None            # off
+        await asyncio.sleep(0.01)
+        while not events.empty():
+            seen.append(events.get_nowait())
+        bus.unsubscribe(events)
+    run(go())
+    syncs = [e for e in seen if e["type"] == "sync"]
+    assert [bool(e["error"]) for e in syncs] == [False, True, False]

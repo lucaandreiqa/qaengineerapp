@@ -42,6 +42,7 @@ const IC = {
   perf: '<path d="M4 17.5a8 8 0 1 1 16 0"></path><path d="M12 17.5l4-5.5"></path>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>',
   chev: '<path d="M6 9l6 6 6-6"></path>',
+  filter: '<path d="M4 6h16M7 12h10M10 18h4"></path>',
   desktop: '<rect x="3" y="4.5" width="18" height="12" rx="1.5"></rect><path d="M9 20h6M12 16.5V20"></path>',
   tablet: '<rect x="5" y="3" width="14" height="18" rx="2"></rect><path d="M11 17.5h2"></path>',
   mobile: '<rect x="7" y="3" width="10" height="18" rx="2"></rect><path d="M11 17.5h2"></path>',
@@ -138,7 +139,8 @@ const S = {
   theme: store.get('theme', 'dark'),
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
-  board: { data: null, sel: null, q: '', you: false, type: store.get('boardType', 'all'), env: {}, comment: {}, busy: false, err: '' },
+  board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -184,6 +186,8 @@ function connect() {
       d.tickets = d.tickets.filter((t) => t.key !== ev.key);
       d.finishedToday = ev.finished_today;
       if (S.board.sel === ev.key) S.board.sel = null;
+    } else if (ev.type === 'sync' && d) {
+      d.lastSync = ev.lastSync; d.syncError = ev.error || '';
     } else if (ev.type === 'toast') {
       toast(ev.message);
       return;
@@ -286,6 +290,64 @@ function deco(t) {
   return d;
 }
 
+/* Board filters. Views say what the ticket needs; type, issue type and priority narrow it further. */
+const GATE_SUBS = new Set(['gate', 'comment', 'transition', 'approved']);
+const isBlocked = (t) => !!t.error || t.sub === 'blocked' || t.sub === 'sso';
+const isFailing = (t) => allItems(t).some((i) => i.result === 'fail' || i.result === 'blocked');
+const isHighPrio = (t) => /highest|high|critical|blocker|urgent/i.test(t.priority || '');
+const VIEWS = [
+  ['all', 'All tickets', () => true, ''],
+  ['you', 'Waiting on me', (t) => !isWorking(t) || !!t.error, 'Everything Claude isn\'t working on right now'],
+  ['gated', 'At a review gate', (t) => !t.error && GATE_SUBS.has(t.sub), 'Gates 1–4: checklist, results, comment & move, TestRail draft'],
+  ['attention', 'Needs attention', (t) => isBlocked(t) || isFailing(t), 'Blocked, or checks failed'],
+  ['blocked', 'Blocked', isBlocked, 'Missing test environment, SSO sign-in, or stopped with an error'],
+  ['failing', 'Failing checks', isFailing, 'A checklist item failed or was blocked'],
+  ['working', 'Claude working', (t) => isWorking(t) && !t.error, 'Gathering, building, running or drafting'],
+];
+const viewOf = (v) => VIEWS.find((x) => x[0] === v) || VIEWS[0];
+
+function boardFilters(B, tickets) {
+  const q = B.q.trim().toLowerCase();
+  const bySearch = tickets.filter((t) => !q || (t.key + ' ' + t.title + ' ' + (t.labels || []).join(' ')).toLowerCase().includes(q));
+  const facets = (skip) => (t) => (skip === 'type' || B.type === 'all' || (t.type || '') === B.type)
+    && (skip === 'itype' || B.itype === 'all' || (t.issue_type || '') === B.itype)
+    && (skip === 'prio' || B.prio === 'all' || isHighPrio(t));
+  const inView = (t) => viewOf(B.view)[2](t);
+  return {
+    visible: bySearch.filter((t) => inView(t) && facets()(t)),
+    viewCount: (v) => bySearch.filter((t) => viewOf(v)[2](t) && facets()(t)).length,
+    count: (skip, pred) => bySearch.filter((t) => inView(t) && facets(skip)(t) && pred(t)).length,
+    itypes: [...new Set(tickets.map((t) => t.issue_type).filter(Boolean))].sort(),
+    active: (B.view !== 'all') + (B.type !== 'all') + (B.itype !== 'all') + (B.prio !== 'all'),
+  };
+}
+
+function viewFilters(B, F) {
+  const chip = (act, v, label, on, n, extra = '') => `<button type="button" class="fchip" aria-pressed="${on}" data-act="${act}" data-v="${esc(v)}">${extra}${esc(label)}${n == null ? '' : `<span class="seg-n">${n}</span>`}</button>`;
+  const typeDot = (v) => `<span class="tdot tdot-${v === 'FE+BE' ? 'both' : v.toLowerCase()}" aria-hidden="true"></span>`;
+  const views = VIEWS.map(([v, label, , hint]) => `<button type="button" class="fview" role="menuitemradio" aria-checked="${B.view === v}" data-act="fview" data-v="${v}" title="${esc(hint)}">
+<span class="fview-l">${esc(label)}${hint ? `<span class="fview-h">${esc(hint)}</span>` : ''}</span><span class="seg-n">${F.viewCount(v)}</span></button>`).join('');
+  const types = [['all', 'Any'], ['FE', 'FE'], ['BE', 'BE'], ['FE+BE', 'FE+BE']].map(([v, l]) =>
+    chip('ftype', v, l, B.type === v, v === 'all' ? null : F.count('type', (t) => (t.type || '') === v), v === 'all' ? '' : typeDot(v))).join('');
+  const itypes = [chip('fitype', 'all', 'Any', B.itype === 'all', null)].concat(F.itypes.map((v) =>
+    chip('fitype', v, v, B.itype === v, F.count('itype', (t) => t.issue_type === v), issueTypeIcon(v, 14)))).join('');
+  const prios = chip('fprio', 'all', 'Any', B.prio === 'all', null) + chip('fprio', 'high', 'High and above', B.prio === 'high', F.count('prio', isHighPrio), priorityIcon('High', 14));
+  const menu = B.fopen ? `<div class="fmenu" role="dialog" aria-label="Filter tickets">
+<div class="fsec"><div class="fsec-h">Show</div><div class="fviews" role="menu">${views}</div></div>
+<div class="fsec"><div class="fsec-h">FE / BE</div><div class="fchips">${types}</div></div>
+${F.itypes.length > 1 ? `<div class="fsec"><div class="fsec-h">Issue type</div><div class="fchips">${itypes}</div></div>` : ''}
+<div class="fsec"><div class="fsec-h">Priority</div><div class="fchips">${prios}</div></div>
+<div class="ffoot"><button type="button" class="btn btn-quiet btn-sm" data-act="fclear" ${F.active ? '' : 'disabled'}>Clear filters</button><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="ftoggle">Done</button></div>
+</div>` : '';
+  const pills = [];
+  if (B.view !== 'all') pills.push(['view', viewOf(B.view)[1]]);
+  if (B.type !== 'all') pills.push(['type', B.type]);
+  if (B.itype !== 'all') pills.push(['itype', B.itype]);
+  if (B.prio !== 'all') pills.push(['prio', 'High priority']);
+  return `<div class="fwrap"><button type="button" class="btn${F.active ? ' is-active' : ''}" data-act="ftoggle" aria-expanded="${B.fopen}" aria-haspopup="dialog">${svg(IC.filter, 'ic')}Filter${F.active ? `<span class="fcount">${F.active}</span>` : ''}</button>${menu}</div>
+${pills.map(([k, l]) => `<span class="fpill">${esc(l)}<button type="button" data-act="funset" data-v="${k}" aria-label="Remove filter ${esc(l)}">${svg(IC.close, 'ic')}</button></span>`).join('')}`;
+}
+
 function viewBoard() {
   const B = S.board, data = B.data;
   if (!data) {
@@ -293,44 +355,40 @@ function viewBoard() {
 <div class="${B.err ? 'callout c-err' : 'notice'}">${B.err ? svg(IC.err) + esc(B.err) : 'Loading tickets…'}</div></main>`;
   }
   const c = data.config;
-  const q = B.q.trim().toLowerCase();
-  const waiting = data.tickets.filter((t) => !isWorking(t) || t.error).length;
-  const base = data.tickets.filter((t) => (!q || (t.key + ' ' + t.title).toLowerCase().includes(q)) && (!B.you || !isWorking(t) || t.error));
-  const typeCount = (ty) => base.filter((t) => (t.type || '') === ty).length;
+  const waiting = data.tickets.filter(viewOf('you')[2]).length;
+  const attention = data.tickets.filter(viewOf('attention')[2]).length;
   if (B.type !== 'all' && !TYPES.includes(B.type)) B.type = 'all';
-  const visible = B.type === 'all' ? base : base.filter((t) => (t.type || '') === B.type);
-  const typeOpts = [['all', 'All', base.length], ['FE', 'FE', typeCount('FE')], ['BE', 'BE', typeCount('BE')], ['FE+BE', 'FE+BE', typeCount('FE+BE')]];
-  const typeSeg = `<div class="seg seg-type" role="group" aria-label="Ticket type">${typeOpts.map(([v, label, n]) =>
-    `<button type="button" aria-pressed="${B.type === v}" data-act="ttype" data-v="${esc(v)}" title="${esc(v === 'all' ? 'Every ticket type' : typeName(v))}">${v && v !== 'all' ? `<span class="tdot tdot-${v === 'FE+BE' ? 'both' : v.toLowerCase()}" aria-hidden="true"></span>` : ''}${label}<span class="seg-n">${n}</span></button>`).join('')}</div>`;
+  if (!VIEWS.some((x) => x[0] === B.view)) B.view = 'all';
+  const F = boardFilters(B, data.tickets);
+  const visible = F.visible;
   const lanes = LANES.map((l, i) => {
     const cards = visible.filter((t) => t.stage === i);
     return `<section class="lane" role="listitem" aria-labelledby="lane-${i + 1}">
 <div class="lane-head">
 <div style="display:flex;align-items:center;gap:8px"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" style="margin:0;font-size:13px;font-weight:600">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span>
-<button type="button" class="lane-info" aria-label="What ${esc(l.name)} does" aria-describedby="lane-tip-${i + 1}">${svg(IC.info, 'ic ic-s')}</button></div>
-<p class="lane-tip" id="lane-tip-${i + 1}" role="tooltip">${l.desc}</p>
+<button type="button" class="lane-info" data-tip="${i}" aria-label="What ${esc(l.name)} does" aria-describedby="lane-tip-${i + 1}">${svg(IC.info, 'ic ic-s')}</button></div>
+<p class="lane-tip${B.tip === i ? ' is-open' : ''}" id="lane-tip-${i + 1}" role="tooltip">${l.desc}</p>
 <div class="gate-line${i === 1 ? '' : ' has-gate'}">${svg(IC.lock, 'ic ic-s')}${l.gate}<a class="lane-skill" href="#/skills?step=${STEP_SKILL[i]}" title="How Claude does this step">${svg(IC.skill, 'ic ic-s')}Skill</a></div>
 </div>
-<div class="lane-body">${cards.map(viewCard).join('') || `<div class="lane-empty">${l.empty}</div>`}</div>
+<div class="lane-body">${cards.map(viewCard).join('') || `<div class="lane-empty">${F.active || B.q.trim() ? 'No tickets here match the filters' : l.empty}</div>`}</div>
 </section>`;
   }).join('');
   return `<main class="main">
 <header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
 <div style="min-width:0">
 <h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Testing board</h1>
-<p style="margin:2px 0 0;color:var(--muted)">Tickets in the Jira <strong style="color:var(--fg);font-weight:500">${esc(c.column)}</strong> column of ${esc(c.project)}, taken through the test-ticket workflow. <strong style="color:var(--fg);font-weight:500">${waiting} waiting on you</strong> · ${data.finishedToday} finished today.</p>
+<p style="margin:2px 0 0;color:var(--muted)">Tickets in the Jira <strong style="color:var(--fg);font-weight:500">${esc(c.column)}</strong> column of ${esc(c.project)}, taken through the test-ticket workflow. <button type="button" class="linkish" data-act="fview" data-v="you">${waiting} waiting on you</button>${attention ? ` · <button type="button" class="linkish linkish-warn" data-act="fview" data-v="attention">${attention} need${attention === 1 ? 's' : ''} attention</button>` : ''} · ${data.finishedToday} finished today.</p>
 </div>
 <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 ${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${onPlan(data.claude) ? '≈' : ''}${fmtUsd(data.claude.cost)} on this board${onPlan(data.claude) ? ' · your plan' : ''}</span>` : ''}
 <span class="pill" title="Auto mode never skips a review gate">${svg(IC.lock, 'ic ic-s')}Auto mode · 4 gates always stop</span>
-<span class="pill" role="status"><span class="d d-ok"></span>${esc(c.tracker || 'Jira')} · ${esc(c.project)} · ${esc(c.column)} · ${ago(data.lastSync)}</span>
+<span class="pill" role="status" title="${esc(data.syncError ? 'Automatic sync failed: ' + data.syncError : data.autoSync ? `Pulls new tickets every ${data.autoSync} min (Integrations → Testing board)` : 'Automatic sync is off (Integrations → Testing board)')}"><span class="d ${data.syncError ? 'd-err' : 'd-ok'}"></span>${esc(c.tracker || 'Jira')} · ${esc(c.project)} · ${esc(c.column)} · ${data.syncError ? 'sync failed' : ago(data.lastSync)}${data.autoSync ? ` · auto ${data.autoSync} min` : ''}</span>
 <button type="button" class="btn" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic spin' : 'ic')}Sync now</button>
 </div>
 </header>
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 <label class="search" style="flex:0 1 260px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search tickets</span><input id="board-q" type="search" placeholder="Search key or title" value="${esc(B.q)}" data-in="boardQ"></label>
-<div class="seg" role="group" aria-label="Show"><button type="button" aria-pressed="${!B.you}" data-act="you" data-v="0">All tickets</button><button type="button" aria-pressed="${B.you}" data-act="you" data-v="1">Waiting on me</button></div>
-${typeSeg}
+${viewFilters(B, F)}
 ${c.account ? `<span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">Tests as ${esc(c.account)}${c.ou ? ` · ${esc(c.ou)}` : ''}</span>` : ''}
 </div>
 ${c.mode !== 'live' ? `<div class="notice jc-banner">${svg(IC.info)}<span>These are sample tickets. Paste your Jira board link to test real tickets.</span><a class="btn btn-sm btn-primary" href="#/integrations" style="margin-left:auto">Connect Jira${svg(IC.arrow, 'ic ic-s')}</a></div>` : ''}
@@ -1224,7 +1282,7 @@ function integBody(c) {
     const id = `f-${c.key}-${f.k}`, v = I.vals[c.key][f.k];
     const wrap = f.full ? 'full' : '';
     if (f.check) return `<div class="${wrap}"><label class="cb" style="height:32px"><input type="checkbox" ${v ? 'checked' : ''} data-in="integCheck" data-key="${c.key}" data-v="${f.k}">${esc(f.label)}</label></div>`;
-    if (f.options) return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><select id="${id}" class="inp" data-in="integVal" data-key="${c.key}" data-v="${f.k}">${f.options.map((o) => `<option value="${esc(o.v)}" ${o.v === v ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
+    if (f.options) return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><select id="${id}" class="inp" data-in="integVal" data-key="${c.key}" data-v="${f.k}">${f.options.map((o) => `<option value="${esc(o.v)}" ${String(o.v) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
     const revealed = !!I.reveal[c.key + '.' + f.k];
     const mono = f.secret || /url/i.test(f.label) || ['bucket', 'prefix', 'id'].includes(f.k);
     return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><div class="${f.secret ? 'secret' : ''}">
@@ -1334,14 +1392,19 @@ const ACTS = {
     S.board.syncing = true; schedule();
     try {
       const r = await api('POST', '/api/sync');
-      S.board.data.lastSync = r.lastSync;
+      S.board.data.lastSync = r.lastSync; S.board.data.syncError = '';
       toast(r.new.length ? `Pulled ${r.new.join(', ')} from ${S.board.data.config.tracker || 'Jira'} ${S.board.data.config.column}` : `No new tickets in ${S.board.data.config.column}`);
     } catch (e) { toast(e.message); }
     S.board.syncing = false;
   },
-  you: (el) => { S.board.you = el.dataset.v === '1'; },
+  ftoggle: () => { S.board.fopen = !S.board.fopen; },
+  fview: (el) => { S.board.view = el.dataset.v; store.set('boardView', el.dataset.v); },
+  ftype: (el) => { S.board.type = el.dataset.v; store.set('boardType', el.dataset.v); },
+  fitype: (el) => { S.board.itype = el.dataset.v; store.set('boardIType', el.dataset.v); },
+  fprio: (el) => { S.board.prio = el.dataset.v; store.set('boardPrio', el.dataset.v); },
+  funset: (el) => { const k = el.dataset.v; S.board[k] = 'all'; store.set({ view: 'boardView', type: 'boardType', itype: 'boardIType', prio: 'boardPrio' }[k], 'all'); },
+  fclear: () => { ['view', 'type', 'itype', 'prio'].forEach((k) => { S.board[k] = 'all'; }); ['boardView', 'boardType', 'boardIType', 'boardPrio'].forEach((k) => store.set(k, 'all')); },
   pickEnv: (el) => { S.board.env[el.dataset.key] = el.dataset.v; primaryAction(el.dataset.key); },
-  ttype: (el) => { S.board.type = el.dataset.v; store.set('boardType', S.board.type); },
   open: (el) => { S.board.sel = el.dataset.key; S.board.actErr = ''; },
   close: () => { S.board.sel = null; S.board.actErr = ''; },
   primary: (el) => primaryAction(el.dataset.key),
@@ -1538,6 +1601,20 @@ $app.addEventListener('click', async (ev) => {
   await fn(el, ev);
   schedule();
 });
+document.addEventListener('pointerdown', (ev) => {
+  if (S.board.fopen && !ev.target.closest('.fwrap')) { S.board.fopen = false; schedule(); }
+});
+function setTip(i) {
+  S.board.tip = i;
+  document.querySelectorAll('.lane-tip').forEach((el, n) => el.classList.toggle('is-open', n === i));
+}
+$app.addEventListener('pointerover', (ev) => { const b = ev.target.closest('.lane-info'); if (b) setTip(+b.dataset.tip); });
+$app.addEventListener('pointerout', (ev) => {
+  const b = ev.target.closest('.lane-info');
+  if (b && !(ev.relatedTarget && b.contains(ev.relatedTarget)) && document.activeElement !== b) setTip(-1);
+});
+$app.addEventListener('focusin', (ev) => { const b = ev.target.closest('.lane-info'); setTip(b ? +b.dataset.tip : -1); });
+$app.addEventListener('focusout', (ev) => { if (ev.target.closest('.lane-info')) setTip(-1); });
 const onInput = (ev) => {
   const el = ev.target.closest('[data-in]');
   if (!el) return;
@@ -1569,7 +1646,7 @@ document.addEventListener('keydown', (ev) => {
   if (mod && ['1', '2', '3', '4', '5'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }
   if (mod && ev.key === 'Enter' && S.route === 'run' && !(S.run.cur && S.run.cur.state === 'running')) { ev.preventDefault(); startRun(); }
   if (ev.key === 'Escape') {
-    if (S.run.zoom) S.run.zoom = false; else if (S.board.sel) { S.board.sel = null; }
+    if (S.board.fopen) S.board.fopen = false; else if (S.run.zoom) S.run.zoom = false; else if (S.board.sel) { S.board.sel = null; }
     schedule();
   }
 });

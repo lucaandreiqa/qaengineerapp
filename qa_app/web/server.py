@@ -44,6 +44,9 @@ CATALOGUE: list[dict[str, Any]] = [
     {"key": "workflow", "name": "Testing board", "mono": "QA", "tint": "#5865E0", "desc": "Which Jira or Azure Boards column the board takes tickets from",
      "fields": [{"k": "demo", "label": "Demo data (sample tickets, simulated Jira and TestRail)", "check": True, "full": True},
                 {"k": "jira_project", "label": "Project key"}, {"k": "jira_column", "label": "Board column"},
+                {"k": "auto_sync_minutes", "label": "Sync the board automatically", "options": [
+                    {"v": "0", "label": "Off (Sync now only)"}, {"v": "2", "label": "Every 2 minutes"}, {"v": "5", "label": "Every 5 minutes"},
+                    {"v": "10", "label": "Every 10 minutes"}, {"v": "15", "label": "Every 15 minutes"}, {"v": "30", "label": "Every 30 minutes"}]},
                 {"k": "test_account", "label": "Test account (SSO)"},
                 {"k": "test_ou", "label": "Test scope (optional)", "ph": "e.g. a test store, tenant or workspace"},
                 {"k": "comment_signature", "label": "Comment signature"},
@@ -165,7 +168,9 @@ async def lifespan(_: FastAPI):
     svc = Services()
     svc.seed_demo()
     svc.workflow.resume()
+    auto = asyncio.create_task(svc.workflow.auto_sync())
     yield
+    auto.cancel()
     for task in svc.workflow.tasks.values():
         task.cancel()
 
@@ -199,6 +204,7 @@ def state() -> dict:
         "model": cfg.anthropic_model,
         "finishedToday": store.finished_today(),
         "lastSync": store.last_sync,
+        "autoSync": 0 if cfg.is_mock else cfg.auto_sync_minutes, "syncError": s.workflow.sync_error,
     }
 
 

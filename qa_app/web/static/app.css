@@ -199,9 +199,35 @@ html,body{background:#0B0C0E}
 .lane-info{display:inline-grid;place-items:center;width:22px;height:22px;margin-left:-2px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--faint);cursor:help}
 .lane-info:hover,.lane-info:focus-visible{color:var(--fg);background:var(--hover)}
 .lane-info:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
-.lane-tip{position:absolute;left:10px;right:10px;top:40px;z-index:20;margin:0;padding:8px 10px;border-radius:8px;background:var(--panel);border:1px solid var(--border2);box-shadow:0 6px 20px var(--shadow);color:var(--fg);font-size:12px;line-height:1.45;opacity:0;visibility:hidden;transform:translateY(-2px);transition:opacity .12s,transform .12s,visibility .12s;pointer-events:none}
-.lane-head:has(.lane-info:hover) .lane-tip,.lane-head:has(.lane-info:focus) .lane-tip{opacity:1;visibility:visible;transform:none}
-@media (prefers-reduced-motion:reduce){.lane-tip{transition:none}}
+.lane-tip{position:absolute;left:10px;right:10px;top:40px;z-index:20;margin:0;padding:8px 10px;border-radius:8px;background:var(--panel);border:1px solid var(--border2);box-shadow:0 6px 20px var(--shadow);color:var(--fg);font-size:12px;line-height:1.45;display:none;pointer-events:none}
+.lane-tip.is-open{display:block}
+/* Board filters: one Filter button with a menu, active filters as removable pills */
+.fwrap{position:relative}
+.fwrap > .btn.is-active{border-color:var(--accent);color:var(--fg)}
+.fcount{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;margin-left:2px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:11px;font-weight:600}
+.fmenu{position:absolute;left:0;top:calc(100% + 6px);z-index:40;width:340px;max-width:calc(100vw - 32px);max-height:min(560px,calc(100vh - 160px));overflow:auto;padding:6px;border-radius:10px;background:var(--panel);border:1px solid var(--border2);box-shadow:0 12px 32px var(--shadow)}
+.fsec{padding:8px 8px 10px}
+.fsec + .fsec{border-top:1px solid var(--border)}
+.fsec-h{font-size:11.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px}
+.fviews{display:flex;flex-direction:column;gap:1px;margin:0 -6px}
+.fview{display:flex;align-items:center;gap:10px;width:100%;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.fview:hover{background:var(--hover)}
+.fview[aria-checked=true]{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.fview[aria-checked=true] .fview-l{font-weight:600}
+.fview-l{flex:1;min-width:0;display:flex;flex-direction:column}
+.fview-h{font-size:11.5px;color:var(--muted);font-weight:400}
+.fchips{display:flex;flex-wrap:wrap;gap:6px}
+.fchip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--border2);background:var(--panel);color:var(--fg);font:inherit;font-size:12.5px;cursor:pointer}
+.fchip:hover{background:var(--hover)}
+.fchip[aria-pressed=true]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel));box-shadow:0 0 0 1px var(--accent)}
+.ffoot{display:flex;gap:8px;padding:8px;border-top:1px solid var(--border)}
+.fpill{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 10px;border-radius:7px;background:color-mix(in srgb,var(--accent) 14%,var(--panel));color:var(--fg);font-size:12.5px;font-weight:500}
+.fpill button{display:inline-grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--muted);cursor:pointer}
+.fpill button:hover{background:var(--hover);color:var(--fg)}
+.fpill .ic{width:12px;height:12px}
+.linkish{padding:0;border:0;background:none;font:inherit;color:var(--fg);font-weight:500;cursor:pointer;text-decoration:underline;text-decoration-color:var(--border2);text-underline-offset:3px}
+.linkish:hover{text-decoration-color:currentColor}
+.linkish-warn{color:var(--major)}
 .lane-skill{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:var(--muted);text-decoration:none;font-size:11.5px}
 .lane-skill:hover{color:var(--fg)}
 @media (max-width:900px){.sk-wrap{grid-template-columns:1fr}.sk-list{flex-direction:row;overflow-x:auto}.sk-step{flex:0 0 220px}}

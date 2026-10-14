@@ -11,6 +11,13 @@ from ..config import APP_DIR, WORKFLOW_DIR, load_settings
 from .models import DEFAULT_BE_COMPONENTS, DEFAULT_BOTH_NAMES, DEFAULT_FE_COMPONENTS, classify_type, component_list
 
 
+def _minutes(v: object) -> int:
+    try:
+        return max(0, min(int(float(str(v).strip() or 0)), 24 * 60))
+    except ValueError:
+        return 5
+
+
 @dataclass
 class WorkflowConfig:
     demo: bool = True
@@ -31,6 +38,7 @@ class WorkflowConfig:
     anthropic_model: str = "claude-sonnet-5-5"
     claude_mode: str = "api"  # api (API key) | claude_code (the Claude Code CLI on this computer, your Claude plan) | off
     mock_speed: float = 1.0
+    auto_sync_minutes: int = 5  # 0 = off
     data_dir: Path = WORKFLOW_DIR
 
     @property
@@ -66,7 +74,7 @@ class WorkflowConfig:
         if demo:  # the sample tickets use a sample staging site
             w = {**w, "default_env_url": "https://staging.shop-demo.test/", "default_env_name": "shared staging"}
         return cls(
-            demo=demo, jira_project=w.get("jira_project") or "OPTR",
+            demo=demo, jira_project=w.get("jira_project") or "OPTR", auto_sync_minutes=_minutes(w.get("auto_sync_minutes", 5)),
             jira_column=w.get("jira_column") or "Testing", test_account=w.get("test_account", ""),
             test_ou=w.get("test_ou", ""), signature=w.get("comment_signature") or "Commented by QA Engineer App",
             default_env_url=str(w.get("default_env_url") or "").strip(),
