@@ -43,7 +43,8 @@ DEFAULT_SETTINGS: dict[str, dict] = {
                  "both_names": "FE+BE, FE/BE, BE+FE, Fullstack, Full-stack, Full stack",
                  "jira_column_statuses": ""},
     # Claude writes the scenarios, QA checklist and Playwright spec for each ticket.
-    "claude": {"enabled": False, "api_key": "", "model": "claude-sonnet-5-5"},
+    # mode "api": an Anthropic API key · "claude_code": the Claude Code CLI on this computer, signed in with your Claude plan
+    "claude": {"enabled": False, "mode": "api", "api_key": "", "model": "claude-sonnet-5-5"},
 }
 
 SECRET_KEYS = {"api_token", "api_key", "client_secret", "webhook_url"}

@@ -112,8 +112,8 @@ def env_name(t: Ticket, cfg: Config) -> str:
 
 # The ticket a step is working on, set by the engine, so each Claude call's cost lands on the right ticket.
 CURRENT_TICKET: contextvars.ContextVar[str] = contextvars.ContextVar("qa_current_ticket", default="")
-# Called after every Claude call with (ticket key, step, model, usage block from the API reply).
-usage_listeners: list[Callable[[str, str, str, dict], None]] = []
+# Called after every Claude call with (ticket key, step, model, usage block, billing "api" | "plan").
+usage_listeners: list[Callable[[str, str, str, dict, str], None]] = []
 
 
 def _ask_claude_sync(cfg: Config, system: str, prompt: str, max_tokens: int) -> tuple[str, str, dict]:
@@ -128,11 +128,17 @@ def _ask_claude_sync(cfg: Config, system: str, prompt: str, max_tokens: int) -> 
 
 
 async def ask_claude(cfg: Config, system: str, prompt: str, max_tokens: int = 4000) -> str:
-    text, model, usage = await asyncio.to_thread(_ask_claude_sync, cfg, system, prompt, max_tokens)
+    if cfg.claude_mode == "claude_code":  # the Claude Code CLI on this computer, on the user's own Claude plan
+        from . import claude_code
+        text, model, usage = await asyncio.to_thread(claude_code.ask, cfg.anthropic_model, system, prompt)
+        billing = "plan"
+    else:
+        text, model, usage = await asyncio.to_thread(_ask_claude_sync, cfg, system, prompt, max_tokens)
+        billing = "api"
     step = re.search(r'<skill step="([^"]+)"', system)
     for listener in list(usage_listeners):
         try:
-            listener(CURRENT_TICKET.get(), step.group(1) if step else "other", model, usage)
+            listener(CURRENT_TICKET.get(), step.group(1) if step else "other", model, usage, billing)
         except Exception:  # cost tracking never breaks a step
             pass
     return text
@@ -162,7 +168,7 @@ def skill_source(step: str, cfg: Config) -> str:
 
 async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[Section], bool]:
     """Returns (scenarios markdown, checklist sections, serial_needed)."""
-    if cfg.anthropic_api_key:
+    if cfg.claude_ready:
         if issue.get("context"):  # the whole ticket: every field, all comments, links, attachments
             from .ticket_context import for_prompt
             ticket = for_prompt(issue["context"], extra={
@@ -238,7 +244,7 @@ def spec_template(t: Ticket, cfg: Config, serial: bool = False) -> str:
 
 async def build_spec(cfg: Config, t: Ticket) -> list[str]:
     files = []
-    if cfg.anthropic_api_key and not cfg.is_mock:
+    if cfg.claude_ready and not cfg.is_mock:
         prompt = (f"Ticket {t.key}: {t.title}\nBase URL: {t.env.url if t.env else 'process.env.BASE_URL'}\n"
                   f"Test account (SSO, storage state is preloaded): {who(cfg)}\n\n"
                   f"Checklist:\n{checklist_md(t)}")
@@ -409,7 +415,7 @@ async def review_results(cfg: Config, t: Ticket, details: dict) -> bool:
     """Step 3: Claude writes the bug note and severity for failed / partial / blocked items. True if it did."""
     items = t.items()
     todo = [(n, i) for n, i in enumerate(items, 1) if i.result in ("fail", "partial", "blocked")]
-    if not cfg.anthropic_api_key or not todo:
+    if not cfg.claude_ready or not todo:
         return False
     lines = [f"[{n}] {RES_LABEL[i.result]} · {i.text}\nRunner said: {details.get(n - 1) or details.get(str(n - 1)) or i.bug or '(nothing)'}"
              for n, i in todo]
@@ -430,7 +436,7 @@ async def review_results(cfg: Config, t: Ticket, details: dict) -> bool:
 
 async def write_comment(cfg: Config, t: Ticket, today: Optional[date] = None) -> str:
     """Step 4: the QA comment, written by Claude with the jira-comment skill; the template without Claude."""
-    if not cfg.anthropic_api_key or cfg.is_mock:
+    if not cfg.claude_ready or cfg.is_mock:
         return comment_text(t, cfg, today)
     today = today or date.today()
     prompt = (f"Ticket {t.key}: {t.title} ({type_label(t.type)})\nVerified: {today.day} {today.strftime('%b %Y')} on "
@@ -443,7 +449,7 @@ async def write_comment(cfg: Config, t: Ticket, today: Optional[date] = None) ->
 async def write_cases(cfg: Config, t: Ticket, existing_titles: list[str]) -> list[DraftCase]:
     """Step 5: TestRail cases from the passing items, written by Claude with the testrail skill; the template without."""
     passed = [i for i in t.items() if i.result == "pass"]
-    if not cfg.anthropic_api_key or cfg.is_mock or not passed:
+    if not cfg.claude_ready or cfg.is_mock or not passed:
         return draft_cases(t)
     prompt = (f"Ticket {t.key}: {t.title} ({type_label(t.type)})\nEnvironment: {t.env.url if t.env else ''}\n\n"
               "Passing checklist items:\n" + "\n".join(f"- {i.text}" for i in passed) +

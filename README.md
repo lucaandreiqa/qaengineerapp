@@ -100,6 +100,13 @@ formats stay in the code, so editing a skill changes how Claude works, not what 
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
+**Two ways to connect Claude** (Integrations › Claude › *Connection*):
+- **API key**: an Anthropic API key from platform.claude.com, billed per use. Works for a team and in the background.
+- **Claude Code on this computer**: for your own use, each step runs the `claude` command you're signed into with your
+  Claude plan (`claude -p` with its tools and MCP servers off, so it only writes the answer, and API-key variables
+  removed so it uses your plan login). Install Claude Code, run `claude` once to sign in, then *Test connection*.
+  Costs then show as "≈ $x · your plan": what the same tokens would cost at API prices, not money spent.
+
 **Claude cost per ticket.** Every Claude call records the exact tokens from the API reply (input, output, cache
 writes and reads) on the ticket it was for, priced from Anthropic's list prices (`qa_app/workflow/costs.py`, e.g.
 Sonnet 5.5 $2 / $10 per million input / output tokens). Cards show the ticket's cost, the drawer breaks it down by

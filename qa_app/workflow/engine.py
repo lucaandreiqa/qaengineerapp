@@ -67,11 +67,11 @@ class Workflow:
         self.toast: Callable[[str], None] = lambda msg: bus.publish({"type": "toast", "message": msg})
         agent.usage_listeners.append(self._on_usage)
 
-    def _on_usage(self, key: str, step: str, model: str, usage: dict) -> None:
+    def _on_usage(self, key: str, step: str, model: str, usage: dict, billing: str = "api") -> None:
         """Keep each Claude call's tokens and cost on its ticket (redos add to it)."""
         t = self.tickets.get(key) if key else None
         if t:
-            self.patch(key, usage=(t.usage + [costs.entry(step, model, usage)])[-500:])
+            self.patch(key, usage=(t.usage + [costs.entry(step, model, usage, billing=billing)])[-500:])
 
     @property
     def cfg(self) -> WorkflowConfig:
@@ -283,7 +283,7 @@ class Workflow:
         agent.CURRENT_TICKET.set(t.key)
         try:
             comment = await agent.write_comment(self.cfg, t)
-            if self.cfg.anthropic_api_key and not self.cfg.is_mock:
+            if self.cfg.claude_ready and not self.cfg.is_mock:
                 self._used(t.key, "jira-comment")
         except Exception:  # Claude unavailable: the template comment, still editable at gate 3
             log.exception("Comment drafting failed for %s", t.key)
@@ -393,7 +393,7 @@ class Workflow:
             await self.pause(2.5)
         else:
             scenarios, sections, serial = await agent.plan_checklist(self.cfg, issue, t.env)
-            if self.cfg.anthropic_api_key:
+            if self.cfg.claude_ready:
                 self._used(key, "gather")
         agent.write_file(self.cfg, key, f"{key}-scenarios.md", f"# {key} scenarios\n\n{scenarios}\n")
         self.patch(key, p1=3, doing="Writing the QA checklist", checklist=sections, serial=serial, ran=False)
@@ -438,7 +438,7 @@ class Workflow:
         assert t
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
         await agent.build_spec(self.cfg, t)
-        if self.cfg.anthropic_api_key and not self.cfg.is_mock:
+        if self.cfg.claude_ready and not self.cfg.is_mock:
             self._used(key, "create-tests")
         await self.pause(2.6)
         needs_sso = t.needs_sso if self.cfg.is_mock else not sso.has_session(self.cfg.auth_dir)
@@ -468,7 +468,7 @@ class Workflow:
         t = t.model_copy(deep=True)
         agent.apply_results(t, results)
         t.cleanup, t.left, t.ran = cleanup, left, True
-        if not self.cfg.is_mock and self.cfg.anthropic_api_key:
+        if not self.cfg.is_mock and self.cfg.claude_ready:
             self.patch(key, doing="Claude is reviewing the failures with the Run tests skill")
             try:
                 errors = self.cfg.ticket_dir(key) / f"{key}-errors.json"
@@ -498,7 +498,7 @@ class Workflow:
         existing = {normalise(c["title"]) for c in await self._call(tr.get_cases, section_id)}
         try:
             drafts = await agent.write_cases(self.cfg, t, sorted(existing))
-            if self.cfg.anthropic_api_key and not self.cfg.is_mock:
+            if self.cfg.claude_ready and not self.cfg.is_mock:
                 self._used(key, "testrail")
         except Exception:
             log.exception("Case drafting failed for %s", key)

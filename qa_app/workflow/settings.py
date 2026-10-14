@@ -29,6 +29,7 @@ class WorkflowConfig:
     workspace: Path = APP_DIR / "workspace"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5-5"
+    claude_mode: str = "api"  # api (API key) | claude_code (the Claude Code CLI on this computer, your Claude plan) | off
     mock_speed: float = 1.0
     data_dir: Path = WORKFLOW_DIR
 
@@ -39,6 +40,11 @@ class WorkflowConfig:
     def ticket_type(self, components: list[str], labels: Optional[list[str]] = None) -> str:
         """FE / BE / FE+BE from the ticket's Jira components and labels."""
         return classify_type(components, list(self.fe_components), list(self.be_components), labels, list(self.both_names))
+
+    @property
+    def claude_ready(self) -> bool:
+        """Claude can be used for the steps: an API key, or Claude Code on this computer."""
+        return self.claude_mode == "claude_code" or (self.claude_mode == "api" and bool(self.anthropic_api_key))
 
     @property
     def shared_env_name(self) -> str:
@@ -73,6 +79,7 @@ class WorkflowConfig:
             # Demo tickets write their files to a scratch folder, never into a real Playwright repo.
             workspace=WORKFLOW_DIR / "demo-workspace" if w.get("demo", True) else (Path(ws).expanduser() if ws else APP_DIR / "workspace"),
             anthropic_api_key=c.get("api_key", "") if c.get("enabled") else "",
+            claude_mode=(c.get("mode") or "api") if c.get("enabled") else "off",
             anthropic_model=c.get("model") or "claude-sonnet-5-5",
             mock_speed=float(os.environ.get("QA_APP_WORKFLOW_MOCK_SPEED", "1") or 1),
         )

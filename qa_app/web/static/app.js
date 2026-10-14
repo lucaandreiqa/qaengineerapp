@@ -93,10 +93,11 @@ const lozenge = (text, cat) => text ? `<span class="lz lz-${cat || 'new'}" title
 /* ------------------------------------------------------------------ Claude cost (exact tokens from each API reply) */
 const fmtUsd = (v) => v == null ? '?' : v > 0 && v < 0.01 ? '<$0.01' : '$' + v.toFixed(2);
 const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n || 0);
-const costTip = (c) => `Claude: ${c.calls} call${c.calls === 1 ? '' : 's'} · ${fmtTok(c.input)} tokens in · ${fmtTok(c.output)} out${c.unpriced ? ` · ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} on a model without a known price` : ''}`;
+const onPlan = (c) => c && c.calls && c.plan_calls === c.calls;
+const costTip = (c) => `Claude: ${c.calls} call${c.calls === 1 ? '' : 's'} · ${fmtTok(c.input)} tokens in · ${fmtTok(c.output)} out${onPlan(c) ? ' · included in your Claude plan; the amount is what it would cost at API prices' : ''}${c.unpriced ? ` · ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} on a model without a known price` : ''}`;
 function costChip(c) {
   if (!c || !c.calls) return '';
-  return `<span class="cost" title="${esc(costTip(c))}">${svg(IC.bolt, 'ic ic-s')}${fmtUsd(c.cost)}${c.unpriced ? '+' : ''}</span>`;
+  return `<span class="cost" title="${esc(costTip(c))}">${svg(IC.bolt, 'ic ic-s')}${onPlan(c) ? '≈' : ''}${fmtUsd(c.cost)}${c.unpriced ? '+' : ''}</span>`;
 }
 function viewCost(t) {
   const c = t.cost;
@@ -105,7 +106,7 @@ function viewCost(t) {
 <span class="cost-n">${s.calls}×</span><span class="cost-n">${fmtTok(s.input)} in</span><span class="cost-n">${fmtTok(s.output)} out</span><span class="cost-v">${fmtUsd(s.cost)}</span></div>`).join('');
   return `<div><div class="lbl">Claude cost for this ticket</div><div class="box">${rows}
 <div class="brow cost-row cost-total"><span class="ctx-k" style="flex-basis:150px">Total</span><span class="cost-n">${c.calls}×</span><span class="cost-n">${fmtTok(c.input)} in</span><span class="cost-n">${fmtTok(c.output)} out</span><span class="cost-v">${fmtUsd(c.cost)}</span></div></div>
-<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">Exact token counts from each Claude reply, priced at Anthropic's list prices. Redos add to the total.${c.unpriced ? ` ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} used a model without a known price and count as $0.` : ''}</p></div>`;
+<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">${onPlan(c) ? 'Made through Claude Code on your Claude plan, so nothing is billed per call: the amounts are what the same tokens would cost at API prices.' : c.plan_calls ? `${c.plan_calls} of ${c.calls} calls went through your Claude plan (their amounts are API-price equivalents).` : "Exact token counts from each Claude reply, priced at Anthropic's list prices."} Redos add to the total.${c.unpriced ? ` ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} used a model without a known price and count as $0.` : ''}</p></div>`;
 }
 
 /* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
@@ -319,7 +320,7 @@ function viewBoard() {
 <p style="margin:2px 0 0;color:var(--muted)">Tickets in the Jira <strong style="color:var(--fg);font-weight:500">${esc(c.column)}</strong> column of ${esc(c.project)}, taken through the test-ticket workflow. <strong style="color:var(--fg);font-weight:500">${waiting} waiting on you</strong> · ${data.finishedToday} finished today.</p>
 </div>
 <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${fmtUsd(data.claude.cost)} on this board</span>` : ''}
+${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${onPlan(data.claude) ? '≈' : ''}${fmtUsd(data.claude.cost)} on this board${onPlan(data.claude) ? ' · your plan' : ''}</span>` : ''}
 <span class="pill" title="Auto mode never skips a review gate">${svg(IC.lock, 'ic ic-s')}Auto mode · 4 gates always stop</span>
 <span class="pill" role="status"><span class="d d-ok"></span>Jira · ${esc(c.project)} · ${esc(c.column)} · ${ago(data.lastSync)}</span>
 <button type="button" class="btn" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic spin' : 'ic')}Sync now</button>
@@ -943,7 +944,8 @@ function integStatus(c) {
   if (c.key === 'workflow') return I.vals.workflow.demo ? ['Demo data', 'd d-setup', 'setup'] : ['Live', 'd d-ok', 'ok'];
   if (!I.enabled[c.key]) return ['Off', 'd d-off', 'off'];
   const res = I.results[c.key];
-  const missing = (c.required || []).some((k) => !String(I.vals[c.key][k] || '').trim());
+  const viaClaudeCode = c.key === 'claude' && I.vals.claude.mode === 'claude_code';  // no API key needed
+  const missing = !viaClaudeCode && (c.required || []).some((k) => !String(I.vals[c.key][k] || '').trim());
   if (res) return res.ok ? ['Connected', 'd d-ok', 'ok'] : ['Error', 'd d-err', 'err'];
   if (missing) return ['Needs setup', 'd d-setup', 'setup'];
   return ['Not tested', 'd d-setup', 'setup'];
@@ -1053,7 +1055,7 @@ function viewIntegrations() {
     if (kind in sum) sum[kind] += 1;
     const on = c.key === 'workflow' || !!I.enabled[c.key];
     const res = I.results[c.key];
-    const fields = c.fields.map((f) => {
+    const fields = c.fields.filter((f) => !(c.key === 'claude' && f.k === 'api_key' && I.vals.claude.mode === 'claude_code')).map((f) => {
       const id = `f-${c.key}-${f.k}`, v = I.vals[c.key][f.k];
       const wrap = f.full ? 'full' : '';
       if (f.check) return `<div class="${wrap}"><label class="cb" style="height:32px"><input type="checkbox" ${v ? 'checked' : ''} data-in="integCheck" data-key="${c.key}" data-v="${f.k}">${esc(f.label)}</label></div>`;
@@ -1072,7 +1074,7 @@ ${f.secret ? `<button type="button" class="reveal" aria-label="${revealed ? 'Hid
 <span class="conn"><span class="${dot}"></span>${label}</span>
 ${c.key === 'workflow' ? '' : `<button type="button" class="swbtn" role="switch" aria-checked="${on}" aria-label="Enable ${esc(c.name)}" data-act="integToggle" data-key="${c.key}"><span class="swi"></span></button>`}
 </div>
-<div class="fields${on ? '' : ' off'}">${fields}</div>
+<div class="fields${on ? '' : ' off'}">${fields}${c.key === 'claude' && I.vals.claude.mode === 'claude_code' ? `<p class="full" style="margin:0;color:var(--muted);font-size:12px;line-height:1.5">Each step runs the <span class="mono">claude</span> command on this computer, signed in with your Claude account, with its tools turned off so it only writes the answer. Usage counts against your Claude plan. Meant for your own use: for a team, use an API key. Install Claude Code and run <span class="mono">claude</span> once to sign in, then press Test connection.</p>` : ''}</div>
 <div style="margin-top:auto;display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--raised)">
 <button type="button" class="btn" data-act="integTest" data-key="${c.key}" ${I.testing[c.key] ? 'disabled' : ''}>${svg(I.testing[c.key] ? IC.spin : IC.bolt, I.testing[c.key] ? 'ic spin' : 'ic')}Test connection</button>
 ${res ? `<div class="tres ${res.ok ? 'tres-ok' : 'tres-err'}" role="status" style="flex:0 1 auto">${svg(res.ok ? IC.check : IC.err, 'ic', 'style="width:14px;height:14px"')}<span title="${esc(res.text)}">${esc(res.text)}</span></div>` : ''}
@@ -1265,7 +1267,10 @@ const INPUTS = {
   skMode: (el) => { S.skills.mode[S.skills.sel + '|' + S.skills.data.project] = el.value; },
   skNewKey: (el) => { S.skills.newKey = el.value.trim(); },
   skProject: (el) => { S.skills.project = el.value; if (!el.value) S.skills.tab = 'general'; loadSkills(); },
-  integVal: (el) => { S.integ.vals[el.dataset.key][el.dataset.v] = el.value; S.integ.saved[el.dataset.key] = false; },
+  integVal: (el) => {
+    S.integ.vals[el.dataset.key][el.dataset.v] = el.value; S.integ.saved[el.dataset.key] = false;
+    if (el.dataset.v === 'mode') delete S.integ.results[el.dataset.key];  // a different connection needs a new test
+  },
   integCheck: (el) => { S.integ.vals[el.dataset.key][el.dataset.v] = el.checked; S.integ.saved[el.dataset.key] = false; },
 };
 

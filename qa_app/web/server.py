@@ -56,8 +56,12 @@ CATALOGUE: list[dict[str, Any]] = [
                 {"k": "workspace", "label": "Playwright workspace folder (tests/tickets/<KEY>/ is written here)", "full": True,
                  "ph": str(APP_DIR / "workspace")}],
      "required": ["jira_project", "jira_column"]},
-    {"key": "claude", "name": "Claude", "mono": "C", "tint": "#C2643F", "desc": "Writes the scenarios, QA checklist and Playwright spec",
-     "fields": [{"k": "api_key", "label": "Anthropic API key", "secret": True, "full": True},
+    {"key": "claude", "name": "Claude", "mono": "C", "tint": "#C2643F",
+     "desc": "Does every board step: checklist, spec, bug notes, Jira comment, TestRail cases",
+     "fields": [{"k": "mode", "label": "Connection", "full": True, "options": [
+                    {"v": "api", "label": "API key (billed per use to your Anthropic API account)"},
+                    {"v": "claude_code", "label": "Claude Code on this computer (your Claude plan, for your own use)"}]},
+{"k": "api_key", "label": "Anthropic API key", "secret": True, "full": True},
                 {"k": "model", "label": "Model", "full": True}],
      "required": ["api_key"]},
     {"key": "jira", "name": "Jira · API token", "mono": "J", "tint": "#2F64D6",
@@ -193,7 +197,7 @@ def state() -> dict:
         # Demo tickets always come from the sample OPTR · Testing column, whatever Jira is connected.
         "config": {"mode": "mock" if cfg.is_mock else "live", "project": "OPTR" if cfg.is_mock else cfg.jira_project,
                    "column": "Testing" if cfg.is_mock else cfg.jira_column,
-                   "account": cfg.test_account, "ou": cfg.test_ou, "claude": bool(cfg.anthropic_api_key)},
+                   "account": cfg.test_account, "ou": cfg.test_ou, "claude": cfg.claude_ready, "claudeMode": cfg.claude_mode},
         "tickets": [s.ticket_view(t) for t in store.all()],
         "claude": costs.summary([e for t in store.all() for e in t.usage]),
         "model": cfg.anthropic_model,
@@ -388,13 +392,16 @@ async def test_integration(key: str, values: dict[str, Any] = Body(...)) -> dict
     card = next((c for c in CATALOGUE if c["key"] == key), None)
     if not card:
         raise HTTPException(404)
-    missing = [f["label"] for f in card["fields"] if f["k"] in card["required"] and not str(values.get(f["k"], "")).strip()]
+    required = [] if key == "claude" and values.get("mode") == "claude_code" else card["required"]
+    missing = [f["label"] for f in card["fields"] if f["k"] in required and not str(values.get(f["k"], "")).strip()]
     if missing:
         res = {"ok": False, "text": ", ".join(missing) + (" is required" if len(missing) == 1 else " are required")}
     elif key == "workflow":
         ws = str(values.get("workspace") or "").strip()
         res = {"ok": True, "text": "Demo data is on" if values.get("demo") else
                f"Live · {values['jira_project']} / {values['jira_column']}" + (f" · workspace {ws}" if ws else "")}
+    elif key == "claude" and values.get("mode") == "claude_code":
+        res = await asyncio.to_thread(_test_claude_code)
     elif key == "claude":
         res = await asyncio.to_thread(_test_claude, values)
     else:
@@ -404,6 +411,15 @@ async def test_integration(key: str, values: dict[str, Any] = Body(...)) -> dict
             res = {"ok": False, "text": (str(e).splitlines() or ["error"])[0][:300]}
     _set_status(key, res)
     return res
+
+
+def _test_claude_code() -> dict:
+    from ..workflow import claude_code
+    try:
+        st = claude_code.auth_status()
+    except claude_code.ClaudeCodeError as e:
+        return {"ok": False, "text": str(e)}
+    return {"ok": st["ok"], "text": st["text"]}
 
 
 def _test_claude(values: dict) -> dict:

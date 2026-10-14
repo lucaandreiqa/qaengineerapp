@@ -67,16 +67,17 @@ def cost(model: str, usage: dict) -> Optional[float]:
     return (t["input"] * i + t["output"] * o + t["cache_write_5m"] * w5 + t["cache_write_1h"] * w1 + t["cache_read"] * r) / 1e6
 
 
-def entry(step: str, model: str, usage: dict, at: Optional[float] = None) -> dict:
-    """One Claude call, as kept on the ticket."""
+def entry(step: str, model: str, usage: dict, at: Optional[float] = None, billing: str = "api") -> dict:
+    """One Claude call, as kept on the ticket. billing "plan": made through Claude Code on the user's Claude plan,
+    so cost is what it would have cost at API prices, not money spent."""
     t = tokens(usage)
-    return {"step": step or "other", "model": model, "input": t["input"] + t["cache_write_5m"] + t["cache_write_1h"] + t["cache_read"],
+    return {"step": step or "other", "model": model, "billing": billing, "input": t["input"] + t["cache_write_5m"] + t["cache_write_1h"] + t["cache_read"],
             "output": t["output"], "cache_read": t["cache_read"], "cost": cost(model, usage), "at": at or time.time()}
 
 
 def summary(entries: list[dict]) -> dict:
     """Totals for a ticket (or several): cost, tokens and calls, overall and per step."""
-    out = {"calls": 0, "input": 0, "output": 0, "cost": 0.0, "unpriced": 0, "by_step": {}}
+    out = {"calls": 0, "input": 0, "output": 0, "cost": 0.0, "unpriced": 0, "plan_calls": 0, "by_step": {}}
     for e in entries or []:
         s = out["by_step"].setdefault(e.get("step", "other"), {"name": STEP_NAMES.get(e.get("step", ""), e.get("step", "other")),
                                                                "calls": 0, "input": 0, "output": 0, "cost": 0.0})
@@ -88,5 +89,7 @@ def summary(entries: list[dict]) -> dict:
                 d["cost"] += float(e["cost"])
         if e.get("cost") is None:
             out["unpriced"] += 1
+        if e.get("billing") == "plan":
+            out["plan_calls"] += 1
     out["by_step"] = dict(sorted(out["by_step"].items(), key=lambda kv: list(STEP_NAMES).index(kv[0]) if kv[0] in STEP_NAMES else 99))
     return out
