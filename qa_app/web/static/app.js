@@ -219,7 +219,7 @@ function deco(t) {
   const st = t.stage, sub = t.sub;
   const d = { stateLabel: '', summary: '', act: 'Review', cls: 'state state-you', note: '', primary: '', disabled: false, counts, items, passes };
   if (st === 0 && sub === 'working') { d.stateLabel = 'Gathering'; d.summary = t.doing; }
-  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; d.summary = 'No PR environment link in the comments'; d.act = 'Add environment'; d.note = 'Stopped instead of guessing an environment.'; d.primary = 'Use this environment'; d.disabled = !/^https?:\/\/\S+/.test((S.board.env[t.key] || '').trim()); }
+  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; d.summary = (t.env_candidates || []).length ? `${t.env_candidates.length} link${t.env_candidates.length === 1 ? '' : 's'} found, none clearly the test environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Stopped instead of guessing an environment.'; d.primary = 'Use this environment'; d.disabled = !/^https?:\/\/\S+/.test((S.board.env[t.key] || '').trim()); }
   if (st === 0 && sub === 'gate') { d.stateLabel = 'Gate 1 · your review'; d.summary = `Checklist ready · ${items.length} items in ${t.checklist.length} sections`; d.act = 'Review checklist'; d.note = 'Gate 1 of 4. Approving builds and runs the spec.'; d.primary = 'Approve checklist'; }
   if (st === 1) { d.stateLabel = 'Building'; d.summary = t.doing || `Building ${t.key}.spec.ts`; }
   if (st === 2 && sub === 'sso') { d.stateLabel = 'SSO login needed'; d.cls = 'state state-warn'; d.summary = 'Waiting for you to sign in'; d.act = 'Sign in'; d.note = 'The run continues once the session is ready.'; d.primary = "I've signed in"; }
@@ -281,7 +281,7 @@ function viewBoard() {
 <label class="search" style="flex:0 1 260px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search tickets</span><input id="board-q" type="search" placeholder="Search key or title" value="${esc(B.q)}" data-in="boardQ"></label>
 <div class="seg" role="group" aria-label="Show"><button type="button" aria-pressed="${!B.you}" data-act="you" data-v="0">All tickets</button><button type="button" aria-pressed="${B.you}" data-act="you" data-v="1">Waiting on me</button></div>
 ${typeSeg}
-<span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">Tests as ${esc(c.account)} · OU ${esc(c.ou)}</span>
+${c.account ? `<span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">Tests as ${esc(c.account)}${c.ou ? ` · ${esc(c.ou)}` : ''}</span>` : ''}
 </div>
 ${c.mode !== 'live' ? `<div class="notice jc-banner">${svg(IC.info)}<span>These are sample tickets. Paste your Jira board link to test real tickets.</span><a class="btn btn-sm btn-primary" href="#/integrations" style="margin-left:auto">Connect Jira${svg(IC.arrow, 'ic ic-s')}</a></div>` : ''}
 <div class="board" role="list" aria-label="QA workflow steps" data-keep="board">${lanes}</div>
@@ -341,6 +341,16 @@ function viewTicketContext(t) {
   return `<div><div class="lbl">From the ticket</div>${tags ? `<div class="ctx-tags">${tags}</div>` : ''}<div class="box">${rows.join('')}</div>${warn}</div>`;
 }
 
+/* Redo step 1: read the ticket again (it may have changed in Jira) and rebuild environment, scenarios and checklist.
+   At the results review it also throws the run away, so that needs a second click. */
+function redoButton(t) {
+  const B = S.board, armed = B.redoArm === t.key, risky = t.stage > 0;
+  const label = armed ? 'Discard results and redo?' : 'Redo step 1';
+  const tip = risky ? 'Read the ticket again and rebuild the checklist. The results of this run are discarded.'
+    : 'Read the ticket again (description, comments, links…) and rebuild the environment, scenarios and checklist.';
+  return `<button type="button" class="btn ${armed ? 'btn-stop' : 'btn-quiet'} btn-sm" data-act="redo" data-key="${esc(t.key)}" title="${esc(tip)}" ${B.busy ? 'disabled' : ''}>${svg(IC.sync, 'ic ic-s')}${label}</button>`;
+}
+
 function viewDrawer() {
   const B = S.board;
   const t = B.data && B.data.tickets.find((x) => x.key === B.sel);
@@ -353,11 +363,16 @@ function viewDrawer() {
   body += viewTicketContext(t);
   body += `<div><div class="lbl">Target environment</div>`;
   if (t.env) {
-    body += `<div class="box"><div class="brow" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted)">${esc(t.env.kind)}</span><span class="mono trunc" style="max-width:100%">${esc(t.env.url)}</span><span style="color:var(--faint);font-size:11.5px">${esc(t.env.api)}</span></div></div>`;
+    body += `<div class="box"><div class="brow" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted)">${esc(t.env.kind)}${t.env.source ? ` · from ${esc(t.env.source)}` : ''}</span><span class="mono trunc" style="max-width:100%">${esc(t.env.url)}</span><span style="color:var(--faint);font-size:11.5px">${esc(t.env.api)}</span></div></div>`;
     if (/^https?:/.test(t.env.url)) body += `<a class="btn btn-quiet btn-sm" style="margin-top:6px" href="#/run?ticket=${encodeURIComponent(t.key)}&url=${encodeURIComponent(t.env.url)}">${svg(IC.run, 'ic ic-s')}Run site checks on this environment</a>`;
   } else {
-    body += `<div class="callout c-warn">${svg(IC.warn)}<span>${esc(sub === 'blocked' && t.doing ? t.doing : 'No environment resolved yet.')} The workflow stops here instead of falling back to the shared environment, because the change may not be there yet.</span></div>`;
-    if (sub === 'blocked') body += `<label class="lbl" for="env-input" style="margin-top:12px">PR environment URL</label><input id="env-input" class="inp mono" type="url" placeholder="https://pr-1234.ci-cd.on-eva.io/" value="${esc(B.env[t.key] || '')}" data-in="env" data-key="${esc(t.key)}">`;
+    body += `<div class="callout c-warn">${svg(IC.warn)}<span>${esc(sub === 'blocked' && t.doing ? t.doing : 'No environment resolved yet.')} It stops here instead of guessing, because the change may not be deployed everywhere yet.</span></div>`;
+    if (sub === 'blocked' && (t.env_candidates || []).length) {
+      body += `<div class="lbl" style="margin-top:12px">Links found on the ticket</div><div class="box">${t.env_candidates.map((c) => `<div class="brow env-cand">
+<div style="min-width:0;flex:1"><div class="mono trunc">${esc(c.url)}</div><div style="color:var(--faint);font-size:11.5px">${esc(c.source)}${c.why && c.why.length ? ' · ' + esc(c.why.join(', ')) : ''}${c.api ? ' · API' : ''}</div></div>
+<button type="button" class="btn btn-sm" data-act="pickEnv" data-key="${esc(t.key)}" data-v="${esc(c.url)}" ${B.busy ? 'disabled' : ''}>Use</button></div>`).join('')}</div>`;
+    }
+    if (sub === 'blocked') body += `<label class="lbl" for="env-input" style="margin-top:12px">Or paste the test environment URL</label><input id="env-input" class="inp mono" type="text" inputmode="url" placeholder="https://preview.your-app.com/" value="${esc(B.env[t.key] || '')}" data-in="env" data-key="${esc(t.key)}">`;
   }
   body += '</div>';
 
@@ -432,6 +447,7 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
 </div>
 <div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;background:var(--raised)">
+${t.canRedo ? redoButton(t) : ''}
 <span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above, then retry.' : d.note || 'Working. Nothing needs you yet.'))}</span>
 ${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
@@ -962,10 +978,20 @@ const ACTS = {
     S.board.syncing = false;
   },
   you: (el) => { S.board.you = el.dataset.v === '1'; },
+  pickEnv: (el) => { S.board.env[el.dataset.key] = el.dataset.v; primaryAction(el.dataset.key); },
   ttype: (el) => { S.board.type = el.dataset.v; store.set('boardType', S.board.type); },
   open: (el) => { S.board.sel = el.dataset.key; S.board.actErr = ''; },
   close: () => { S.board.sel = null; S.board.actErr = ''; },
   primary: (el) => primaryAction(el.dataset.key),
+  redo: async (el) => {
+    const B = S.board, t = B.data.tickets.find((x) => x.key === el.dataset.key);
+    if (!t) return;
+    if (t.stage > 0 && B.redoArm !== t.key) { B.redoArm = t.key; clearTimeout(B.redoTimer); B.redoTimer = setTimeout(() => { B.redoArm = null; schedule(); }, 5000); return; }
+    B.redoArm = null; B.busy = true; B.actErr = ''; schedule();
+    try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'redo_gather', stage: t.stage, sub: t.sub }); await loadBoard(); }
+    catch (e) { B.actErr = e.message; }
+    B.busy = false;
+  },
   retry: async (el) => {
     const t = S.board.data.tickets.find((x) => x.key === el.dataset.key);
     try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'retry', stage: t.stage, sub: t.sub }); } catch (e) { S.board.actErr = e.message; }

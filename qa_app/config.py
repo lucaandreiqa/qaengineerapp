@@ -32,8 +32,11 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     # Testing board: takes tickets from a Jira column through the gated QA workflow.
     # demo=True uses sample tickets and simulated Jira/TestRail, so nothing real is touched.
     "workflow": {"enabled": True, "demo": True, "jira_project": "OPTR", "jira_column": "Testing",
-                 "test_account": "andrei.luca@red-to-blue.com", "test_ou": "lucatestaustriastore",
-                 "comment_signature": "Commented by Claude for Luca", "shared_env": "euw",
+                 "test_account": "", "test_ou": "", "comment_signature": "Commented by QA Engineer App",
+                 # Where to test when the ticket names no environment: used only once a ticket is merged/done.
+                 "default_env_url": "", "default_env_name": "",
+                 # Words or domains that mark your test environments in links, e.g. "preview.myapp.com, staging".
+                 "env_hints": "",
                  "workspace": "",
                  # Jira components that make a ticket FE, BE, or FE+BE when it has both.
                  "fe_components": "Frontend, FE, Front-end, UI", "be_components": "Backend, BE, Back-end, Core, API",

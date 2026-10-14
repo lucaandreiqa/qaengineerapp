@@ -301,6 +301,14 @@ def approve(fake: Fake, authorize_url: str) -> tuple[str, str]:
 
 
 REDIRECT = "http://localhost:8765/api/jira/oauth/callback"
+
+
+def env_url(issue: dict) -> str:
+    """Where step 1 would test this ticket (found from the ticket's own links)."""
+    from qa_app.workflow import agent
+    from qa_app.workflow.settings import WorkflowConfig
+    env, _ = agent.resolve_environment({**issue, "type": "FE"}, WorkflowConfig(demo=False, jira_host="qaengineerapp.atlassian.net"))
+    return env.url if env else ""
 LINK = "https://qaengineerapp.atlassian.net/jira/software/projects/SCRUM/boards/1?filter=&groupBy=none"
 
 
@@ -363,7 +371,7 @@ def test_pick_column_then_board_reads_and_writes_jira(env):
     assert isinstance(jira, am.McpJira) and jira.board_id == "1" and jira.status_ids == ["10002"]
     assert jira.search_column("SCRUM", "In Review") == [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
     issue = jira.get_issue("SCRUM-2")
-    assert issue["components"] == ["Frontend", "Backend"] and issue["preview_url"] == "https://feature-x.pages.dev/"
+    assert issue["components"] == ["Frontend", "Backend"] and env_url(issue) == "https://feature-x.pages.dev/"
     jira.add_comment("SCRUM-2", "QA result: **2/2 pass**")
     assert fake.comments["SCRUM-2"][-1] == "QA result: **2/2 pass**"  # markdown as is
     tr = {t["name"]: t["id"] for t in jira.get_transitions("SCRUM-2")}
@@ -417,7 +425,7 @@ def test_classic_tool_set_uses_project_statuses_and_classic_tool_names(classic_e
     jira = am.McpJira(s["jira"], s["workflow"], am.AtlassianMcp.signed_in(CLOUD, store))
     assert jira.search_column("SCRUM", "In Review") == [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
     issue = jira.get_issue("SCRUM-2")
-    assert issue["components"] == ["Frontend", "Backend"] and issue["preview_url"] == "https://feature-x.pages.dev/"
+    assert issue["components"] == ["Frontend", "Backend"] and env_url(issue) == "https://feature-x.pages.dev/"
     jira.add_comment("SCRUM-2", "QA result: **pass**")
     assert fake.comments["SCRUM-2"][-1] == "QA result: **pass**"
     tr = {t["name"]: t["id"] for t in jira.get_transitions("SCRUM-2")}
@@ -460,7 +468,7 @@ def test_reads_everything_on_the_ticket(tmp_path, monkeypatch, classic):
         s = config.load_settings()
         issue = am.McpJira(s["jira"], s["workflow"], am.AtlassianMcp.signed_in(CLOUD, store)).get_issue("SCRUM-2")
         _check_full_context(issue["context"])
-        assert len(issue["comments"]) == 120 and issue["preview_url"] == "https://feature-x.pages.dev/"
+        assert len(issue["comments"]) == 120 and env_url(issue) == "https://feature-x.pages.dev/"
 
         from qa_app.workflow import ticket_context as tc
         md = tc.to_markdown(issue["context"])
@@ -507,4 +515,4 @@ def test_api_token_path_reads_everything_too(monkeypatch):
     monkeypatch.setattr(rest, "_session", lambda cfg: S())
     issue = rest.get_issue({"base_url": "https://qaengineerapp.atlassian.net", "email": "x", "api_token": "y"}, "SCRUM-2")
     _check_full_context(issue["context"])
-    assert issue["components"] == ["Frontend"] and issue["preview_url"] == "https://feature-x.pages.dev/"
+    assert issue["components"] == ["Frontend"] and env_url(issue) == "https://feature-x.pages.dev/"

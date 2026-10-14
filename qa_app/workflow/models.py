@@ -49,7 +49,8 @@ class Env(BaseModel):
     kind: str
     url: str
     api: str = ""
-    shared: bool = False  # the shared environment (euw): confirm before changing sensitive settings
+    shared: bool = False  # the team's default environment: confirm before changing sensitive settings
+    source: str = ""  # where it was found: "comment by Ana · 2026-10-14", "Environment field", "you", "settings"
 
 
 class CheckItem(BaseModel):
@@ -82,6 +83,7 @@ class Ticket(BaseModel):
     type: TicketType = ""
     components: list[str] = Field(default_factory=list)  # the Jira components the type came from
     context: dict = Field(default_factory=dict)  # what the ticket says (ticket_context.summary), for the drawer
+    env_candidates: list[dict] = Field(default_factory=list)  # links on the ticket that could be the test environment
     status: str = "Open"
     description: str = ""
     stage: int = 0

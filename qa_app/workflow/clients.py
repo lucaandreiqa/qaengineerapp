@@ -99,7 +99,7 @@ class MockJira:
             "comment": {"comments": [{"body": c, "author": {"displayName": "Developer"}} for c in comments]}}}
         return {"key": i["key"], "title": i["title"], "status": i["status"], "description": i.get("description", ""),
                 "components": list(i.get("components", [])), "merged": i.get("merged", i["status"] == "Merged"),
-                "pr_url": i.get("pr_url", ""), "preview_url": i.get("preview_url", ""),
+                "pr_url": i.get("pr_url", ""),
                 "comments": comments, "context": build(raw)}
 
     def get_issue(self, key: str) -> dict:
@@ -125,7 +125,7 @@ class MockJira:
 
 class MockTestRail:
     def __init__(self) -> None:
-        self.sections: dict[str, int] = {"Finance › Gift cards": 101, "Organization units › Settings": 102}
+        self.sections: dict[str, int] = {"Finance › Gift cards": 101, "Stores › Settings": 102}
         self.cases: dict[int, list[dict]] = {101: [{"id": 9001, "title": "An unknown card returns not found"}], 102: []}
         self._next = 9100
 

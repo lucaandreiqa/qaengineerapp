@@ -6,7 +6,6 @@ from datetime import date
 
 import pytest
 
-from qa_app.integrations.jira import find_pr_environment
 from qa_app.workflow import agent, seed
 from qa_app.workflow.clients import MockJira, MockTestRail
 from qa_app.workflow.engine import GateError, Workflow
@@ -116,21 +115,23 @@ def test_blocked_ticket_needs_a_real_url(wf):
     async def go():
         with pytest.raises(GateError):
             await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "pr-1"})
-        await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "https://pr-1.ci-cd.on-eva.io/"})
+        await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "https://pr-1.preview.myapp.test/"})
         await settle(wf)
         assert wf.tickets.get("OPTR-48507").sub == "gate"
     run(go())
 
 
 def test_environment_resolution(tmp_path):
-    cfg = Config(demo=True, data_dir=tmp_path)
+    cfg = Config(demo=False, data_dir=tmp_path)
+    env, reason = agent.resolve_environment({"merged": True}, cfg)
+    assert env is None and "No test environment link" in reason  # no default set: never guess
+    cfg = Config(demo=False, data_dir=tmp_path, default_env_url="https://staging.myapp.test/", default_env_name="staging")
     env, _ = agent.resolve_environment({"merged": True}, cfg)
-    assert env and env.shared
-    env, _ = agent.resolve_environment({"merged": False, "comments": ["up at https://pr-42.ci-cd.on-eva.io/"]}, cfg)
-    assert env and env.url == "https://pr-42.ci-cd.on-eva.io/"
-    env, reason = agent.resolve_environment({"merged": False, "type": "BE", "components": ["Core"], "status": "Open", "comments": []}, cfg)
-    assert env is None and "Stopped" in reason
-    assert find_pr_environment(["nothing"]) == ""
+    assert env and env.shared and env.url == "https://staging.myapp.test/" and env.kind == "staging · ticket is merged"
+    env, _ = agent.resolve_environment({"merged": False, "comments": ["Deployed to https://pr-42.preview.myapp.test/"]}, cfg)
+    assert env and env.url == "https://pr-42.preview.myapp.test/" and not env.shared
+    env, reason = agent.resolve_environment({"merged": False, "type": "BE", "status": "Open", "comments": []}, cfg)
+    assert env is None and "Paste the URL" in reason
 
 
 def test_comment_template():
@@ -196,7 +197,7 @@ def test_ticket_type_from_jira_components():
     assert classify_type(["Frontend", "Backend"], fe, be) == "FE+BE"
     assert classify_type(["Payments"], fe, be) == ""  # unmapped component: untyped, not guessed
     assert classify_type([], fe, be) == ""
-    assert Config(fe_components=("Admin Suite",), be_components=("Core",)).ticket_type(["Admin Suite", "Core"]) == "FE+BE"
+    assert Config(fe_components=("Web app",), be_components=("Core",)).ticket_type(["Web app", "Core"]) == "FE+BE"
 
 
 def test_saved_tickets_with_old_component_load_as_fe_or_be():
@@ -206,7 +207,7 @@ def test_saved_tickets_with_old_component_load_as_fe_or_be():
     assert "comp" not in Ticket(key="A-3", title="x").public()
 
 
-def test_sync_types_new_tickets_and_preview_needs_fe(wf, tmp_path):
+def test_sync_types_new_tickets_and_finds_preview_in_comments(wf, tmp_path):
     async def go():
         assert await wf.sync() == ["OPTR-48520"]
         t = wf.tickets.get("OPTR-48520")
@@ -215,7 +216,45 @@ def test_sync_types_new_tickets_and_preview_needs_fe(wf, tmp_path):
     types = {t.key: t.type for t in seed.seed_tickets()}
     assert types["OPTR-48466"] == "FE+BE" and types["OPTR-48437"] == "BE" and types["OPTR-48498"] == "FE"
     cfg = Config(demo=True, data_dir=tmp_path)
-    issue = {"merged": False, "status": "Open", "comments": [], "preview_url": "https://x.pages.dev/"}
-    assert agent.resolve_environment({**issue, "type": "FE+BE"}, cfg)[0].kind == "Cloudflare Pages preview"
-    env, reason = agent.resolve_environment({**issue, "type": "BE"}, cfg)
-    assert env is None and reason.startswith("BE ticket")
+    issue = {"merged": False, "status": "Open", "comments": ["Preview is up: https://x.pages.dev/"]}
+    env, _ = agent.resolve_environment({**issue, "type": "FE+BE"}, cfg)
+    assert env and env.url == "https://x.pages.dev/"
+
+def test_redo_step_1_rereads_a_changed_ticket(tmp_path):
+    cfg = Config(demo=True, data_dir=tmp_path, workspace=tmp_path / "ws", mock_speed=1000.0,
+                 default_env_url="https://staging.shop-demo.test/", default_env_name="shared staging")
+    tickets = TicketStore(tmp_path / "tickets.json")
+    for t in seed.seed_tickets():
+        tickets.tickets[t.key] = t
+    issues, late = seed.jira_issues()
+    jira = MockJira(issues, late)
+    wf = Workflow(tickets, TicketStore(tmp_path / "live.json"), jira, MockTestRail(), cfg=cfg)
+
+    async def go():
+        # Gate 2 with results: the developer redeploys and says so on the ticket.
+        t = wf.tickets.get("OPTR-48466")
+        assert (t.stage, t.sub) == (2, "gate") and t.ran
+        jira.add_comment("OPTR-48466", "Fixed the trimming, redeployed to https://feature-optr-48466-v2.shop-admin.pages.dev/")
+        await wf.act("OPTR-48466", "redo_gather", 2, "gate")
+        await settle(wf)
+        t = wf.tickets.get("OPTR-48466")
+        assert (t.stage, t.sub) == (0, "gate") and not t.ran
+        assert {i.result for i in t.items()} == {"nt"}  # earlier results discarded
+        assert t.env.url == "https://feature-optr-48466-v2.shop-admin.pages.dev/" and t.env.source.startswith("comment by")
+        assert t.context["comments"] == 3
+
+        # An environment the user chose survives a redo.
+        await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "https://mine.test/"})
+        await settle(wf)
+        await wf.act("OPTR-48507", "redo_gather", 0, "gate")
+        await settle(wf)
+        assert wf.tickets.get("OPTR-48507").env.url == "https://mine.test/"
+
+        # Not once Jira has been told, and not on a stale view.
+        with pytest.raises(GateError, match="already being posted"):
+            await wf.act("OPTR-48455", "redo_gather", 3, "comment")
+        with pytest.raises(GateError, match="moved on"):
+            await wf.act("OPTR-48466", "redo_gather", 2, "gate")
+        with pytest.raises(GateError, match="busy"):
+            await wf.act("OPTR-48490", "redo_gather", 1, "working")
+    run(go())

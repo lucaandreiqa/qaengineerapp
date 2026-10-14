@@ -4,59 +4,59 @@ from __future__ import annotations
 from .models import (DEFAULT_BE_COMPONENTS, DEFAULT_FE_COMPONENTS, CheckItem, CleanupItem, DraftCase, Env, Section,
                      Ticket, classify_type, component_list, type_label)
 
-EUW = Env(kind="Shared euw · ticket is merged", url=".env defaults (euw)",
-          api="Shared environment rules: confirm before changing sensitive settings", shared=True)
+STAGING = Env(kind="shared staging · ticket is merged", url="https://staging.shop-demo.test/", source="settings",
+          api="Default environment from settings: confirm before changing sensitive settings", shared=True)
 
 # key, title, components (Jira), status, stage, sub, extras, checklist[(section, [(text, result, bug)])], cleanup, left
 _T = [
     dict(key="OPTR-48512", title="Worked hours report export to CSV", components=["Frontend", "Backend"], status="Open", stage=0, sub="working", p1=1,
-         env=Env(kind="Frontend preview", url="https://feature-optr-48512--euw.newblack.test.eva-online.cloud/", api="API: shared api.euw.newblack.test.eva-online.cloud"),
-         doing="Reading commits on new-black/eva-suite-admin PR #9214",
+         env=Env(kind="Test environment", url="https://feature-48512.preview.shop-demo.test/", api="API: https://api.staging.shop-demo.test/", source="comment by Developer"),
+         doing="Reading commits on shop-admin PR #9214",
          check=[("Export", [("Export button appears on the Worked hours report", "pass"), ("CSV has one row per employee per day", "pass"), ("CSV columns follow the on-screen order", "partial")]),
                 ("Permissions", [("Export is hidden without the export permission", "pass")])],
          cleanup=[("WorkedHoursExportEnabled", "false")]),
-    dict(key="OPTR-48507", title="Stock mutation reasons configurable per OU", components=["Backend"], status="Open", stage=0, sub="blocked", p1=1, env=None,
-         check=[("Configuration", [("Reasons can be created per OU", "pass"), ("Child OUs inherit the parent reasons", "pass")]),
+    dict(key="OPTR-48507", title="Stock mutation reasons configurable per store", components=["Backend"], status="Open", stage=0, sub="blocked", p1=1, env=None,
+         check=[("Configuration", [("Reasons can be created per store", "pass"), ("Child stores inherit the parent reasons", "pass")]),
                 ("Stock mutations", [("A mutation without a reason is rejected when reasons are required", "pass")])],
          cleanup=[("StockMutationReasonsRequired", "false")]),
-    dict(key="OPTR-48498", title="Device list filter by station", components=["Frontend"], status="Merged", stage=0, sub="gate", env=EUW,
-         check=[("Filter", [("Station filter lists every station in the selected OU", "pass"), ("Filtering updates the device count", "pass"),
+    dict(key="OPTR-48498", title="Device list filter by station", components=["Frontend"], status="Merged", stage=0, sub="gate", env=STAGING,
+         check=[("Filter", [("Station filter lists every station in the selected store", "pass"), ("Filtering updates the device count", "pass"),
                             ("Filter is kept in the URL", "fail", "Reload drops ?station= and shows all devices. UI writes the param with replaceState only after the first change. Severity: Minor")]),
                 ("Empty states", [("A station without devices shows the empty state", "pass"), ("Clearing the filter restores all devices", "pass")])]),
-    dict(key="OPTR-48490", title="Discount usage limit per customer", components=["Backend"], status="Merged", stage=1, sub="working", serial=True, env=EUW,
+    dict(key="OPTR-48490", title="Discount usage limit per customer", components=["Backend"], status="Merged", stage=1, sub="working", serial=True, env=STAGING,
          doing="Building OPTR-48490.spec.ts and .serial.spec.ts",
          check=[("Usage limit", [("Discount applies until the per-customer limit is reached", "pass"), ("The next order over the limit gets no discount", "pass"), ("The limit counts per customer, not per device", "pass")]),
-                ("Concurrency", [("Two parallel orders cannot both use the last allowance", "blocked", "Second session could not start: the shared euw OU has one cash drawer. Needs a second drawer to unblock.")])],
+                ("Concurrency", [("Two parallel orders cannot both use the last allowance", "blocked", "Second session could not start: the shared staging store has one cash drawer. Needs a second drawer to unblock.")])],
          cleanup=[("DiscountUsageCheckEnabled", "true")], left="2 orders (orders cannot be deleted), prefixed OPTR-48490"),
-    dict(key="OPTR-48471", title="Cashier PIN reset from Admin Suite", components=["Frontend"], status="Open", stage=2, sub="sso", needs_sso=True,
-         env=Env(kind="Frontend preview", url="https://optr-48471--7f3a9c.on-eva.io", api="API: api.optr-48471.ci-cd.on-eva.io"),
+    dict(key="OPTR-48471", title="Cashier PIN reset from the admin app", components=["Frontend"], status="Open", stage=2, sub="sso", needs_sso=True,
+         env=Env(kind="Test environment", url="https://pr-48471.preview.shop-demo.test/", api="API: https://api.pr-48471.preview.shop-demo.test/", source="comment by Developer"),
          check=[("PIN reset", [("Reset PIN shows for users with the permission", "pass"), ("The new PIN is shown once and can be copied", "pass"), ("The old PIN stops working right after the reset", "pass")]),
                 ("Audit", [("The reset is written to the user audit log", "partial")])],
          cleanup=[("UserPinLength", "4")], left="1 minted PIN (PINs cannot be deleted), prefixed OPTR-48471"),
     dict(key="OPTR-48466", title="Order search by external reference", components=["Frontend", "Backend"], status="Open", stage=2, sub="gate",
-         env=Env(kind="Cloudflare Pages preview", url="https://feature-optr-48466.eva-suite-admin.pages.dev/", api="API: shared euw, confirmed from network requests"),
+         env=Env(kind="Test environment", url="https://feature-optr-48466.shop-admin.pages.dev/", api="API: the staging API, seen in the network requests", source="comment by Developer"),
          check=[("Search", [("An exact external reference finds the order", "pass"), ("A partial reference matches from the start", "pass"), ("Search ignores letter case", "pass"),
                             ("Leading and trailing spaces are trimmed", "fail", 'Searching " EXT-1042 " returns 0 orders; the UI sends the value untrimmed to SearchOrders. Severity: Major')]),
-                ("Results", [("A result row opens the order detail", "pass"), ("Orders from other OUs are not returned", "pass"), ("Results arrive in under 2 s with 10k+ orders", "partial"), ("Export of filtered results", "nt")])],
+                ("Results", [("A result row opens the order detail", "pass"), ("Orders from other stores are not returned", "pass"), ("Results arrive in under 2 s with 10k+ orders", "partial"), ("Export of filtered results", "nt")])],
          cleanup=[("OrderSearchIncludeExternalRef", "false"), ("OrderSearchMaxResults", "50")], left="3 orders (orders cannot be deleted), prefixed OPTR-48466"),
-    dict(key="OPTR-48455", title="Worked hours settings per OU", components=["Core"], status="Open", stage=3, sub="comment", target="Docs",
-         env=Env(kind="PR environment", url="https://pr-9031.ci-cd.on-eva.io/", api="Found in the ticket comments"),
-         check=[("Settings", [("The setting can be set on a country OU", "pass"), ("Store OUs inherit the country value", "pass"), ("A store override wins over the parent", "pass")]),
+    dict(key="OPTR-48455", title="Worked hours settings per store", components=["Core"], status="Open", stage=3, sub="comment", target="Docs",
+         env=Env(kind="Test environment", url="https://pr-9031.preview.shop-demo.test/", api="API: same site", source="comment by Developer"),
+         check=[("Settings", [("The setting can be set for a country", "pass"), ("Stores inherit the country value", "pass"), ("A store override wins over the parent", "pass")]),
                 ("Read service", [("GetWorkedHours rounds hours per the setting", "pass"), ("An invalid rounding value is rejected", "pass")])],
          cleanup=[("WorkedHoursRounding", "15")]),
-    dict(key="OPTR-48449", title="Receipt footer text per store", components=["Frontend"], status="Merged", stage=3, sub="transition", comment_at="13:21", env=EUW,
+    dict(key="OPTR-48449", title="Receipt footer text per store", components=["Frontend"], status="Merged", stage=3, sub="transition", comment_at="13:21", env=STAGING,
          check=[("Footer text", [("Footer text saves per store", "pass"), ("Line breaks are kept on the printed receipt", "pass"), ("Text over 200 characters is rejected", "pass")])],
          cleanup=[("ReceiptFooterText", "(empty)")]),
-    dict(key="OPTR-48437", title="Gift card balance check endpoint", components=["Backend"], status="Merged", stage=4, sub="gate", section="Finance › Gift cards", dups=1, env=EUW,
+    dict(key="OPTR-48437", title="Gift card balance check endpoint", components=["Backend"], status="Merged", stage=4, sub="gate", section="Finance › Gift cards", dups=1, env=STAGING,
          check=[("Balance", [("A valid card returns its current balance", "pass"), ("An expired card returns an expired error", "pass"), ("An unknown card returns not found", "pass")]),
                 ("Security", [("The endpoint requires the gift card view permission", "pass"), ("Rate limit applies after 10 calls per minute", "pass"), ("The balance is masked in logs", "partial")])]),
-    dict(key="OPTR-48430", title="Bulk copy of OU settings", components=["Frontend"], status="Merged", stage=4, sub="approved", section="Organization units › Settings", dups=0, env=EUW,
-         check=[("Copy", [("Selected settings copy to every chosen OU", "pass"), ("Existing values are only overwritten after confirming", "pass"), ("The summary lists each OU and setting", "pass")])],
-         cleanup=[("OuSettingsBulkCopyEnabled", "false")]),
+    dict(key="OPTR-48430", title="Bulk copy of store settings", components=["Frontend"], status="Merged", stage=4, sub="approved", section="Stores › Settings", dups=0, env=STAGING,
+         check=[("Copy", [("Selected settings copy to every chosen store", "pass"), ("Existing values are only overwritten after confirming", "pass"), ("The summary lists each store and setting", "pass")])],
+         cleanup=[("StoreSettingsBulkCopyEnabled", "false")]),
 ]
 
 LATE = dict(key="OPTR-48520", title="Shift planner shows break times", components=["Frontend"], status="Testing", stage=0, sub="working", p1=0,
-            env=Env(kind="Frontend preview", url="https://feature-optr-48520--euw.newblack.test.eva-online.cloud/", api="API: shared api.euw.newblack.test.eva-online.cloud"),
+            env=Env(kind="Test environment", url="https://feature-48520.preview.shop-demo.test/", api="API: https://api.staging.shop-demo.test/", source="comment by Developer"),
             doing="Gathering context from Jira",
             check=[("Breaks", [("Break blocks show on the shift", "pass"), ("Break length matches the shift template", "pass")])])
 
@@ -123,12 +123,11 @@ def jira_issues() -> tuple[list[dict], list[dict]]:
     """Issue records for MockJira. Comments drive environment resolution."""
     def rec(d: dict) -> dict:
         env = d.get("env")
-        comments = []
-        if env is not None and env.kind == "PR environment":
-            comments.append(f"PR environment is up: {env.url}")
-        preview = env.url if env is not None and "preview" in env.kind.lower() else ""
+        comments = ["Moved to Testing."]
+        if env is not None and not env.shared:  # how teams usually share it: a comment with the link
+            comments.append(f"Deployed to the preview environment: {env.url}")
         return {"key": d["key"], "title": d["title"], "status": d["status"], "components": d["components"],
-                "merged": d["status"] == "Merged", "preview_url": preview, "comments": comments,
+                "merged": d["status"] == "Merged", "comments": comments,
                 "description": f"{d['title']}. See the linked PR for details."}
     return [rec(d) for d in _T], [rec(LATE)]
 

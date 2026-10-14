@@ -92,9 +92,6 @@ def test_connection(cfg: dict) -> str:
 # Ticket workflow (Testing board): read tickets, post the QA comment, move the ticket.
 # ---------------------------------------------------------------------------------------------
 
-PR_ENV = re.compile(r"https?://pr-\d+\.ci-cd\.on-eva\.io/?", re.I)
-
-
 def _components(fields: dict) -> list[str]:
     """Component names; the board maps them to FE / BE / FE+BE (Testing board settings)."""
     return [c.get("name", "") for c in fields.get("components") or [] if c.get("name")]
@@ -162,17 +159,7 @@ def issue_dict(ctx: dict) -> dict:
     """What the Testing board reads from a ticket, with the full context alongside."""
     bodies = [c["body"] for c in ctx["comments"]]
     return {"key": ctx["key"], "title": ctx["title"], "status": ctx["status"], "description": ctx["description"],
-            "components": ctx["components"], "comments": bodies, "merged": False, "pr_url": "",
-            "preview_url": preview_url(bodies + [w["url"] for w in ctx["web_links"]]), "context": ctx}
-
-
-def preview_url(comments: list[str]) -> str:
-    """The latest frontend preview link posted on the ticket (not a PR environment)."""
-    for c in reversed(comments):
-        m = re.search(r"https://[\w.-]+\.(pages\.dev|on-eva\.io|eva-online\.cloud)/?[^\s)\]>]*", c)
-        if m and not PR_ENV.match(m.group(0)):
-            return m.group(0)
-    return ""
+            "components": ctx["components"], "comments": bodies, "merged": False, "pr_url": "", "context": ctx}
 
 
 def add_comment(cfg: dict, key: str, text: str) -> None:
@@ -195,14 +182,6 @@ def do_transition(cfg: dict, key: str, transition_id: str) -> str:
     st = s.get(f"{_base(cfg)}/rest/api/2/issue/{key}", params={"fields": "status"}, timeout=20)
     st.raise_for_status()
     return st.json()["fields"]["status"]["name"]
-
-
-def find_pr_environment(comments: list[str]) -> str:
-    for c in reversed(comments):
-        m = PR_ENV.search(c)
-        if m:
-            return m.group(0).rstrip("/") + "/"
-    return ""
 
 
 def create_for_finding(cfg: dict, f: Finding, result: RunResult, report_url: str | None = None) -> str:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,7 +18,10 @@ class WorkflowConfig:
     test_account: str = ""
     test_ou: str = ""
     signature: str = "Commented by Claude"
-    shared_env_name: str = "euw"
+    default_env_url: str = ""   # used only for merged/done tickets that name no environment
+    default_env_name: str = ""
+    env_hints: tuple[str, ...] = ()
+    jira_host: str = ""
     fe_components: tuple[str, ...] = tuple(component_list(DEFAULT_FE_COMPONENTS))
     be_components: tuple[str, ...] = tuple(component_list(DEFAULT_BE_COMPONENTS))
     workspace: Path = APP_DIR / "workspace"
@@ -34,6 +38,10 @@ class WorkflowConfig:
         return classify_type(components, list(self.fe_components), list(self.be_components))
 
     @property
+    def shared_env_name(self) -> str:
+        return self.default_env_name or "default environment"
+
+    @property
     def auth_dir(self) -> Path:
         return self.data_dir / "auth"
 
@@ -45,11 +53,17 @@ class WorkflowConfig:
         s = load_settings()
         w, c = s.get("workflow", {}), s.get("claude", {})
         ws = str(w.get("workspace") or "").strip()
+        demo = bool(w.get("demo", True))
+        if demo:  # the sample tickets use a sample staging site
+            w = {**w, "default_env_url": "https://staging.shop-demo.test/", "default_env_name": "shared staging"}
         return cls(
-            demo=bool(w.get("demo", True)), jira_project=w.get("jira_project") or "OPTR",
+            demo=demo, jira_project=w.get("jira_project") or "OPTR",
             jira_column=w.get("jira_column") or "Testing", test_account=w.get("test_account", ""),
-            test_ou=w.get("test_ou", ""), signature=w.get("comment_signature") or "Commented by Claude",
-            shared_env_name=w.get("shared_env") or "euw",
+            test_ou=w.get("test_ou", ""), signature=w.get("comment_signature") or "Commented by QA Engineer App",
+            default_env_url=str(w.get("default_env_url") or "").strip(),
+            default_env_name=str(w.get("default_env_name") or "").strip(),
+            env_hints=tuple(component_list(w.get("env_hints") or "")),
+            jira_host=(urlparse(str(s.get("jira", {}).get("base_url") or "")).hostname or "").lower(),
             fe_components=tuple(component_list(w.get("fe_components") or DEFAULT_FE_COMPONENTS)),
             be_components=tuple(component_list(w.get("be_components") or DEFAULT_BE_COMPONENTS)),
             # Demo tickets write their files to a scratch folder, never into a real Playwright repo.

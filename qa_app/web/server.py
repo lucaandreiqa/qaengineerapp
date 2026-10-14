@@ -42,8 +42,13 @@ CATALOGUE: list[dict[str, Any]] = [
     {"key": "workflow", "name": "Testing board", "mono": "QA", "tint": "#5865E0", "desc": "Which Jira column the board takes tickets from",
      "fields": [{"k": "demo", "label": "Demo data (sample tickets, simulated Jira and TestRail)", "check": True, "full": True},
                 {"k": "jira_project", "label": "Jira project"}, {"k": "jira_column", "label": "Board column (status)"},
-                {"k": "test_account", "label": "Test account (SSO)"}, {"k": "test_ou", "label": "Test OU"},
-                {"k": "comment_signature", "label": "Comment signature"}, {"k": "shared_env", "label": "Shared environment name"},
+                {"k": "test_account", "label": "Test account (SSO)"},
+                {"k": "test_ou", "label": "Test scope (optional)", "ph": "e.g. a test store, tenant or workspace"},
+                {"k": "comment_signature", "label": "Comment signature"},
+                {"k": "env_hints", "label": "Environment hints (words or domains in your test URLs)", "full": True,
+                 "ph": "e.g. preview.myapp.com, staging, qa"},
+                {"k": "default_env_url", "label": "Default environment URL (merged tickets only)", "ph": "https://staging.myapp.com"},
+                {"k": "default_env_name", "label": "Default environment name", "ph": "staging"},
                 {"k": "fe_components", "label": "FE components (Jira, comma-separated)", "ph": "Frontend, FE"},
                 {"k": "be_components", "label": "BE components (Jira, comma-separated)", "ph": "Backend, BE, Core"},
                 {"k": "workspace", "label": "Playwright workspace folder (tests/tickets/<KEY>/ is written here)", "full": True,
@@ -137,6 +142,7 @@ class Services:
         d = t.public()
         d["files"] = agent.ticket_files(cfg, t)
         d["expected"] = self.workflow.expected_action(t)
+        d["canRedo"] = self.workflow.can_redo_gather(t)
         base = load_settings().get("jira", {}).get("base_url") or "https://example.atlassian.net"
         d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
         d["envShort"] = agent.env_name(t, cfg) if t.env else ""

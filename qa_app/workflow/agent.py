@@ -16,7 +16,6 @@ from typing import Optional
 
 import requests
 
-from ..integrations.jira import find_pr_environment
 from .models import CheckItem, CleanupItem, DraftCase, Env, Section, Ticket, has_fe, type_label
 from .settings import WorkflowConfig as Config
 
@@ -64,21 +63,38 @@ def checklist_md(t: Ticket) -> str:
 # --------------------------------------------------------------------------------------
 
 def resolve_environment(issue: dict, cfg: Config) -> tuple[Optional[Env], str]:
-    """Merged tickets use the shared environment. Otherwise a PR or preview link is required;
-    the workflow stops rather than falling back to the shared one, because the change may not be there yet."""
-    if issue.get("merged"):
-        return Env(kind=f"Shared {cfg.shared_env_name} · ticket is merged", url=f".env defaults ({cfg.shared_env_name})",
-                   api="Shared environment rules: confirm before changing sensitive settings", shared=True), ""
-    pr_env = find_pr_environment(issue.get("comments", []))
-    if pr_env:
-        return Env(kind="PR environment", url=pr_env, api="Found in the ticket comments"), ""
-    ttype = issue.get("type", "")
-    if (has_fe(ttype) or not ttype) and issue.get("preview_url"):  # a frontend change can be tested on its preview
-        url = issue["preview_url"]
-        kind = "Cloudflare Pages preview" if "pages.dev" in url else "Frontend preview"
-        return Env(kind=kind, url=url, api="API: paired from the preview's network requests"), ""
-    return None, (f"{type_label(ttype)} ticket, status {issue.get('status')}, and no PR environment link "
-                  f"in its comments. Stopped instead of falling back to {cfg.shared_env_name}.")
+    """Where to test, from what the ticket says (see environments.py). Sets issue["env_candidates"] for the drawer.
+
+    1. Merged or done, and a default environment is set in settings: the default environment.
+    2. A link on the ticket that is clearly the test environment: that link (and its API link if one is given).
+    3. Otherwise stop at "Needs environment" and list the links found, instead of guessing.
+    """
+    from . import environments
+
+    ctx = issue.get("context") or {"description": issue.get("description", ""), "status": issue.get("status", ""),
+                                   "comments": [{"body": c} for c in issue.get("comments", [])]}
+    found = environments.find(ctx, list(cfg.env_hints), cfg.jira_host)
+    issue["env_candidates"] = [c.public() for c in found[:8]]
+    if environments.looks_released(ctx, bool(issue.get("merged"))) and cfg.default_env_url:
+        why = "merged" if issue.get("merged") else (ctx.get("status") or "done").lower()
+        return Env(kind=f"{cfg.shared_env_name} · ticket is {why}", url=cfg.default_env_url, shared=True, source="settings",
+                   api="Default environment from settings: confirm before changing sensitive settings"), ""
+    app, api = environments.choose(found, issue.get("type", ""))
+    if app:
+        kind = "API" if app.api else "Test environment"
+        return Env(kind=kind, url=app.url, source=app.source,
+                   api=f"API: {api.url}" if api else ("Backend link from the ticket" if app.api else "API: whatever this site calls")), ""
+    ttype = type_label(issue.get("type", ""))
+    if found:
+        return None, (f"Found {len(found)} link{'s' if len(found) != 1 else ''} on the ticket, but none is clearly where to test "
+                      f"this {ttype} ticket. Pick one below or paste the URL.")
+    return None, (f"No test environment link in this {ttype} ticket's description, comments, fields or links. "
+                  "Paste the URL to test on.")
+
+
+def who(cfg: Config) -> str:
+    """The test account, plus the test scope (store, tenant, workspace…) when one is set."""
+    return (cfg.test_account or "the signed-in test account") + (f" in {cfg.test_ou}" if cfg.test_ou else "")
 
 
 def env_name(t: Ticket, cfg: Config) -> str:
@@ -168,7 +184,7 @@ def spec_template(t: Ticket, cfg: Config, serial: bool = False) -> str:
         "import fs from 'node:fs';",
         "",
         f"// {t.key}: {t.title}",
-        f"// Runs as {cfg.test_account} in OU {cfg.test_ou}. Test data is prefixed {t.key}.",
+        f"// Runs as {who(cfg)}. Test data is prefixed {t.key}.",
         f"const BASE = {base_expr};",
         "const cleanup: { name: string; value: string; reread: boolean }[] = [];",
         "",
@@ -197,7 +213,7 @@ async def build_spec(cfg: Config, t: Ticket) -> list[str]:
     files = []
     if cfg.anthropic_api_key and not cfg.is_mock:
         prompt = (f"Ticket {t.key}: {t.title}\nBase URL: {t.env.url if t.env else 'process.env.BASE_URL'}\n"
-                  f"Test account (SSO, storage state is preloaded): {cfg.test_account}, OU {cfg.test_ou}\n\n"
+                  f"Test account (SSO, storage state is preloaded): {who(cfg)}\n\n"
                   f"Checklist:\n{checklist_md(t)}")
         spec = await ask_claude(cfg, SPEC_SYSTEM, prompt, max_tokens=8000)
         spec = re.sub(r"^```\w*\n|```\s*$", "", spec.strip(), flags=re.M)
@@ -298,7 +314,7 @@ def report_md(t: Ticket, cfg: Config) -> str:
     c = {k: sum(1 for i in items if i.result == k) for k in RES_LABEL}
     lines = [f"# {t.key} QA report", "", f"{t.title}", "",
              f"- Environment: {t.env.kind if t.env else 'unknown'} · {t.env.url if t.env else ''}",
-             f"- Account: {cfg.test_account} · OU {cfg.test_ou}",
+             f"- Account: {who(cfg)}",
              f"- Result: {c['pass']} pass · {c['partial']} partial · {c['fail']} fail · {c['blocked']} blocked · {c['nt']} not tested", "",
              checklist_md(t), "## Cleanup"]
     lines += [f"- {cl.name}: reverted to {cl.value}{' · re-read ✓' if cl.reread else ' · NOT re-read'}" for cl in t.cleanup] or ["- No settings were changed."]
@@ -316,7 +332,7 @@ def comment_text(t: Ticket, cfg: Config, today: Optional[date] = None) -> str:
     items = t.items()
     passed = sum(1 for i in items if i.result == "pass")
     out = (f"QA result: {passed}/{len(items)} checks pass. Verified {today.day} {today.strftime('%b %Y')} against "
-           f"{env_name(t, cfg)} (SSO account {cfg.test_account}, OU {cfg.test_ou}).")
+           f"{env_name(t, cfg)}" + (f" (account {who(cfg)})" if cfg.test_account else "") + ".")
     if t.left:
         out += f" All test data created this pass is isolated and traceable, prefixed {t.key}."
     for sec in t.checklist:

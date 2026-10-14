@@ -79,7 +79,7 @@ The server enforces these rules, not just the UI:
 - Checklist results change only through a run.
 - Jira transitions must match by exact name; a near miss returns the available list.
 - A push never re-adds a case that already exists, so a retry after a partial failure only adds what is missing.
-- An unmerged ticket without a PR or preview link stops at **Needs environment** instead of falling back to the shared environment.
+- If the ticket names no clear test environment, it stops at **Needs environment** and lists the links it found, instead of guessing.
 
 **What step 1 reads.** Everything on the ticket itself: summary, description, acceptance criteria, issue type,
 status, priority, labels, components, fix and affects versions, sprint, story points, reporter and assignee, dates,
@@ -87,6 +87,20 @@ every other custom field by name, parent, subtasks and linked tickets (key, titl
 links, and every comment with its author and date. It all goes into `<KEY>-context.md` and to Claude for the
 checklist (oldest comments are trimmed first if a ticket is very long). The ticket drawer shows a summary.
 Linked tickets and attachments are listed, not opened.
+
+**Where to test.** Step 1 looks for the test environment in what the ticket says: the Environment field, custom
+fields (e.g. "Preview URL"), web links, every comment (newest first) and the description. Each link is scored by
+where it is, the words around it ("deployed to", "preview", "staging", "test on"…), and its address (preview / staging
+/ qa / pr-123 style hosts, hosting platforms such as vercel.app, netlify.app, pages.dev). Code, design and docs links
+and the Jira site are ignored; production-looking links are never picked on their own. A link is used only when it
+is clearly the environment; otherwise the drawer lists what was found with a **Use** button, or you paste one.
+For BE tickets an API link is preferred. On the **Testing board** card you can add *Environment hints* (your own
+preview domains or words) and a *Default environment* that is used only for merged / done tickets.
+
+**Redo step 1.** If the ticket changed in Jira (new comment, new link, edited description), press **Redo step 1** in
+the drawer. It reads the ticket again and rebuilds the environment, scenarios and checklist. It works at the
+checklist review, at Needs environment, after an error, and at the results review (that discards the run, so it
+asks for a second click). An environment you picked yourself is kept. Once the Jira comment is posted, it's locked.
 
 **Ticket type.** Every ticket is **FE**, **BE** or **FE+BE**, taken from its Jira *Components* field. A ticket with
 both a frontend and a backend component is FE+BE. Which component names count as which is set on the

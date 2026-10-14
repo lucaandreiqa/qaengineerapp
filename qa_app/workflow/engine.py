@@ -175,6 +175,8 @@ class Workflow:
             return self.tickets.get(key)  # type: ignore[return-value]
         if (t.stage, t.sub) != (stage, sub):
             raise GateError(f"{key} has moved on (now lane {t.stage + 1} · {t.sub}). Review it again before acting.")
+        if action == "redo_gather":
+            return await self._redo_gather(t, payload)
         expected = self.expected_action(t)
         if expected != action:
             raise GateError(f"{key} is waiting for '{expected or 'nothing'}', not '{action}'")
@@ -198,11 +200,38 @@ class Workflow:
             upd["target"] = target
         return self.patch(key, **upd) if upd else t
 
+    # States where step 1 can be done again: before anything about this pass reached Jira.
+    REDO_GATHER_FROM = {(0, "gate"), (0, "blocked"), (2, "gate")}
+
+    def can_redo_gather(self, t: Ticket) -> bool:
+        return (t.stage, t.sub) in self.REDO_GATHER_FROM or (t.stage == 0 and bool(t.error))
+
+    async def _redo_gather(self, t: Ticket, p: dict) -> Ticket:
+        """Read the ticket again and rebuild environment, scenarios and checklist (it may have changed in Jira).
+        Results of an earlier run are discarded; an environment the user picked is kept unless they ask otherwise."""
+        if not self.can_redo_gather(t):
+            if t.stage >= 3:
+                raise GateError(f"The QA comment for {t.key} is already being posted to Jira, so step 1 can't be redone now.")
+            raise GateError(f"{t.key} is busy in lane {t.stage + 1}. Wait until it stops at a review, then redo step 1.")
+        keep_env = t.env if (t.env and t.env.source.startswith("you") and not p.get("refind_env")) else None
+        checklist: list = []
+        if self.cfg.is_mock:  # demo: keep the sample items (their simulated results are tied to them)
+            from .models import CheckItem, Section
+            checklist = [Section(name=s.name, items=[CheckItem(text=i.text) for i in s.items]) for s in t.checklist]
+        t = self.patch(t.key, stage=0, sub="working", p1=0, error="", doing="Reading the ticket again",
+                       env=keep_env, env_candidates=[], checklist=checklist, ran=False, cleanup=[], left="",
+                       comment=None, comment_at="", target="", transitions=[], cases=[], dups=0)
+        self.spawn(t.key, self._gather(t.key))
+        self.toast(f"{t.key}: reading the ticket again" + (" (keeping the environment you chose)" if keep_env else ""))
+        return t
+
     async def _a_use_env(self, t: Ticket, p: dict) -> Ticket:
         url = str(p.get("url", "")).strip()
         if not url.startswith(("http://", "https://")):
-            raise GateError("Enter the PR environment URL, starting with https://", 422)
-        t = self.patch(t.key, env=Env(kind="PR environment", url=url, api="Added by you"), sub="working", p1=2, error="")
+            raise GateError("Enter the test environment URL, starting with https://", 422)
+        picked = next((c for c in t.env_candidates if c.get("url") == url), None)
+        t = self.patch(t.key, env=Env(kind="Test environment", url=url, source="you" + (f" · from {picked['source']}" if picked else ""),
+                                      api="Chosen by you"), sub="working", p1=2, error="")
         self.spawn(t.key, self._gather(t.key))
         self.toast(f"Environment set for {t.key} · building scenarios and checklist")
         return t
@@ -313,6 +342,7 @@ class Workflow:
             env = self.tickets.get(key).env  # type: ignore[union-attr]
             if env is None:
                 env, reason = agent.resolve_environment(issue, self.cfg)
+                self.patch(key, env_candidates=issue.get("env_candidates", []))
                 if env is None:
                     self.patch(key, sub="blocked", p1=1, doing=reason)
                     self.toast(f"{key} needs an environment")
@@ -395,7 +425,7 @@ class Workflow:
         self.toast(f"{key} results ready for review")
 
     def _section_for(self, t: Ticket) -> str:
-        area = "Core" if t.type == "BE" else "Admin Suite"
+        area = {"FE": "Frontend", "BE": "Backend", "FE+BE": "Frontend and backend"}.get(t.type, self.cfg.jira_project or "QA")
         return f"{area} › {t.checklist[0].name if t.checklist else t.title}"
 
     async def _draft(self, key: str) -> None:
