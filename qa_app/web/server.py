@@ -235,6 +235,15 @@ def ticket_file(key: str, name: str):
 
 
 # ------------------------------------------------------------------ events
+# Set by __main__ to the running uvicorn server, so live streams end as soon as Ctrl+C is pressed.
+# Without this the server waits for the browser's /api/events connection to close, which it never does.
+_server: Any = None
+
+
+def stopping() -> bool:
+    return bool(_server is not None and getattr(_server, "should_exit", False))
+
+
 @app.get("/api/events")
 async def events(request: Request):
     q = bus.subscribe()
@@ -242,14 +251,19 @@ async def events(request: Request):
     async def stream():
         try:
             yield "retry: 2000\n\n"
-            while True:
+            idle = 0.0
+            while not stopping():
                 if await request.is_disconnected():
                     break
                 try:
-                    ev = await asyncio.wait_for(q.get(), timeout=15)
+                    ev = await asyncio.wait_for(q.get(), timeout=1)
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"
+                    idle += 1
+                    if idle >= 15:  # keep-alive for proxies and the browser
+                        idle = 0
+                        yield ": ping\n\n"
                     continue
+                idle = 0
                 if ev.get("type") == "ticket":
                     t = S().workflow.tickets.get(ev["ticket"]["key"])
                     if t is None:
