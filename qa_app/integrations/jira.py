@@ -95,9 +95,9 @@ def test_connection(cfg: dict) -> str:
 PR_ENV = re.compile(r"https?://pr-\d+\.ci-cd\.on-eva\.io/?", re.I)
 
 
-def _comp(fields: dict) -> str:
-    names = [c.get("name", "") for c in fields.get("components") or []] + list(fields.get("labels") or [])
-    return "Core" if any("core" in n.lower() for n in names) else "Frontend"
+def _components(fields: dict) -> list[str]:
+    """Component names; the board maps them to FE / BE / FE+BE (Testing board settings)."""
+    return [c.get("name", "") for c in fields.get("components") or [] if c.get("name")]
 
 
 def search_column(cfg: dict, project: str, column: str) -> list[dict]:
@@ -108,7 +108,7 @@ def search_column(cfg: dict, project: str, column: str) -> list[dict]:
                json={"jql": jql, "maxResults": 50, "fields": ["summary", "status", "components", "labels"]})
     r.raise_for_status()
     return [{"key": i["key"], "title": i["fields"].get("summary", ""),
-             "status": (i["fields"].get("status") or {}).get("name", ""), "comp": _comp(i["fields"])}
+             "status": (i["fields"].get("status") or {}).get("name", ""), "components": _components(i["fields"])}
             for i in r.json().get("issues", [])]
 
 
@@ -137,10 +137,10 @@ def get_issue(cfg: dict, key: str) -> dict:
     f = raw["fields"]
     comments = [c.get("body", "") for c in (f.get("comment") or {}).get("comments", [])]
     out = {"key": raw["key"], "title": f.get("summary", ""), "status": (f.get("status") or {}).get("name", ""),
-           "description": f.get("description") or "", "comp": _comp(f), "comments": comments,
+           "description": f.get("description") or "", "components": _components(f), "comments": comments,
            "merged": False, "pr_url": "", "preview_url": ""}
     out.update(_pull_requests(s, cfg, raw.get("id", "")))
-    for c in reversed(comments):  # a Frontend preview link posted on the ticket
+    for c in reversed(comments):  # a frontend preview link posted on the ticket
         m = re.search(r"https://[\w.-]+\.(pages\.dev|on-eva\.io|eva-online\.cloud)/?\S*", c)
         if m and not PR_ENV.match(m.group(0)):
             out["preview_url"] = m.group(0)

@@ -32,7 +32,9 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     "workflow": {"enabled": True, "demo": True, "jira_project": "OPTR", "jira_column": "Testing",
                  "test_account": "andrei.luca@red-to-blue.com", "test_ou": "lucatestaustriastore",
                  "comment_signature": "Commented by Claude for Luca", "shared_env": "euw",
-                 "workspace": ""},
+                 "workspace": "",
+                 # Jira components that make a ticket FE, BE, or FE+BE when it has both.
+                 "fe_components": "Frontend, FE, Front-end, UI", "be_components": "Backend, BE, Back-end, Core, API"},
     # Claude writes the scenarios, QA checklist and Playwright spec for each ticket.
     "claude": {"enabled": False, "api_key": "", "model": "claude-sonnet-5-5"},
 }

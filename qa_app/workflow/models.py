@@ -3,9 +3,36 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Result = Literal["pass", "partial", "fail", "blocked", "nt"]
+
+# What a ticket changes: frontend, backend or both. "" when none of its Jira components is mapped.
+TicketType = Literal["FE", "BE", "FE+BE", ""]
+DEFAULT_FE_COMPONENTS = "Frontend, FE, Front-end, UI"
+DEFAULT_BE_COMPONENTS = "Backend, BE, Back-end, Core, API"
+
+
+def component_list(value: object) -> list[str]:
+    """'Frontend, FE' (settings text) or a list, as clean names."""
+    items = value if isinstance(value, (list, tuple)) else str(value or "").split(",")
+    return [str(i).strip() for i in items if str(i).strip()]
+
+
+def classify_type(components: list[str], fe_names: list[str], be_names: list[str]) -> str:
+    """FE, BE or FE+BE from the ticket's Jira components (names match exactly, ignoring case)."""
+    names = {c.strip().lower() for c in components or []}
+    fe = bool(names & {n.lower() for n in fe_names})
+    be = bool(names & {n.lower() for n in be_names})
+    return "FE+BE" if fe and be else "FE" if fe else "BE" if be else ""
+
+
+def has_fe(ticket_type: str) -> bool:
+    return "FE" in ticket_type.split("+")
+
+
+def type_label(ticket_type: str) -> str:
+    return ticket_type or "Untyped"
 
 # (stage, sub) pairs the state machine allows. Stage is the board lane (0-4).
 STATES: set[tuple[int, str]] = {
@@ -52,7 +79,8 @@ class DraftCase(BaseModel):
 class Ticket(BaseModel):
     key: str
     title: str
-    comp: Literal["Core", "Frontend"] = "Frontend"
+    type: TicketType = ""
+    components: list[str] = Field(default_factory=list)  # the Jira components the type came from
     status: str = "Open"
     description: str = ""
     stage: int = 0
@@ -82,6 +110,16 @@ class Ticket(BaseModel):
     mock_results: list[list[str]] = Field(default_factory=list)
     mock_cleanup: list[CleanupItem] = Field(default_factory=list)
     mock_left: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_comp(cls, data: object) -> object:
+        """Tickets saved before FE/BE had comp = Core | Frontend."""
+        if isinstance(data, dict) and "comp" in data:
+            data = dict(data)
+            comp = data.pop("comp")
+            data.setdefault("type", "BE" if comp == "Core" else "FE" if comp == "Frontend" else "")
+        return data
 
     def public(self) -> dict:
         return self.model_dump(exclude={"mock_results", "mock_cleanup", "mock_left"})

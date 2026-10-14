@@ -17,7 +17,7 @@ from typing import Optional
 import requests
 
 from ..integrations.jira import find_pr_environment
-from .models import CheckItem, CleanupItem, DraftCase, Env, Section, Ticket
+from .models import CheckItem, CleanupItem, DraftCase, Env, Section, Ticket, has_fe, type_label
 from .settings import WorkflowConfig as Config
 
 RES_LABEL = {"pass": "PASS", "partial": "PARTIAL", "fail": "FAIL", "blocked": "BLOCKED", "nt": "NOT TESTED"}
@@ -72,11 +72,12 @@ def resolve_environment(issue: dict, cfg: Config) -> tuple[Optional[Env], str]:
     pr_env = find_pr_environment(issue.get("comments", []))
     if pr_env:
         return Env(kind="PR environment", url=pr_env, api="Found in the ticket comments"), ""
-    if issue.get("comp") == "Frontend" and issue.get("preview_url"):
+    ttype = issue.get("type", "")
+    if (has_fe(ttype) or not ttype) and issue.get("preview_url"):  # a frontend change can be tested on its preview
         url = issue["preview_url"]
         kind = "Cloudflare Pages preview" if "pages.dev" in url else "Frontend preview"
         return Env(kind=kind, url=url, api="API: paired from the preview's network requests"), ""
-    return None, (f"{issue.get('comp', 'Core')} ticket, status {issue.get('status')}, and no PR environment link "
+    return None, (f"{type_label(ttype)} ticket, status {issue.get('status')}, and no PR environment link "
                   f"in its comments. Stopped instead of falling back to {cfg.shared_env_name}.")
 
 
@@ -119,7 +120,7 @@ QA_SYSTEM = ("You are a senior QA engineer. You write precise, testable checklis
 async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[Section], bool]:
     """Returns (scenarios markdown, checklist sections, serial_needed)."""
     if cfg.anthropic_api_key:
-        prompt = (f"Ticket {issue['key']}: {issue['title']}\nComponent: {issue.get('comp')}\nStatus: {issue.get('status')}\n"
+        prompt = (f"Ticket {issue['key']}: {issue['title']}\nType: {type_label(issue.get('type', ''))} (Jira components: {', '.join(issue.get('components', [])) or 'none'})\nStatus: {issue.get('status')}\n"
                   f"Environment: {env.kind} {env.url}\n\nDescription:\n{issue.get('description', '')}\n\n"
                   f"Comments:\n" + "\n---\n".join(issue.get("comments", [])[-10:]) +
                   "\n\nReturn JSON only: {\"scenarios\": \"markdown\", \"serial\": bool (true if multi-user or "

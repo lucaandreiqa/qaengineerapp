@@ -128,7 +128,7 @@ def test_environment_resolution(tmp_path):
     assert env and env.shared
     env, _ = agent.resolve_environment({"merged": False, "comments": ["up at https://pr-42.ci-cd.on-eva.io/"]}, cfg)
     assert env and env.url == "https://pr-42.ci-cd.on-eva.io/"
-    env, reason = agent.resolve_environment({"merged": False, "comp": "Core", "status": "Open", "comments": []}, cfg)
+    env, reason = agent.resolve_environment({"merged": False, "type": "BE", "components": ["Core"], "status": "Open", "comments": []}, cfg)
     assert env is None and "Stopped" in reason
     assert find_pr_environment(["nothing"]) == ""
 
@@ -186,3 +186,36 @@ def test_report_renders(tmp_path):
     html = write_html(r, tmp_path).read_text(encoding="utf-8")
     assert "shop.example.com" in html and "Missing meta description" in html and "Failed" not in html
     assert ">52<" in html and "4.1 s" in html
+
+
+def test_ticket_type_from_jira_components():
+    from qa_app.workflow.models import classify_type
+    fe, be = ["Frontend", "FE"], ["Backend", "BE", "Core"]
+    assert classify_type(["Frontend"], fe, be) == "FE"
+    assert classify_type(["core"], fe, be) == "BE"  # names match ignoring case
+    assert classify_type(["Frontend", "Backend"], fe, be) == "FE+BE"
+    assert classify_type(["Payments"], fe, be) == ""  # unmapped component: untyped, not guessed
+    assert classify_type([], fe, be) == ""
+    assert Config(fe_components=("Admin Suite",), be_components=("Core",)).ticket_type(["Admin Suite", "Core"]) == "FE+BE"
+
+
+def test_saved_tickets_with_old_component_load_as_fe_or_be():
+    from qa_app.workflow.models import Ticket
+    assert Ticket.model_validate({"key": "A-1", "title": "x", "comp": "Core"}).type == "BE"
+    assert Ticket.model_validate({"key": "A-2", "title": "x", "comp": "Frontend"}).type == "FE"
+    assert "comp" not in Ticket(key="A-3", title="x").public()
+
+
+def test_sync_types_new_tickets_and_preview_needs_fe(wf, tmp_path):
+    async def go():
+        assert await wf.sync() == ["OPTR-48520"]
+        t = wf.tickets.get("OPTR-48520")
+        assert t.type == "FE" and t.components == ["Frontend"]
+    run(go())
+    types = {t.key: t.type for t in seed.seed_tickets()}
+    assert types["OPTR-48466"] == "FE+BE" and types["OPTR-48437"] == "BE" and types["OPTR-48498"] == "FE"
+    cfg = Config(demo=True, data_dir=tmp_path)
+    issue = {"merged": False, "status": "Open", "comments": [], "preview_url": "https://x.pages.dev/"}
+    assert agent.resolve_environment({**issue, "type": "FE+BE"}, cfg)[0].kind == "Cloudflare Pages preview"
+    env, reason = agent.resolve_environment({**issue, "type": "BE"}, cfg)
+    assert env is None and reason.startswith("BE ticket")

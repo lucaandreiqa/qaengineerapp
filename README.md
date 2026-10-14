@@ -9,7 +9,7 @@ the same engine runs headless in CI.
 
 | Screen | What it does |
 |---|---|
-| **Board** ⌘1 | Tickets from a Jira column (OPTR · Testing) in five lanes with four review gates: checklist → spec → run → Jira comment and move → TestRail cases |
+| **Board** ⌘1 | Tickets from a Jira column (OPTR · Testing) in five lanes with four review gates: checklist → spec → run → Jira comment and move → TestRail cases. Each card shows its type (FE, BE or FE+BE) and the board filters by type |
 | **Run** ⌘2 | The website checks below, with live findings, visual diffs (baseline / current / diff) and a log. Any finding can become a Jira issue |
 | **History** ⌘3 | Issues per run per site, past runs, open report or folder, publish to integrations |
 | **Integrations** ⌘4 | Every service, plus the Testing board and Claude settings. Test connection, then Save |
@@ -80,6 +80,13 @@ The server enforces these rules, not just the UI:
 - Jira transitions must match by exact name; a near miss returns the available list.
 - A push never re-adds a case that already exists, so a retry after a partial failure only adds what is missing.
 - An unmerged ticket without a PR or preview link stops at **Needs environment** instead of falling back to the shared environment.
+
+**Ticket type.** Every ticket is **FE**, **BE** or **FE+BE**, taken from its Jira *Components* field. A ticket with
+both a frontend and a backend component is FE+BE. Which component names count as which is set on the
+**Testing board** card (*FE components*, *BE components*; defaults `Frontend, FE, Front-end, UI` and
+`Backend, BE, Back-end, Core, API`, matched ignoring case). A ticket with none of them shows **No type**, so a
+missing component is visible instead of guessed. The board's type filter (All · FE · BE · FE+BE) is remembered.
+A frontend preview link is used as the test environment only for FE and FE+BE tickets.
 
 **Demo data** is on by default: the board shows sample OPTR tickets and simulates Jira and TestRail, so you can try it
 safely. To use your real column, set up **Jira** (and **TestRail**) on the Integrations screen, then untick

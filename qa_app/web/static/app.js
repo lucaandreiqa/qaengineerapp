@@ -57,12 +57,22 @@ const LOGO = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"
 
 /* ------------------------------------------------------------------ constants */
 const LANES = [
-  { name: 'Gather requirements', desc: 'Context from Jira and the linked PR, Core or Frontend, target environment, scenarios and the QA checklist.', gate: 'Gate 1 · you review the checklist', empty: 'New tickets from Jira land here' },
+  { name: 'Gather requirements', desc: 'Context from Jira and the linked PR, FE, BE or both, target environment, scenarios and the QA checklist.', gate: 'Gate 1 · you review the checklist', empty: 'New tickets from Jira land here' },
   { name: 'Create tests', desc: 'Builds the spec, plus a serial spec for multi-user scenarios, from the approved checklist.', gate: 'No gate · runs straight on', empty: 'Nothing to build' },
   { name: 'Run tests', desc: 'Runs against the resolved environment, fills in the checklist, writes the report and reverts every setting.', gate: 'Gate 2 · you review the results', empty: 'No runs in progress' },
   { name: 'Comment & move Jira ticket', desc: 'Posts the QA summary comment, then moves the ticket. Each one is approved on its own.', gate: 'Gate 3 · comment, then transition', empty: 'Nothing to report' },
   { name: 'Update TestRail tests', desc: 'Drafts cases from the passing items. Pushes only when you say so.', gate: 'Gate 4 · draft review, then push', empty: 'TestRail is up to date' },
 ];
+/* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
+const TYPES = ['FE', 'BE', 'FE+BE', ''];
+const typeName = (ty) => ({ FE: 'Frontend', BE: 'Backend', 'FE+BE': 'Frontend and backend' }[ty] || 'No FE/BE component');
+function typeBadge(t) {
+  const ty = t.type || '';
+  const tip = esc(typeName(ty) + ' · Jira components: ' + ((t.components || []).join(', ') || 'none'));
+  if (ty === 'FE+BE') return `<span class="ttype tt-both" title="${tip}"><i>FE</i><i>BE</i></span>`;
+  if (ty) return `<span class="ttype tt-${ty.toLowerCase()}" title="${tip}">${ty}</span>`;
+  return `<span class="ttype tt-none" title="${tip}">No type</span>`;
+}
 const RES = { pass: 'PASS', partial: 'PARTIAL', fail: 'FAIL', blocked: 'BLOCKED', nt: 'NOT TESTED' };
 const CHECKS = { functional: 'Functional', visual: 'Visual', accessibility: 'Accessibility', seo: 'SEO', performance: 'Performance', 'best-practices': 'Best practices' };
 const CHECK_INFO = [
@@ -81,7 +91,7 @@ const S = {
   theme: store.get('theme', 'dark'),
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
-  board: { data: null, sel: null, q: '', you: false, env: {}, comment: {}, busy: false, err: '' },
+  board: { data: null, sel: null, q: '', you: false, type: store.get('boardType', 'all'), env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -235,7 +245,14 @@ function viewBoard() {
   const c = data.config;
   const q = B.q.trim().toLowerCase();
   const waiting = data.tickets.filter((t) => !isWorking(t) || t.error).length;
-  const visible = data.tickets.filter((t) => (!q || (t.key + ' ' + t.title).toLowerCase().includes(q)) && (!B.you || !isWorking(t) || t.error));
+  const base = data.tickets.filter((t) => (!q || (t.key + ' ' + t.title).toLowerCase().includes(q)) && (!B.you || !isWorking(t) || t.error));
+  const typeCount = (ty) => base.filter((t) => (t.type || '') === ty).length;
+  if (B.type !== 'all' && !TYPES.includes(B.type)) B.type = 'all';
+  const visible = B.type === 'all' ? base : base.filter((t) => (t.type || '') === B.type);
+  const typeOpts = [['all', 'All', base.length], ['FE', 'FE', typeCount('FE')], ['BE', 'BE', typeCount('BE')], ['FE+BE', 'FE+BE', typeCount('FE+BE')]];
+  if (typeCount('') || B.type === '') typeOpts.push(['', 'No type', typeCount('')]);
+  const typeSeg = `<div class="seg seg-type" role="group" aria-label="Ticket type">${typeOpts.map(([v, label, n]) =>
+    `<button type="button" aria-pressed="${B.type === v}" data-act="ttype" data-v="${esc(v)}" title="${esc(v === 'all' ? 'Every ticket type' : typeName(v))}">${v && v !== 'all' ? `<span class="tdot tdot-${v === 'FE+BE' ? 'both' : v.toLowerCase()}" aria-hidden="true"></span>` : ''}${label}<span class="seg-n">${n}</span></button>`).join('')}</div>`;
   const lanes = LANES.map((l, i) => {
     const cards = visible.filter((t) => t.stage === i);
     return `<section class="lane" role="listitem" aria-labelledby="lane-${i + 1}">
@@ -262,6 +279,7 @@ function viewBoard() {
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 <label class="search" style="flex:0 1 260px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search tickets</span><input id="board-q" type="search" placeholder="Search key or title" value="${esc(B.q)}" data-in="boardQ"></label>
 <div class="seg" role="group" aria-label="Show"><button type="button" aria-pressed="${!B.you}" data-act="you" data-v="0">All tickets</button><button type="button" aria-pressed="${B.you}" data-act="you" data-v="1">Waiting on me</button></div>
+${typeSeg}
 <span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">Tests as ${esc(c.account)} · OU ${esc(c.ou)}</span>
 </div>
 <div class="board" role="list" aria-label="QA workflow steps" data-keep="board">${lanes}</div>
@@ -272,8 +290,8 @@ function viewCard(t) {
   const d = deco(t);
   const cls = 'tk' + (d.you ? ' is-you' : '') + (S.board.sel === t.key ? ' is-sel' : '');
   return `<article class="${cls}">
-<button type="button" class="tk-open" data-act="open" data-key="${esc(t.key)}" aria-label="${esc(t.key + ', ' + t.title + ', ' + d.stateLabel)}">
-<span class="tk-meta"><span class="mono">${esc(t.key)}</span><span class="comp">${esc(t.comp)}</span><span style="margin-left:auto">${esc(t.status)}</span></span>
+<button type="button" class="tk-open" data-act="open" data-key="${esc(t.key)}" aria-label="${esc(t.key + ', ' + (t.type || 'no type') + ', ' + t.title + ', ' + d.stateLabel)}">
+<span class="tk-meta"><span class="mono">${esc(t.key)}</span>${typeBadge(t)}<span style="margin-left:auto">${esc(t.status)}</span></span>
 <span class="tk-title">${esc(t.title)}</span>
 </button>
 <div class="tk-stage">
@@ -322,7 +340,7 @@ function viewDrawer() {
   }
 
   if (st === 0 && sub !== 'gate') {
-    const steps = ['Context from Jira and the linked PR', sub === 'blocked' ? `Classified ${t.comp} · no environment found` : `Classified ${t.comp} · environment resolved`, 'Scenarios', 'QA checklist'];
+    const steps = ['Context from Jira and the linked PR', sub === 'blocked' ? `Classified ${t.type || 'without FE/BE'} · no environment found` : `Classified ${t.type || 'without FE/BE'} · environment resolved`, 'Scenarios', 'QA checklist'];
     body += `<div><div class="lbl">Phase 1 progress</div><div class="box">${steps.map((x, i) => {
       const doneN = sub === 'blocked' ? 1 : t.p1 + 1;
       const done = i < doneN - 1;
@@ -378,7 +396,7 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
   return `<aside class="drawer" aria-label="Ticket details">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
-<span class="mono" style="color:var(--muted)">${esc(t.key)}</span><span class="comp">${esc(t.comp)}</span><span style="color:var(--muted);font-size:12px">Jira status: ${esc(t.status)}</span>
+<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}<span style="color:var(--muted);font-size:12px">Jira status: ${esc(t.status)}</span>
 <a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in Jira${svg(IC.ext, 'ic ic-s')}</a>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" data-act="close">${svg(IC.close)}</button>
 </div>
@@ -820,6 +838,7 @@ const ACTS = {
     S.board.syncing = false;
   },
   you: (el) => { S.board.you = el.dataset.v === '1'; },
+  ttype: (el) => { S.board.type = el.dataset.v; store.set('boardType', S.board.type); },
   open: (el) => { S.board.sel = el.dataset.key; S.board.actErr = ''; },
   close: () => { S.board.sel = null; S.board.actErr = ''; },
   primary: (el) => primaryAction(el.dataset.key),

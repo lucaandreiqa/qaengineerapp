@@ -43,6 +43,8 @@ CATALOGUE: list[dict[str, Any]] = [
                 {"k": "jira_project", "label": "Jira project"}, {"k": "jira_column", "label": "Board column (status)"},
                 {"k": "test_account", "label": "Test account (SSO)"}, {"k": "test_ou", "label": "Test OU"},
                 {"k": "comment_signature", "label": "Comment signature"}, {"k": "shared_env", "label": "Shared environment name"},
+                {"k": "fe_components", "label": "FE components (Jira, comma-separated)", "ph": "Frontend, FE"},
+                {"k": "be_components", "label": "BE components (Jira, comma-separated)", "ph": "Backend, BE, Core"},
                 {"k": "workspace", "label": "Playwright workspace folder (tests/tickets/<KEY>/ is written here)", "full": True,
                  "ph": str(APP_DIR / "workspace")}],
      "required": ["jira_project", "jira_column"]},
@@ -109,6 +111,13 @@ class Services:
     def seed_demo(self) -> None:
         store = self.workflow.demo_store
         if store.tickets or store.done_keys:
+            # Demo boards saved before FE/BE types only had Core/Frontend: take the types from the demo data.
+            fresh = {t.key: t for t in seed.seed_tickets() + [seed.late_ticket()]}
+            stale = [t for t in store.tickets.values() if not t.components and t.key in fresh]
+            for t in stale:
+                t.type, t.components = fresh[t.key].type, fresh[t.key].components
+            if stale:
+                store.save()
             return
         seeded = seed.seed_tickets()
         for t in seeded:

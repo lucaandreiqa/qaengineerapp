@@ -90,7 +90,7 @@ class MockJira:
 
     def _public(self, i: dict) -> dict:
         return {"key": i["key"], "title": i["title"], "status": i["status"], "description": i.get("description", ""),
-                "comp": i.get("comp", "Frontend"), "merged": i.get("merged", i["status"] == "Merged"),
+                "components": list(i.get("components", [])), "merged": i.get("merged", i["status"] == "Merged"),
                 "pr_url": i.get("pr_url", ""), "preview_url": i.get("preview_url", ""),
                 "comments": self.comments.get(i["key"], [])}
 

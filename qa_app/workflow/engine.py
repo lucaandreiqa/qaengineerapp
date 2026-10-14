@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
-from .models import WORKING_SUBS, Env, Ticket
+from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
 
@@ -135,7 +135,8 @@ class Workflow:
         for i in issues:
             if i["key"] in self.tickets.tickets or i["key"] in self.tickets.done_keys:
                 continue
-            t = Ticket(key=i["key"], title=i["title"], comp=i.get("comp", "Frontend"), status=i.get("status", ""),
+            comps = list(i.get("components", []))
+            t = Ticket(key=i["key"], title=i["title"], type=self.cfg.ticket_type(comps), components=comps, status=i.get("status", ""),
                        description=i.get("description", ""), stage=0, sub="working", doing="Gathering context from Jira")
             if self.cfg.is_mock:
                 from .seed import late_ticket
@@ -293,13 +294,14 @@ class Workflow:
         t = self.tickets.get(key)
         assert t
         jira = self.jira()
-        issue = await self._call(jira.get_issue, key)
+        issue = self._typed(await self._call(jira.get_issue, key))
         if t.p1 <= 0:
             self.patch(key, p1=0, doing="Gathering context from Jira and the linked PR", description=issue.get("description", ""))
             agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue))
             await self.pause(2.5)
         if t.p1 <= 1 or self.tickets.get(key).env is None:  # type: ignore[union-attr]
-            self.patch(key, p1=1, doing="Classifying and resolving the environment", comp=issue.get("comp", t.comp))
+            self.patch(key, p1=1, doing="Classifying and resolving the environment",
+                       type=issue["type"], components=issue["components"])
             await self.pause(2.5)
             env = self.tickets.get(key).env  # type: ignore[union-attr]
             if env is None:
@@ -327,9 +329,15 @@ class Workflow:
         self.patch(key, sub="gate", doing="")
         self.toast(f"{key} checklist ready for review")
 
+    def _typed(self, issue: dict) -> dict:
+        """The issue plus its FE / BE / FE+BE type from the Jira components."""
+        comps = list(issue.get("components", []))
+        return {**issue, "components": comps, "type": self.cfg.ticket_type(comps)}
+
     def _context_md(self, issue: dict) -> str:
         comments = "\n\n".join(f"> {c}" for c in issue.get("comments", [])) or "_No comments._"
-        return (f"# {issue['key']}: {issue['title']}\n\n- Status: {issue.get('status')}\n- Component: {issue.get('comp')}\n"
+        return (f"# {issue['key']}: {issue['title']}\n\n- Status: {issue.get('status')}\n- Type: {type_label(issue.get('type', ''))}"
+                f" (components: {', '.join(issue.get('components', [])) or 'none'})\n"
                 f"- Merged: {issue.get('merged')}\n- PR: {issue.get('pr_url') or 'none linked'}\n\n## Description\n\n"
                 f"{issue.get('description') or '_None._'}\n\n## Comments\n\n{comments}\n")
 
@@ -372,7 +380,7 @@ class Workflow:
         self.toast(f"{key} results ready for review")
 
     def _section_for(self, t: Ticket) -> str:
-        area = "Core" if t.comp == "Core" else "Admin Suite"
+        area = "Core" if t.type == "BE" else "Admin Suite"
         return f"{area} › {t.checklist[0].name if t.checklist else t.title}"
 
     async def _draft(self, key: str) -> None:
