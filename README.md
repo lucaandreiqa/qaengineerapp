@@ -13,6 +13,7 @@ the same engine runs headless in CI.
 | **Run** ⌘2 | The website checks below, with live findings, visual diffs (baseline / current / diff) and a log. Any finding can become a Jira issue |
 | **History** ⌘3 | Issues per run per site, past runs, open report or folder, publish to integrations |
 | **Integrations** ⌘4 | Every service, plus the Testing board and Claude settings. Test connection, then Save |
+| **Skills** ⌘5 | How Claude does each board step: a general skill per step, refined per Jira project |
 
 The original PySide window is still there: `run_classic.bat` / `run_classic.command` or `python -m qa_app --classic`.
 
@@ -87,6 +88,17 @@ every other custom field by name, parent, subtasks and linked tickets (key, titl
 links, and every comment with its author and date. It all goes into `<KEY>-context.md` and to Claude for the
 checklist (oldest comments are trimmed first if a ticket is very long). The ticket drawer shows a summary.
 Linked tickets and attachments are listed, not opened.
+
+**Skills.** Each board column has a skill: Markdown instructions Claude gets every time it does that step
+(Gather requirements, Create tests, Run tests, Jira comment, TestRail cases). The app ships a general skill for
+each (`qa_app/skills/*.md`). On the **Skills** screen (⌘5, or *Skill* on a board lane) you can:
+- edit the general skill for everyone (saved in `~/.qa_app/skills/general/`, *Reset to default* any time);
+- add a version for a Jira project that **adds to** the general skill (default) or **replaces** it
+  (`~/.qa_app/skills/projects/<KEY>/`), e.g. "our API is GraphQL", "always test the mobile viewport".
+The ticket's Jira project decides which version is used, and the drawer shows which one Claude followed. Output
+formats stay in the code, so editing a skill changes how Claude works, not what the app can read back.
+With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
+the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
 **Where to test.** Step 1 looks for the test environment in what the ticket says: the Environment field, custom
 fields (e.g. "Preview URL"), web links, every comment (newest first) and the description. Each link is scored by
@@ -182,7 +194,9 @@ qa_app/
                      mcp_client.py (remote MCP + OAuth 2.1), atlassian_mcp.py (Jira through Atlassian's MCP server)
   report.py          HTML (templates/report.html.j2) + JUnit output
   web/               FastAPI server, Run bridge to runner.py, Jira connect (jira_connect.py), static front end
-  workflow/          Testing board: ticket models, gated engine, checklist/spec/comment logic, demo data
+  workflow/          Testing board: ticket models, gated engine, checklist/spec/comment logic, demo data,
+                     skills.py (general + per-project step skills), environments.py, ticket_context.py
+  skills/            the general skill for each board step (Markdown), passed to Claude in that step
   ui/                PySide6 window and background workers (classic)
 tests/               pytest suite for the workflow rules and the report
 ci/                  pipeline templates

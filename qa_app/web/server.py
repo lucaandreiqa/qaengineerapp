@@ -479,6 +479,55 @@ def jira_disconnect() -> dict:
     return jira_connect.disconnect()
 
 
+# ------------------------------------------------------------------ skills: how Claude does each step
+from ..workflow import skills as skill_store  # noqa: E402
+
+
+class SkillIn(BaseModel):
+    text: str
+    mode: str = "add"
+
+
+def _skill_call(fn, *args):
+    try:
+        fn(*args)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/skills")
+def skills_overview(project: str = "") -> dict:
+    key = project.strip().upper() or (WorkflowConfig.load().jira_project if not WorkflowConfig.load().is_mock else "")
+    try:
+        return skill_store.overview(key or None)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/skills/general/{step}")
+def skill_save_general(step: str, body: SkillIn) -> dict:
+    _skill_call(skill_store.save_general, step, body.text)
+    return {"ok": True}
+
+
+@app.delete("/api/skills/general/{step}")
+def skill_reset_general(step: str) -> dict:
+    _skill_call(skill_store.reset_general, step)
+    return {"ok": True}
+
+
+@app.put("/api/skills/project/{key}/{step}")
+def skill_save_project(key: str, step: str, body: SkillIn) -> dict:
+    _skill_call(skill_store.save_project, key.upper(), step, body.text, body.mode)
+    return {"ok": True}
+
+
+@app.delete("/api/skills/project/{key}/{step}")
+def skill_delete_project(key: str, step: str) -> dict:
+    _skill_call(skill_store.delete_project, key.upper(), step)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ static
 @app.get("/files/{path:path}")
 def app_file(path: str):

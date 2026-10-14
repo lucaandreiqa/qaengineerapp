@@ -12,6 +12,7 @@ const store = {
 /* ------------------------------------------------------------------ icons */
 const svg = (d, cls = 'ic', extra = '') => `<svg class="${cls}" ${extra} viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const IC = {
+  skill: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"></path><path d="M17 7.5h1.5A1.5 1.5 0 0 1 20 9v11h-3"></path><path d="M8.5 9h5M8.5 12.5h5M8.5 16h3"></path>',
   board: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
   run: '<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>',
   history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"></path><path d="M3.5 3.5v5h5"></path><path d="M12 7.5V12l3 2"></path>',
@@ -83,7 +84,8 @@ const CHECK_INFO = [
   ['performance', 'Performance', 'Timing, page weight and Lighthouse', IC.perf],
 ];
 const SEVL = { critical: 'Critical', major: 'Major', minor: 'Minor', info: 'Info' };
-const ROUTES = ['board', 'run', 'history', 'integrations'];
+const ROUTES = ['board', 'run', 'history', 'integrations', 'skills'];
+const STEP_SKILL = ['gather', 'create-tests', 'run-tests', 'jira-comment', 'testrail'];  // board lane i → its skill
 
 
 /* ------------------------------------------------------------------ state */
@@ -100,6 +102,7 @@ const S = {
   hist: { runs: null, site: null, q: '', status: 'all', pub: {} },
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {} },
   jira: { st: null, link: '', busy: '', err: '', col: '' },
+  skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
 };
 
 /* ------------------------------------------------------------------ api */
@@ -165,7 +168,7 @@ function render() {
   document.querySelectorAll('[data-keep]').forEach((el) => { scrolls[el.dataset.keep] = [el.scrollLeft, el.scrollTop]; });
   $app.dataset.theme = S.theme;
   document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
-  const screen = { board: viewBoard, run: viewRun, history: viewHistory, integrations: viewIntegrations }[S.route]();
+  const screen = { board: viewBoard, run: viewRun, history: viewHistory, integrations: viewIntegrations, skills: viewSkills }[S.route]();
   $app.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewToast() + (S.route === 'run' ? viewLightbox() : '');
   document.querySelectorAll('[data-keep]').forEach((el) => {
     const v = scrolls[el.dataset.keep];
@@ -185,7 +188,7 @@ function viewSide() {
   const link = (r, label, icon, n) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}<span class="kbd">⌘${n}</span></a>`;
   return `<nav class="side" aria-label="Main">
 <div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">QA Engineer</span></div>
-${link('board', 'Board', IC.board, 1)}${link('run', 'Run', IC.run, 2)}${link('history', 'History', IC.history, 3)}${link('integrations', 'Integrations', IC.integ, 4)}
+${link('board', 'Board', IC.board, 1)}${link('run', 'Run', IC.run, 2)}${link('history', 'History', IC.history, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
 ${S.board.data && S.board.data.config.mode !== 'live' ? '<div style="padding:0 4px 10px"><a class="mode" href="#/integrations" title="The Testing board uses sample tickets and simulated Jira and TestRail. Turn it off on the Integrations screen.">Demo data</a></div>' : ''}
 <div class="seg" role="group" aria-label="Theme">
@@ -260,7 +263,7 @@ function viewBoard() {
 <div class="lane-head">
 <div style="display:flex;align-items:center;gap:8px"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" style="margin:0;font-size:13px;font-weight:600">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span></div>
 <p style="margin:0;color:var(--muted);font-size:12px;line-height:1.4">${l.desc}</p>
-<div class="gate-line${i === 1 ? '' : ' has-gate'}">${svg(IC.lock, 'ic ic-s')}${l.gate}</div>
+<div class="gate-line${i === 1 ? '' : ' has-gate'}">${svg(IC.lock, 'ic ic-s')}${l.gate}<a class="lane-skill" href="#/skills?step=${STEP_SKILL[i]}" title="How Claude does this step">${svg(IC.skill, 'ic ic-s')}Skill</a></div>
 </div>
 <div class="lane-body">${cards.map(viewCard).join('') || `<div class="lane-empty">${l.empty}</div>`}</div>
 </section>`;
@@ -339,6 +342,88 @@ function viewTicketContext(t) {
   const warn = !c.has_description && !c.has_acceptance
     ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<span>The ticket has no description or acceptance criteria, so the checklist can only go on the title and comments.</span></div>` : '';
   return `<div><div class="lbl">From the ticket</div>${tags ? `<div class="ctx-tags">${tags}</div>` : ''}<div class="box">${rows.join('')}</div>${warn}</div>`;
+}
+
+/* ------------------------------------------------------------------ Skills: how Claude does each board step */
+const skillKey = (K) => `${K.sel}|${K.tab}|${K.tab === 'project' ? K.data.project : ''}`;
+
+function viewSkills() {
+  const K = S.skills, d = K.data;
+  if (!d) return `<main class="main"><h1 style="margin:0;font-size:18px;font-weight:600">Skills</h1><div class="${K.err ? 'callout c-err' : 'notice'}">${K.err ? esc(K.err) : 'Loading…'}</div></main>`;
+  const step = d.steps.find((x) => x.id === K.sel) || d.steps[0];
+  const proj = d.project;
+  const key = skillKey(K);
+  const isProject = K.tab === 'project' && proj;
+  const savedText = isProject ? (step.project ? step.project.text : '') : step.general.text;
+  const text = K.draft[key] != null ? K.draft[key] : savedText;
+  const mode = K.mode[step.id + '|' + proj] || (step.project && step.project.mode) || 'add';
+  const dirty = text !== savedText || (isProject && step.project && mode !== step.project.mode) || (isProject && !step.project && text.trim());
+  const list = d.steps.map((x, i) => {
+    const badge = x.project ? `<span class="tag sk-badge">${x.project.mode === 'replace' ? `${esc(proj)} replaces` : `+ ${esc(proj)}`}</span>` : '';
+    return `<button type="button" class="sk-step" aria-current="${x.id === step.id}" data-act="skSel" data-v="${x.id}">
+<span class="step" aria-hidden="true">${i + 1}</span><span style="flex:1;min-width:0"><span class="sk-name">${esc(x.name)}</span>
+<span class="sk-sub">${x.general.customised ? 'General · edited' : 'General · default'}</span></span>${badge}</button>`;
+  }).join('');
+  const projects = [...new Set([proj, ...d.projects].filter(Boolean))];
+  const projSel = `<label class="lbl" for="sk-proj" style="margin:0">Project</label>
+<select id="sk-proj" class="inp" style="width:auto;min-width:120px" data-in="skProject">
+${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+<option value="" ${!proj ? 'selected' : ''}>${projects.length ? 'No project' : 'Choose…'}</option></select>
+<input class="inp mono" style="width:120px" placeholder="Add key" value="${esc(K.newKey)}" data-in="skNewKey" aria-label="Add a Jira project key" maxlength="20">
+<button type="button" class="btn btn-sm" data-act="skAddProject" ${/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(K.newKey) ? '' : 'disabled'}>Add</button>`;
+  const tabs = `<div class="seg" role="tablist" aria-label="Skill version">
+<button type="button" role="tab" aria-pressed="${!isProject}" data-act="skTab" data-v="general">General</button>
+<button type="button" role="tab" aria-pressed="${!!isProject}" data-act="skTab" data-v="project" ${proj ? '' : 'disabled title="Choose a project first"'}>Project ${esc(proj || '')}</button></div>`;
+  const modeCtl = isProject ? `<div class="sk-mode" role="radiogroup" aria-label="How the project version is used">
+<label class="cb"><input type="radio" name="sk-mode" value="add" ${mode === 'add' ? 'checked' : ''} data-in="skMode">Add to the general skill</label>
+<label class="cb"><input type="radio" name="sk-mode" value="replace" ${mode === 'replace' ? 'checked' : ''} data-in="skMode">Replace the general skill</label></div>` : '';
+  const ph = isProject
+    ? `What's different in ${proj}? For example:\n- The API is GraphQL at /graphql; check errors in the "errors" array.\n- Always add an item for the mobile viewport.\n- Test data lives in the "QA-Store" tenant.`
+    : '';
+  const status = isProject
+    ? (step.project ? `${step.project.mode === 'replace' ? 'Replaces' : 'Adds to'} the general skill for ${esc(proj)}` : `${esc(proj)} uses the general skill as is`)
+    : (step.general.customised ? 'Edited · applies to every project' : 'Default that ships with the app · applies to every project');
+  const actions = isProject
+    ? `${step.project ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDelete" ${K.busy ? 'disabled' : ''}>Remove ${esc(proj)} version</button>` : ''}`
+    : `${step.general.customised ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skReset" ${K.busy ? 'disabled' : ''}>Reset to default</button>` : ''}`;
+  return `<main class="main">
+<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+<div style="min-width:0;flex:1"><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Skills</h1>
+<p style="margin:2px 0 0;color:var(--muted);max-width:760px">How Claude does each step of the board. Every time Claude works on a step it gets that step's skill: the general one, plus what you add for the ticket's Jira project.</p></div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${projSel}</div>
+</header>
+<div class="sk-wrap">
+<nav class="sk-list" aria-label="Board steps">${list}</nav>
+<section class="card sk-edit" aria-labelledby="sk-title">
+<div class="sk-head"><div style="min-width:0;flex:1"><h2 id="sk-title" style="margin:0;font-size:15px;font-weight:600">${esc(step.name)}</h2>
+<div style="color:var(--muted);font-size:12px">${status}</div></div>${tabs}</div>
+<div class="sk-body">
+${modeCtl}
+<label class="sr-only" for="sk-text">Skill text</label>
+<textarea id="sk-text" class="inp mono sk-text" spellcheck="true" data-in="skText" data-keep="sk-text" placeholder="${esc(ph)}">${esc(text)}</textarea>
+${K.err ? `<div class="callout c-err" role="alert">${svg(IC.err)}<span>${esc(K.err)}</span></div>` : ''}
+<details class="sk-preview" ${K.preview ? 'open' : ''} data-act="skPreview"><summary>What Claude gets for this step${proj ? ` in ${esc(proj)}` : ''} <span style="color:var(--faint)">· ${esc(step.source)}</span></summary>
+<pre class="mono" data-keep="sk-prev">${esc(step.effective)}</pre></details>
+</div>
+<div class="sk-foot">${actions}<span style="flex:1"></span>
+${K.saved === key && !dirty ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}Saved</span>` : ''}
+${dirty ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDiscard">Discard changes</button>` : ''}
+<button type="button" class="btn btn-primary" data-act="skSave" ${dirty && !K.busy && (isProject ? text.trim() : text.trim()) ? '' : 'disabled'}>${K.busy === 'save' ? svg(IC.spin, 'ic spin') : ''}Save${isProject ? ` for ${esc(proj)}` : ' for all projects'}</button>
+</div></section></div></main>`;
+}
+
+async function loadSkills() {
+  const K = S.skills;
+  try { K.data = await api('GET', '/api/skills' + (K.project ? `?project=${encodeURIComponent(K.project)}` : '')); K.project = K.data.project; K.err = ''; }
+  catch (e) { K.err = 'Could not load skills: ' + e.message; }
+  schedule();
+}
+
+async function skillCall(method, path, body, what) {
+  const K = S.skills; K.busy = what; K.err = ''; schedule();
+  try { await api(method, path, body); const k = skillKey(K); delete K.draft[k]; K.saved = what === 'save' ? k : ''; await loadSkills(); }
+  catch (e) { K.err = e.message; }
+  K.busy = '';
 }
 
 /* Redo step 1: read the ticket again (it may have changed in Jira) and rebuild environment, scenarios and checklist.
@@ -430,6 +515,11 @@ ${t.left ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<s
 <div class="box"><div class="brow" style="color:var(--muted)">Section <span class="mono" style="color:var(--fg)">${esc(t.section)}</span></div>
 ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(--faint);width:52px;flex:none">Draft ${i + 1}</span><span>${esc(c.title)}</span></div>`).join('')}</div>
 <p style="margin:6px 0 0;color:var(--muted);font-size:12px">${t.dups ? t.dups + ' existing case' + (t.dups > 1 ? 's' : '') + ' matched and ' + (t.dups > 1 ? 'were' : 'was') + ' left out. ' : 'No duplicates found. '}Only PASS items become cases.</p></div>`;
+  }
+  const used = Object.entries(t.skills || {});
+  if (used.length) {
+    const names = { gather: 'Gather requirements', 'create-tests': 'Create tests', 'run-tests': 'Run tests', 'jira-comment': 'Jira comment', testrail: 'TestRail cases' };
+    body += `<div><div class="lbl">Skills Claude followed</div><div class="box">${used.map(([k, v]) => `<div class="brow ctx-row"><span class="ctx-k">${esc(names[k] || k)}</span><span class="ctx-v"><a href="#/skills?step=${esc(k)}">${esc(v)}</a></span></div>`).join('')}</div></div>`;
   }
   body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
 
@@ -1038,6 +1128,23 @@ const ACTS = {
       toast(parts.length ? parts.map(([k, v]) => `${k}: ${v}`).join(' · ') : 'No integration is enabled and set up');
     } catch (e) { S.hist.pub[id] = ''; toast(e.message); }
   },
+  // skills
+  skSel: (el) => { S.skills.sel = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
+  skTab: (el) => { S.skills.tab = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
+  skPreview: (el, ev) => { if (ev.target.tagName === 'SUMMARY') { ev.preventDefault(); S.skills.preview = !S.skills.preview; } },
+  skDiscard: () => { const K = S.skills; delete K.draft[skillKey(K)]; delete K.mode[K.sel + '|' + K.data.project]; },
+  skAddProject: () => { const K = S.skills; K.project = K.newKey.toUpperCase(); K.newKey = ''; K.tab = 'project'; loadSkills(); },
+  skSave: async () => {
+    const K = S.skills, step = K.data.steps.find((x) => x.id === K.sel), k = skillKey(K);
+    const text = K.draft[k] != null ? K.draft[k] : (K.tab === 'project' ? (step.project ? step.project.text : '') : step.general.text);
+    if (K.tab === 'project') {
+      const mode = K.mode[K.sel + '|' + K.data.project] || (step.project && step.project.mode) || 'add';
+      await skillCall('PUT', `/api/skills/project/${encodeURIComponent(K.data.project)}/${K.sel}`, { text, mode }, 'save');
+      delete K.mode[K.sel + '|' + K.data.project];
+    } else await skillCall('PUT', `/api/skills/general/${K.sel}`, { text }, 'save');
+  },
+  skReset: () => skillCall('DELETE', `/api/skills/general/${S.skills.sel}`, null, 'reset'),
+  skDelete: () => skillCall('DELETE', `/api/skills/project/${encodeURIComponent(S.skills.data.project)}/${S.skills.sel}`, null, 'delete'),
   // jira connect
   jiraConnect: () => jiraConnect(),
   jiraReconnect: () => {
@@ -1093,6 +1200,10 @@ const INPUTS = {
   runCheck: (el) => { S.run.check = el.value; },
   histQ: (el) => { S.hist.q = el.value; },
   jiraLink: (el) => { S.jira.link = el.value; S.jira.err = ''; },
+  skText: (el) => { S.skills.draft[skillKey(S.skills)] = el.value; S.skills.saved = ''; },
+  skMode: (el) => { S.skills.mode[S.skills.sel + '|' + S.skills.data.project] = el.value; },
+  skNewKey: (el) => { S.skills.newKey = el.value.trim(); },
+  skProject: (el) => { S.skills.project = el.value; if (!el.value) S.skills.tab = 'general'; loadSkills(); },
   integVal: (el) => { S.integ.vals[el.dataset.key][el.dataset.v] = el.value; S.integ.saved[el.dataset.key] = false; },
   integCheck: (el) => { S.integ.vals[el.dataset.key][el.dataset.v] = el.checked; S.integ.saved[el.dataset.key] = false; },
 };
@@ -1119,7 +1230,7 @@ $app.addEventListener('change', (ev) => { if (ev.target.matches('select, input[t
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target && ev.target.id === 'jira-link') { ev.preventDefault(); const p = parseJiraLink(S.jira.link); if (p && !p.err && !S.jira.busy) jiraConnect(); return; }
   const mod = ev.metaKey || ev.ctrlKey;
-  if (mod && ['1', '2', '3', '4'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }
+  if (mod && ['1', '2', '3', '4', '5'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }
   if (mod && ev.key === 'Enter' && S.route === 'run' && !(S.run.cur && S.run.cur.state === 'running')) { ev.preventDefault(); startRun(); }
   if (ev.key === 'Escape') {
     if (S.run.zoom) S.run.zoom = false; else if (S.board.sel) { S.board.sel = null; }
@@ -1148,6 +1259,12 @@ function route() {
   if (S.route === 'history') loadHistory();
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
   if (S.route === 'integrations') loadJira();
+  if (S.route === 'skills') {
+    const p = new URLSearchParams(query || '');
+    if (STEP_SKILL.includes(p.get('step'))) S.skills.sel = p.get('step');
+    if (p.get('project')) S.skills.project = p.get('project').toUpperCase();
+    loadSkills();
+  }
   schedule();
 }
 window.addEventListener('hashchange', route);

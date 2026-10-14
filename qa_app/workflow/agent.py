@@ -133,6 +133,17 @@ QA_SYSTEM = ("You are a senior QA engineer. You write precise, testable checklis
              "statements ('Search ignores letter case'), grouped into short sections. Never invent results.")
 
 
+def system(base: str, step: str, cfg: Config) -> str:
+    """The step's base instructions plus its skill (general, refined for the Jira project when it has its own)."""
+    from . import skills
+    return base + skills.for_prompt(step, cfg.jira_project)
+
+
+def skill_source(step: str, cfg: Config) -> str:
+    from . import skills
+    return skills.effective(step, cfg.jira_project)[1]
+
+
 async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[Section], bool]:
     """Returns (scenarios markdown, checklist sections, serial_needed)."""
     if cfg.anthropic_api_key:
@@ -148,7 +159,7 @@ async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[
                   "what was agreed), labels, versions, linked tickets and attachments by name."
                   "\n\nReturn JSON only: {\"scenarios\": \"markdown\", \"serial\": bool (true if multi-user or "
                   "concurrency scenarios exist), \"sections\": [{\"name\": str, \"items\": [str]}]}. 2-4 sections, 2-5 items each.")
-        data = _json_block(await ask_claude(cfg, QA_SYSTEM, prompt))
+        data = _json_block(await ask_claude(cfg, system(QA_SYSTEM, "gather", cfg), prompt))
         sections = [Section(name=s["name"], items=[CheckItem(text=i) for i in s["items"]]) for s in data["sections"]]
         return data.get("scenarios", ""), sections, bool(data.get("serial"))
     # Template fallback: one section from the description's bullet points, plus regression basics.
@@ -215,7 +226,7 @@ async def build_spec(cfg: Config, t: Ticket) -> list[str]:
         prompt = (f"Ticket {t.key}: {t.title}\nBase URL: {t.env.url if t.env else 'process.env.BASE_URL'}\n"
                   f"Test account (SSO, storage state is preloaded): {who(cfg)}\n\n"
                   f"Checklist:\n{checklist_md(t)}")
-        spec = await ask_claude(cfg, SPEC_SYSTEM, prompt, max_tokens=8000)
+        spec = await ask_claude(cfg, system(SPEC_SYSTEM, "create-tests", cfg), prompt, max_tokens=8000)
         spec = re.sub(r"^```\w*\n|```\s*$", "", spec.strip(), flags=re.M)
     else:
         spec = spec_template(t, cfg)
@@ -236,7 +247,7 @@ def _walk_specs(suite: dict):
         yield spec
 
 
-def parse_playwright_json(report: dict, n_items: int) -> list[tuple[str, str]]:
+def parse_playwright_json(report: dict, n_items: int, details: Optional[dict] = None) -> list[tuple[str, str]]:
     """Map Playwright JSON reporter output to checklist results by the [n] title prefix."""
     out: list[tuple[str, str]] = [("nt", "") for _ in range(n_items)]
     for suite in report.get("suites", []):
@@ -251,8 +262,10 @@ def parse_playwright_json(report: dict, n_items: int) -> list[tuple[str, str]]:
                 notes = {a.get("type"): a.get("description", "") for a in test.get("annotations", [])}
                 res = (test.get("results") or [{}])[-1]
                 status = res.get("status", "skipped")
-                err = (res.get("error") or {}).get("message", "")
-                err = re.sub(r"\x1b\[[0-9;]*m", "", err).strip().splitlines()[0][:300] if err else ""
+                full = re.sub(r"\x1b\[[0-9;]*m", "", (res.get("error") or {}).get("message", "")).strip()
+                err = full.splitlines()[0][:300] if full else ""
+                if full and details is not None:
+                    details[idx] = full[:2000]
                 qa = notes.get("qa-result", "")
                 if qa.startswith("blocked"):
                     out[idx] = ("blocked", qa.partition(":")[2].strip())
@@ -289,7 +302,9 @@ async def run_spec(cfg: Config, t: Ticket, log) -> tuple[list[tuple[str, str]], 
         report = json.loads(raw)
     except json.JSONDecodeError:
         raise RuntimeError("Playwright did not produce a JSON report: " + stderr.decode("utf-8", "replace")[-400:])
-    results = parse_playwright_json(report, len(t.items()))
+    details: dict[int, str] = {}
+    results = parse_playwright_json(report, len(t.items()), details)
+    (tdir / f"{t.key}-errors.json").write_text(json.dumps(details, indent=1), encoding="utf-8")
     cleanup = []
     if cleanup_file.exists():
         for line in cleanup_file.read_text(encoding="utf-8").splitlines():
@@ -357,6 +372,72 @@ def exact_transition(transitions: list[dict], target: str) -> Optional[dict]:
 # --------------------------------------------------------------------------------------
 # TestRail draft (Phase 4)
 # --------------------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------------------
+# Steps 3–5 with Claude and their skills (templates when Claude isn't set up)
+# --------------------------------------------------------------------------------------
+
+REVIEW_SYSTEM = ("You review automated test results for a QA engineer. You never change a result; you explain failed, "
+                 "partial and blocked items so a developer can act on them.")
+COMMENT_SYSTEM = "You write the QA result comment for a Jira ticket from approved test results."
+CASES_SYSTEM = "You turn passing QA checklist items into reusable TestRail test cases."
+
+
+def _results_md(t: Ticket) -> str:
+    return checklist_md(t) + "\n## Cleanup\n" + ("\n".join(f"- {c.name}: reverted to {c.value}{'' if c.reread else ' (NOT re-read)'}"
+                                                         for c in t.cleanup) or "- No settings were changed.") + \
+        (f"\n- Left behind: {t.left}" if t.left else "")
+
+
+async def review_results(cfg: Config, t: Ticket, details: dict) -> bool:
+    """Step 3: Claude writes the bug note and severity for failed / partial / blocked items. True if it did."""
+    items = t.items()
+    todo = [(n, i) for n, i in enumerate(items, 1) if i.result in ("fail", "partial", "blocked")]
+    if not cfg.anthropic_api_key or not todo:
+        return False
+    lines = [f"[{n}] {RES_LABEL[i.result]} · {i.text}\nRunner said: {details.get(n - 1) or details.get(str(n - 1)) or i.bug or '(nothing)'}"
+             for n, i in todo]
+    prompt = (f"Ticket {t.key}: {t.title} ({type_label(t.type)})\nEnvironment: {t.env.url if t.env else 'unknown'}\n\n"
+              + "\n\n".join(lines) +
+              '\n\nReturn JSON only: {"items": [{"n": int, "note": str, "severity": "Critical"|"Major"|"Minor"|null}]} '
+              "with one entry per item above. severity only for FAIL items that are product bugs.")
+    data = _json_block(await ask_claude(cfg, system(REVIEW_SYSTEM, "run-tests", cfg), prompt, max_tokens=3000))
+    for e in data.get("items", []):
+        n = int(e.get("n", 0))
+        if 1 <= n <= len(items) and items[n - 1].result in ("fail", "partial", "blocked"):
+            it = items[n - 1]
+            it.bug = str(e.get("note") or it.bug)[:600]
+            sev = e.get("severity")
+            it.severity = sev if it.result == "fail" and sev in ("Critical", "Major", "Minor") else (it.severity if it.result == "fail" else None)
+    return True
+
+
+async def write_comment(cfg: Config, t: Ticket, today: Optional[date] = None) -> str:
+    """Step 4: the QA comment, written by Claude with the jira-comment skill; the template without Claude."""
+    if not cfg.anthropic_api_key or cfg.is_mock:
+        return comment_text(t, cfg, today)
+    today = today or date.today()
+    prompt = (f"Ticket {t.key}: {t.title} ({type_label(t.type)})\nVerified: {today.day} {today.strftime('%b %Y')} on "
+              f"{env_name(t, cfg)}" + (f" as {who(cfg)}" if cfg.test_account else "") + f"\nSignature line: {cfg.signature}\n\n"
+              f"Approved results:\n\n{_results_md(t)}\n\nReturn only the comment text (Markdown).")
+    text = (await ask_claude(cfg, system(COMMENT_SYSTEM, "jira-comment", cfg), prompt, max_tokens=3000)).strip()
+    return text or comment_text(t, cfg, today)
+
+
+async def write_cases(cfg: Config, t: Ticket, existing_titles: list[str]) -> list[DraftCase]:
+    """Step 5: TestRail cases from the passing items, written by Claude with the testrail skill; the template without."""
+    passed = [i for i in t.items() if i.result == "pass"]
+    if not cfg.anthropic_api_key or cfg.is_mock or not passed:
+        return draft_cases(t)
+    prompt = (f"Ticket {t.key}: {t.title} ({type_label(t.type)})\nEnvironment: {t.env.url if t.env else ''}\n\n"
+              "Passing checklist items:\n" + "\n".join(f"- {i.text}" for i in passed) +
+              "\n\nCases already in the TestRail section (do not repeat):\n" + ("\n".join(f"- {x}" for x in existing_titles) or "- none") +
+              '\n\nReturn JSON only: {"cases": [{"title": str, "steps": str, "expected": str}]}')
+    data = _json_block(await ask_claude(cfg, system(CASES_SYSTEM, "testrail", cfg), prompt, max_tokens=6000))
+    cases = [DraftCase(title=str(c.get("title", "")).strip(), steps=str(c.get("steps", "")), expected=str(c.get("expected", "")))
+             for c in data.get("cases", []) if str(c.get("title", "")).strip()]
+    return cases or draft_cases(t)
+
 
 def draft_cases(t: Ticket) -> list[DraftCase]:
     return [DraftCase(title=i.text, steps=f"Ticket {t.key}. Verify: {i.text}", expected=i.text)

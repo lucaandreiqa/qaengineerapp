@@ -12,6 +12,7 @@ Rules enforced here (not just in the UI):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime
@@ -255,7 +256,13 @@ class Workflow:
     async def _a_approve_results(self, t: Ticket, p: dict) -> Ticket:
         if not t.ran:
             raise GateError("These results did not come from a run")
-        comment = agent.comment_text(t, self.cfg)
+        try:
+            comment = await agent.write_comment(self.cfg, t)
+            if self.cfg.anthropic_api_key and not self.cfg.is_mock:
+                self._used(t.key, "jira-comment")
+        except Exception:  # Claude unavailable: the template comment, still editable at gate 3
+            log.exception("Comment drafting failed for %s", t.key)
+            comment = agent.comment_text(t, self.cfg)
         t = self.patch(t.key, stage=3, sub="comment", comment=comment)
         self.toast(f"Gate 2 approved · comment drafted for {t.key}")
         return t
@@ -357,6 +364,8 @@ class Workflow:
             await self.pause(2.5)
         else:
             scenarios, sections, serial = await agent.plan_checklist(self.cfg, issue, t.env)
+            if self.cfg.anthropic_api_key:
+                self._used(key, "gather")
         agent.write_file(self.cfg, key, f"{key}-scenarios.md", f"# {key} scenarios\n\n{scenarios}\n")
         self.patch(key, p1=3, doing="Writing the QA checklist", checklist=sections, serial=serial, ran=False)
         t = self.tickets.get(key)
@@ -365,6 +374,12 @@ class Workflow:
         await self.pause(1.5)
         self.patch(key, sub="gate", doing="")
         self.toast(f"{key} checklist ready for review")
+
+    def _used(self, key: str, step: str) -> None:
+        """Remember which skill version Claude followed for this step (shown in the drawer)."""
+        t = self.tickets.get(key)
+        if t:
+            self.patch(key, skills={**t.skills, step: agent.skill_source(step, self.cfg)})
 
     def _typed(self, issue: dict) -> dict:
         """The issue plus its FE / BE / FE+BE type from the Jira components."""
@@ -391,6 +406,8 @@ class Workflow:
         assert t
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
         await agent.build_spec(self.cfg, t)
+        if self.cfg.anthropic_api_key and not self.cfg.is_mock:
+            self._used(key, "create-tests")
         await self.pause(2.6)
         needs_sso = t.needs_sso if self.cfg.is_mock else not sso.has_session(self.cfg.auth_dir)
         if needs_sso:
@@ -418,6 +435,15 @@ class Workflow:
         t = t.model_copy(deep=True)
         agent.apply_results(t, results)
         t.cleanup, t.left, t.ran = cleanup, left, True
+        if not self.cfg.is_mock and self.cfg.anthropic_api_key:
+            self.patch(key, doing="Claude is reviewing the failures with the Run tests skill")
+            try:
+                errors = self.cfg.ticket_dir(key) / f"{key}-errors.json"
+                details = json.loads(errors.read_text(encoding="utf-8")) if errors.exists() else {}
+                if await agent.review_results(self.cfg, t, details):
+                    t.skills = {**t.skills, "run-tests": agent.skill_source("run-tests", self.cfg)}
+            except Exception:  # the runner's own notes stay; the review is a refinement
+                log.exception("Result review failed for %s", key)
         agent.write_file(self.cfg, key, f"{key}-qa-checklist.md", agent.checklist_md(t))
         agent.write_file(self.cfg, key, f"{key}-report.md", agent.report_md(t, self.cfg))
         t.sub, t.doing = "gate", ""
@@ -436,7 +462,13 @@ class Workflow:
         section = t.section or self._section_for(t)
         section_id = await self._call(tr.find_section, section)
         existing = {normalise(c["title"]) for c in await self._call(tr.get_cases, section_id)}
-        drafts = agent.draft_cases(t)
+        try:
+            drafts = await agent.write_cases(self.cfg, t, sorted(existing))
+            if self.cfg.anthropic_api_key and not self.cfg.is_mock:
+                self._used(key, "testrail")
+        except Exception:
+            log.exception("Case drafting failed for %s", key)
+            drafts = agent.draft_cases(t)
         fresh = [c for c in drafts if normalise(c.title) not in existing]
         await self.pause(2.8)
         t = self.patch(key, section=section, cases=fresh, dups=len(drafts) - len(fresh))

@@ -84,6 +84,7 @@ class Ticket(BaseModel):
     components: list[str] = Field(default_factory=list)  # the Jira components the type came from
     context: dict = Field(default_factory=dict)  # what the ticket says (ticket_context.summary), for the drawer
     env_candidates: list[dict] = Field(default_factory=list)  # links on the ticket that could be the test environment
+    skills: dict[str, str] = Field(default_factory=dict)  # step → which skill Claude used ("general", "general + KEY", "KEY")
     status: str = "Open"
     description: str = ""
     stage: int = 0
