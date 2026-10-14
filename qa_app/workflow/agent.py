@@ -120,16 +120,31 @@ QA_SYSTEM = ("You are a senior QA engineer. You write precise, testable checklis
 async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[Section], bool]:
     """Returns (scenarios markdown, checklist sections, serial_needed)."""
     if cfg.anthropic_api_key:
-        prompt = (f"Ticket {issue['key']}: {issue['title']}\nType: {type_label(issue.get('type', ''))} (Jira components: {', '.join(issue.get('components', [])) or 'none'})\nStatus: {issue.get('status')}\n"
-                  f"Environment: {env.kind} {env.url}\n\nDescription:\n{issue.get('description', '')}\n\n"
-                  f"Comments:\n" + "\n---\n".join(issue.get("comments", [])[-10:]) +
+        if issue.get("context"):  # the whole ticket: every field, all comments, links, attachments
+            from .ticket_context import for_prompt
+            ticket = for_prompt(issue["context"], extra={
+                "QA type": f"{type_label(issue.get('type', ''))} (Jira components: {', '.join(issue.get('components', [])) or 'none'})"})
+        else:
+            ticket = (f"Ticket {issue['key']}: {issue['title']}\nType: {type_label(issue.get('type', ''))}\nStatus: {issue.get('status')}\n\n"
+                      f"Description:\n{issue.get('description', '')}\n\nComments:\n" + "\n---\n".join(issue.get("comments", [])))
+        prompt = (f"{ticket}\n\nTest environment: {env.kind} {env.url}\n\n"
+                  "Use everything above: description, acceptance criteria, every comment (later comments can change "
+                  "what was agreed), labels, versions, linked tickets and attachments by name."
                   "\n\nReturn JSON only: {\"scenarios\": \"markdown\", \"serial\": bool (true if multi-user or "
                   "concurrency scenarios exist), \"sections\": [{\"name\": str, \"items\": [str]}]}. 2-4 sections, 2-5 items each.")
         data = _json_block(await ask_claude(cfg, QA_SYSTEM, prompt))
         sections = [Section(name=s["name"], items=[CheckItem(text=i) for i in s["items"]]) for s in data["sections"]]
         return data.get("scenarios", ""), sections, bool(data.get("serial"))
     # Template fallback: one section from the description's bullet points, plus regression basics.
-    bullets = [b.strip(" -*•\t") for b in issue.get("description", "").splitlines() if b.strip().startswith(("-", "*", "•"))]
+    ctx = issue.get("context") or {}
+    source = "\n".join(x for x in (ctx.get("acceptance_criteria", ""), issue.get("description", "")) if x)
+    bullets = []
+    for b in source.splitlines():  # acceptance criteria first, then the description's bullet points, no repeats
+        b = b.strip()
+        if b.startswith(("-", "*", "•")) or re.match(r"^\d+[.)]\s", b):
+            item = re.sub(r"^([-*•]|\d+[.)])\s*", "", b).strip()
+            if item and item not in bullets:
+                bullets.append(item)
     main = Section(name="Acceptance criteria", items=[CheckItem(text=b) for b in bullets] or [CheckItem(text=f"{issue['title']} works as described")])
     reg = Section(name="Regression", items=[CheckItem(text="Existing behaviour on the same screen is unchanged"),
                                              CheckItem(text="No console errors while using the feature")])

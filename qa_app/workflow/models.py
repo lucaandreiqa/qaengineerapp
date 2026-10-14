@@ -81,6 +81,7 @@ class Ticket(BaseModel):
     title: str
     type: TicketType = ""
     components: list[str] = Field(default_factory=list)  # the Jira components the type came from
+    context: dict = Field(default_factory=dict)  # what the ticket says (ticket_context.summary), for the drawer
     status: str = "Open"
     description: str = ""
     stage: int = 0

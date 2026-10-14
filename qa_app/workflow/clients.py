@@ -89,10 +89,18 @@ class MockJira:
         return [self._public(i) for i in self.issues.values()]
 
     def _public(self, i: dict) -> dict:
+        from .ticket_context import build
+
+        comments = self.comments.get(i["key"], [])
+        raw = {"key": i["key"], "fields": {
+            "summary": i["title"], "status": {"name": i["status"]}, "description": i.get("description", ""),
+            "issuetype": {"name": i.get("issue_type", "Story")}, "priority": {"name": i.get("priority", "Medium")},
+            "labels": i.get("labels", []), "components": [{"name": c} for c in i.get("components", [])],
+            "comment": {"comments": [{"body": c, "author": {"displayName": "Developer"}} for c in comments]}}}
         return {"key": i["key"], "title": i["title"], "status": i["status"], "description": i.get("description", ""),
                 "components": list(i.get("components", [])), "merged": i.get("merged", i["status"] == "Merged"),
                 "pr_url": i.get("pr_url", ""), "preview_url": i.get("preview_url", ""),
-                "comments": self.comments.get(i["key"], [])}
+                "comments": comments, "context": build(raw)}
 
     def get_issue(self, key: str) -> dict:
         if key not in self.issues:

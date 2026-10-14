@@ -29,6 +29,23 @@ ISSUES = {"SCRUM-2": {"summary": "Task 2", "status": "In Progress", "components"
           "SCRUM-3": {"summary": "Task 3", "status": "In Review", "components": []}}
 
 
+# A filled-in ticket, to check that every part of it is read.
+RICH = {"issuetype": {"name": "Story"}, "priority": {"name": "High"}, "labels": ["checkout", "regression"],
+        "fixVersions": [{"name": "2026.11"}], "versions": [{"name": "2026.10"}],
+        "reporter": {"displayName": "Andrei Luca"}, "assignee": {"displayName": "Dev One"},
+        "created": "2026-10-14T13:23:28.660+0300", "duedate": "2026-10-24",
+        "parent": {"key": "SCRUM-1", "fields": {"summary": "Task 1", "status": {"name": "To Do"}, "issuetype": {"name": "Epic"}}},
+        "subtasks": [{"key": "SCRUM-4", "fields": {"summary": "Subtask 2.1", "status": {"name": "To Do"}}}],
+        "issuelinks": [{"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+                        "outwardIssue": {"key": "SCRUM-3", "fields": {"summary": "Task 3", "status": {"name": "In Review"}}}}],
+        "attachment": [{"filename": "design.png", "mimeType": "image/png", "size": 1234, "author": {"displayName": "Andrei Luca"},
+                        "created": "2026-10-14T13:30:00.000+0300"}]}
+REMOTE = [{"object": {"url": "https://www.figma.com/file/abc", "title": "Checkout design"}}]
+ADF_AC = {"type": "doc", "version": 1, "content": [{"type": "bulletList", "content": [
+    {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Export button shows"}]}]},
+    {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "CSV has headers"}]}]}]}]}
+MANY = ["Preview: https://feature-x.pages.dev/ ready"] + [f"Note {n}: retest after the fix" for n in range(1, 120)]
+
 # The tools (names + input schemas) Atlassian's MCP server gave a real account: the classic set, no board tools.
 CLASSIC_TOOLS = json.loads((Path(__file__).parent / "fixtures" / "atlassian-mcp-tools-classic.json").read_text())
 STATUS = {"10000": ("To Do", "new"), "10001": ("In Progress", "indeterminate"), "10002": ("In Review", "indeterminate"),
@@ -44,7 +61,7 @@ class Fake:
         self.tokens: set[str] = set()
         self.refreshes = 0
         self.calls: list[tuple[str, dict]] = []
-        self.comments: dict[str, list[str]] = {"SCRUM-2": ["Preview: https://feature-x.pages.dev/ ready"]}
+        self.comments: dict[str, list[str]] = {"SCRUM-2": list(MANY)}
         self.status = {k: v["status"] for k, v in ISSUES.items()}
         self.registered: list[dict] = []
         self.direct_tools = {"getAccessibleAtlassianResources", "atlassianUserInfo", "getJiraIssue", "searchJiraIssuesUsingJql",
@@ -169,9 +186,19 @@ def classic_tool(fake: Fake, name: str, a: dict):
         return {"transitions": [{"id": str(11 + 10 * i), "name": n, "to": st(n)} for i, n in enumerate(["To Do", "In Progress", "In Review", "Done"])]}
     if name == "getJiraIssue":
         k = a["issueIdOrKey"]
+        cs = fake.comments.get(k, [])
         f = {"summary": ISSUES[k]["summary"], "description": "- Export works", "status": st(fake.status[k]), "components": ISSUES[k]["components"],
-             "comment": {"comments": [{"body": b} for b in fake.comments.get(k, [])]}}
+             "comment": {"comments": [{"body": b, "author": {"displayName": "Dev One"}, "created": "2026-10-14T14:00:00.000+0300"} for b in cs],
+                         "total": len(cs)},
+             **(RICH if k == "SCRUM-2" else {}),
+             "customfield_10050": ADF_AC if k == "SCRUM-2" else None, "customfield_10016": 3, "customfield_10019": "0|i00002:",
+             "customfield_10020": [{"id": 2, "name": "SCRUM Sprint 0", "state": "active"}]}
+        if "*all" in (a.get("fields") or []):
+            return {"key": k, "fields": f, "names": {"customfield_10050": "Acceptance Criteria", "customfield_10016": "Story point estimate",
+                                                      "customfield_10019": "Rank", "customfield_10020": "Sprint"}}
         return {"key": k, "fields": {x: f[x] for x in a.get("fields") or f}}
+    if name == "getJiraIssueRemoteIssueLinks":
+        return REMOTE if a["issueIdOrKey"] == "SCRUM-2" else []
     if name == "addCommentToJiraIssue":
         assert a["contentFormat"] == "markdown"
         fake.comments.setdefault(a["issueIdOrKey"], []).append(a["commentBody"])
@@ -213,9 +240,21 @@ def tool(fake: Fake, name: str, a: dict):
     if name == "getJiraIssue":
         k = a["issueIdOrKey"]
         return {"key": k, "fields": {"summary": ISSUES[k]["summary"], "description": "- Export works\n- Filter works",
-                                     "status": {"name": fake.status[k]}, "components": ISSUES[k]["components"]}}
+                                     "status": {"name": fake.status[k]}, "components": ISSUES[k]["components"],
+                                     "comment": {"comments": [], "total": len(fake.comments.get(k, []))},
+                                     **(RICH if k == "SCRUM-2" else {}),
+                                     "customFields": {"Acceptance Criteria": {"id": "customfield_10050", "value": "- Export button shows\n- CSV has headers"},
+                                                      "Story point estimate": {"id": "customfield_10016", "value": 3},
+                                                      "Sprint": {"id": "customfield_10020", "value": [{"id": 2, "name": "SCRUM Sprint 0", "state": "active"}]},
+                                                      "Rank": {"id": "customfield_10019", "value": "0|i00002:"}} if k == "SCRUM-2" else {}}}
     if name == "listJiraIssueComments":
-        return {"comments": [{"body": b} for b in fake.comments.get(a["issueIdOrKey"], [])]}
+        cs = fake.comments.get(a["issueIdOrKey"], [])
+        start, n = a.get("startAt", 0), min(a.get("maxResults", 100), 50)  # the server pages at 50
+        page = cs[start:start + n]
+        return {"startAt": start, "total": len(cs), "isLast": start + n >= len(cs),
+                "comments": [{"body": b, "author": {"displayName": "Dev One"}, "created": "2026-10-14T14:00:00.000+0300"} for b in page]}
+    if name == "listJiraIssueRemoteIssueLinks":
+        return REMOTE if a["issueIdOrKey"] == "SCRUM-2" else []
     if name == "addOrEditJiraIssueComment":
         fake.comments.setdefault(a["issueIdOrKey"], []).append(a["commentBody"])
         return {"commentId": "1"}
@@ -394,3 +433,78 @@ def test_classic_tools_need_the_project_in_the_link(classic_env):
     code, state = approve(fake, jira_connect.start("qaengineerapp.atlassian.net", REDIRECT, pending, store)["authorize_url"])
     with pytest.raises(jira_connect.ConnectError, match="no project in it"):
         jira_connect.finish(code, state, pending, store)
+
+
+def _check_full_context(ctx: dict) -> None:
+    assert (ctx["issue_type"], ctx["priority"], ctx["labels"]) == ("Story", "High", ["checkout", "regression"])
+    assert (ctx["fix_versions"], ctx["affects_versions"]) == (["2026.11"], ["2026.10"])
+    assert (ctx["reporter"], ctx["assignee"], ctx["due"]) == ("Andrei Luca", "Dev One", "2026-10-24")
+    assert ctx["acceptance_criteria"].splitlines() == ["- Export button shows", "- CSV has headers"]
+    assert (ctx["story_points"], ctx["sprint"]) == ("3", "SCRUM Sprint 0 (active)")
+    assert "Rank" not in ctx["fields"]  # Jira bookkeeping is left out
+    assert ctx["parent"]["key"] == "SCRUM-1" and ctx["subtasks"][0]["key"] == "SCRUM-4"
+    assert ctx["links"] == [{"relation": "blocks", "key": "SCRUM-3", "title": "Task 3", "status": "In Review", "type": ""}]
+    assert ctx["attachments"][0]["name"] == "design.png" and ctx["web_links"][0]["url"] == "https://www.figma.com/file/abc"
+    assert len(ctx["comments"]) == 120 and ctx["comments"][-1]["body"] == "Note 119: retest after the fix"  # every comment
+    assert ctx["comments"][0]["author"] == "Dev One" and not ctx.get("comments_missing")
+
+
+@pytest.mark.parametrize("classic", [False, True])
+def test_reads_everything_on_the_ticket(tmp_path, monkeypatch, classic):
+    fake, store, url, srv = _env(tmp_path, monkeypatch, classic)
+    try:
+        pending: dict = {}
+        code, state = approve(fake, jira_connect.start(LINK, REDIRECT, pending, store)["authorize_url"])
+        jira_connect.finish(code, state, pending, store)
+        jira_connect.choose_column("In Review", True)
+        s = config.load_settings()
+        issue = am.McpJira(s["jira"], s["workflow"], am.AtlassianMcp.signed_in(CLOUD, store)).get_issue("SCRUM-2")
+        _check_full_context(issue["context"])
+        assert len(issue["comments"]) == 120 and issue["preview_url"] == "https://feature-x.pages.dev/"
+
+        from qa_app.workflow import ticket_context as tc
+        md = tc.to_markdown(issue["context"])
+        for part in ("**Priority:** High", "**Labels:** checkout, regression", "## Acceptance criteria", "- CSV has headers",
+                     "## Linked tickets", "blocks SCRUM-3", "## Attachments", "design.png", "Checkout design", "## Comments (120)"):
+            assert part in md, part
+        short = tc.for_prompt(issue["context"], max_chars=6000)
+        assert len(short) <= 6000 and "Note 119" in short and "older comments left out" in short  # newest kept
+    finally:
+        srv.shutdown()
+
+
+def test_api_token_path_reads_everything_too(monkeypatch):
+    from qa_app.integrations import jira as rest
+
+    class R:
+        def __init__(self, body, ok=True):
+            self.body, self.ok = body, ok
+
+        def json(self):
+            return self.body
+
+        def raise_for_status(self):
+            pass
+
+    cs = [{"body": b, "author": {"displayName": "Dev One"}, "created": "2026-10-14T14:00:00.000+0300"} for b in MANY]
+
+    class S:
+        def get(self, url, params=None, timeout=None):
+            if url.endswith("/issue/SCRUM-2"):
+                assert params == {"fields": "*all", "expand": "names"}
+                return R({"key": "SCRUM-2", "id": "10001", "names": {"customfield_10050": "Acceptance Criteria", "customfield_10016": "Story point estimate",
+                                                                    "customfield_10020": "Sprint", "customfield_10019": "Rank"},
+                          "fields": {"summary": "Task 2", "status": {"name": "In Review"}, "components": [{"name": "Frontend"}],
+                                     "description": "h2. Export", **RICH, "customfield_10050": ADF_AC, "customfield_10016": 3,
+                                     "customfield_10019": "0|x", "customfield_10020": [{"name": "SCRUM Sprint 0", "state": "active"}],
+                                     "comment": {"comments": cs[:50], "total": 120, "maxResults": 50}}})
+            if url.endswith("/issue/SCRUM-2/comment"):  # paged like Jira
+                return R({"comments": cs[params["startAt"]:params["startAt"] + 50], "total": 120})
+            if url.endswith("/remotelink"):
+                return R(REMOTE)
+            return R({}, ok=False)  # dev-status: no PR info
+
+    monkeypatch.setattr(rest, "_session", lambda cfg: S())
+    issue = rest.get_issue({"base_url": "https://qaengineerapp.atlassian.net", "email": "x", "api_token": "y"}, "SCRUM-2")
+    _check_full_context(issue["context"])
+    assert issue["components"] == ["Frontend"] and issue["preview_url"] == "https://feature-x.pages.dev/"

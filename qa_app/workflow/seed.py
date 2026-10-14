@@ -86,12 +86,29 @@ def _ticket(d: dict) -> Ticket:
         section=d.get("section", ""), dups=d.get("dups", 0), mock_results=mock,
         mock_cleanup=cleanup, mock_left=d.get("left", ""),
     )
+    t.context = _demo_context(d)
     if d["stage"] == 4 and d["sub"] != "drafting":
         existing = {"An unknown card returns not found"} if d.get("dups") else set()  # already in the mock TestRail section
         t.cases = [DraftCase(title=i.text) for i in passed if i.text not in existing]
     if d["stage"] == 3 and d["sub"] == "transition":
         t.transitions = ["Docs", "Ready to merge", "Done", "Reopened"]
     return t
+
+
+def _demo_context(d: dict) -> dict:
+    """A plausible 'what the ticket says' for the demo drawer."""
+    from .ticket_context import build, summary
+
+    area = d["check"][0][0]
+    raw = {"key": d["key"], "fields": {
+        "summary": d["title"], "status": {"name": d["status"]}, "issuetype": {"name": "Story"},
+        "priority": {"name": "High" if d["key"] in ("OPTR-48466", "OPTR-48490") else "Medium"},
+        "labels": [area.lower().replace(" ", "-"), "release-2026.11"], "fixVersions": [{"name": "2026.11"}],
+        "reporter": {"displayName": "Product Owner"}, "assignee": {"displayName": "Developer"},
+        "description": f"{d['title']}.\n\n" + "\n".join(f"- {i[0]}" for _, items in d["check"] for i in items[:2]),
+        "components": [{"name": c} for c in d["components"]],
+        "comment": {"comments": [{"body": "Ready for QA.", "author": {"displayName": "Developer"}}]}}}
+    return summary(build(raw))
 
 
 def seed_tickets() -> list[Ticket]:

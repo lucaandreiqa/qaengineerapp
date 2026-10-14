@@ -67,7 +67,7 @@ Each ticket in the Jira column goes through five lanes. Nothing reaches Jira or 
 
 | Gate | You review | Then the app |
 |---|---|---|
-| 1 Checklist | Scenarios and QA checklist, every item NOT TESTED | builds `<KEY>.spec.ts` (+ `.serial.spec.ts`) and runs it |
+| 1 Checklist | What was read from the ticket, then scenarios and QA checklist, every item NOT TESTED | builds `<KEY>.spec.ts` (+ `.serial.spec.ts`) and runs it |
 | 2 Results | Real results, bug notes, cleanup (each setting reverted and re-read), test data left behind | drafts the Jira comment |
 | 3a Comment | The exact comment text (editable) | posts it, then lists the transitions Jira returns |
 | 3b Move | The target state | moves the ticket, drafts TestRail cases (read-only lookup) |
@@ -80,6 +80,13 @@ The server enforces these rules, not just the UI:
 - Jira transitions must match by exact name; a near miss returns the available list.
 - A push never re-adds a case that already exists, so a retry after a partial failure only adds what is missing.
 - An unmerged ticket without a PR or preview link stops at **Needs environment** instead of falling back to the shared environment.
+
+**What step 1 reads.** Everything on the ticket itself: summary, description, acceptance criteria, issue type,
+status, priority, labels, components, fix and affects versions, sprint, story points, reporter and assignee, dates,
+every other custom field by name, parent, subtasks and linked tickets (key, title, status), attachment names, web
+links, and every comment with its author and date. It all goes into `<KEY>-context.md` and to Claude for the
+checklist (oldest comments are trimmed first if a ticket is very long). The ticket drawer shows a summary.
+Linked tickets and attachments are listed, not opened.
 
 **Ticket type.** Every ticket is **FE**, **BE** or **FE+BE**, taken from its Jira *Components* field. A ticket with
 both a frontend and a backend component is FE+BE. Which component names count as which is set on the

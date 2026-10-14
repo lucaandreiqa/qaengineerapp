@@ -129,19 +129,41 @@ def _pull_requests(s: requests.Session, cfg: dict, issue_id: str) -> dict:
 
 
 def get_issue(cfg: dict, key: str) -> dict:
+    """Everything on the ticket: all fields (custom ones by name), comments, attachments, links, web links."""
+    from ..workflow.ticket_context import build
+
     s = _session(cfg)
-    r = s.get(f"{_base(cfg)}/rest/api/2/issue/{key}", timeout=20,
-              params={"fields": "summary,status,components,labels,description,comment"})
+    r = s.get(f"{_base(cfg)}/rest/api/2/issue/{key}", timeout=30, params={"fields": "*all", "expand": "names"})
     r.raise_for_status()
     raw = r.json()
-    f = raw["fields"]
-    comments = [c.get("body", "") for c in (f.get("comment") or {}).get("comments", [])]
-    out = {"key": raw["key"], "title": f.get("summary", ""), "status": (f.get("status") or {}).get("name", ""),
-           "description": f.get("description") or "", "components": _components(f), "comments": comments,
-           "merged": False, "pr_url": "", "preview_url": ""}
+    comments = None
+    cm = raw["fields"].get("comment") or {}
+    if isinstance(cm, dict) and cm.get("total", 0) > len(cm.get("comments", [])):  # more than one page: read them all
+        comments, start = [], 0
+        while start < cm["total"] and start < 1000:
+            p = s.get(f"{_base(cfg)}/rest/api/2/issue/{key}/comment", timeout=30, params={"startAt": start, "maxResults": 100})
+            p.raise_for_status()
+            page = p.json().get("comments", [])
+            if not page:
+                break
+            comments += page
+            start += len(page)
+    try:
+        rl = s.get(f"{_base(cfg)}/rest/api/2/issue/{key}/remotelink", timeout=20)
+        links = rl.json() if rl.ok else []
+    except (requests.RequestException, ValueError):
+        links = []
+    out = issue_dict(build(raw, comments, links))
     out.update(_pull_requests(s, cfg, raw.get("id", "")))
-    out["preview_url"] = preview_url(comments)
     return out
+
+
+def issue_dict(ctx: dict) -> dict:
+    """What the Testing board reads from a ticket, with the full context alongside."""
+    bodies = [c["body"] for c in ctx["comments"]]
+    return {"key": ctx["key"], "title": ctx["title"], "status": ctx["status"], "description": ctx["description"],
+            "components": ctx["components"], "comments": bodies, "merged": False, "pr_url": "",
+            "preview_url": preview_url(bodies + [w["url"] for w in ctx["web_links"]]), "context": ctx}
 
 
 def preview_url(comments: list[str]) -> str:

@@ -157,3 +157,9 @@ html,body{background:#0B0C0E}
 .jc-col[aria-checked=true]{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel));box-shadow:0 0 0 1px var(--accent)}
 .jc-actions{display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--border);margin:0 -16px -16px;padding:10px 16px;background:var(--raised)}
 .jc-banner{font-size:12.5px}
+
+/* ticket context in the drawer */
+.ctx-tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.ctx-row{align-items:flex-start;gap:12px}
+.ctx-k{flex:0 0 92px;color:var(--muted);font-size:12px}
+.ctx-v{flex:1;min-width:0;line-height:1.5;overflow-wrap:anywhere}

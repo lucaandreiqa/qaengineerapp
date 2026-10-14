@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional
 from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
+from . import ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
@@ -300,7 +301,9 @@ class Workflow:
         jira = self.jira()
         issue = self._typed(await self._call(jira.get_issue, key))
         if t.p1 <= 0:
-            self.patch(key, p1=0, doing="Gathering context from Jira and the linked PR", description=issue.get("description", ""))
+            self.patch(key, p1=0, doing="Reading the whole ticket: fields, comments, links and attachments",
+                       description=issue.get("description", ""),
+                       context=ticket_context.summary(issue["context"]) if issue.get("context") else {})
             agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue))
             await self.pause(2.5)
         if t.p1 <= 1 or self.tickets.get(key).env is None:  # type: ignore[union-attr]
@@ -339,11 +342,19 @@ class Workflow:
         return {**issue, "components": comps, "type": self.cfg.ticket_type(comps)}
 
     def _context_md(self, issue: dict) -> str:
+        if issue.get("context"):
+            return ticket_context.to_markdown(issue["context"], extra=self._qa_facts(issue))
         comments = "\n\n".join(f"> {c}" for c in issue.get("comments", [])) or "_No comments._"
         return (f"# {issue['key']}: {issue['title']}\n\n- Status: {issue.get('status')}\n- Type: {type_label(issue.get('type', ''))}"
                 f" (components: {', '.join(issue.get('components', [])) or 'none'})\n"
                 f"- Merged: {issue.get('merged')}\n- PR: {issue.get('pr_url') or 'none linked'}\n\n## Description\n\n"
                 f"{issue.get('description') or '_None._'}\n\n## Comments\n\n{comments}\n")
+
+    @staticmethod
+    def _qa_facts(issue: dict) -> dict:
+        comps = ", ".join(issue.get("components", [])) or "none"
+        return {"QA type": f"{type_label(issue.get('type', ''))} (from components: {comps})",
+                "Merged": "yes" if issue.get("merged") else "no", "PR": issue.get("pr_url") or "none linked"}
 
     async def _build_and_run(self, key: str) -> None:
         t = self.tickets.get(key)

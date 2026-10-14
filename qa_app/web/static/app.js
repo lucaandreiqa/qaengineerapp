@@ -57,7 +57,7 @@ const LOGO = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"
 
 /* ------------------------------------------------------------------ constants */
 const LANES = [
-  { name: 'Gather requirements', desc: 'Context from Jira and the linked PR, FE, BE or both, target environment, scenarios and the QA checklist.', gate: 'Gate 1 · you review the checklist', empty: 'New tickets from Jira land here' },
+  { name: 'Gather requirements', desc: 'Reads the whole ticket (fields, comments, labels, links, attachments), FE, BE or both, target environment, scenarios and the QA checklist.', gate: 'Gate 1 · you review the checklist', empty: 'New tickets from Jira land here' },
   { name: 'Create tests', desc: 'Builds the spec, plus a serial spec for multi-user scenarios, from the approved checklist.', gate: 'No gate · runs straight on', empty: 'Nothing to build' },
   { name: 'Run tests', desc: 'Runs against the resolved environment, fills in the checklist, writes the report and reverts every setting.', gate: 'Gate 2 · you review the results', empty: 'No runs in progress' },
   { name: 'Comment & move Jira ticket', desc: 'Posts the QA summary comment, then moves the ticket. Each one is approved on its own.', gate: 'Gate 3 · comment, then transition', empty: 'Nothing to report' },
@@ -318,6 +318,29 @@ function gateTracker(t) {
   return g.map((x) => `<div class="gate${x[1] ? ' g-done' : x[2] ? ' g-now' : ''}"><span></span><span class="trunc">${x[0]}</span></div>`).join('');
 }
 
+/* What step 1 read from the ticket. The full text is in <KEY>-context.md (Files below). */
+function viewTicketContext(t) {
+  const c = t.context;
+  if (!c || !Object.keys(c).length) return '';
+  const tags = [c.issue_type, c.priority && `Priority ${c.priority}`, ...(c.labels || []), ...(c.fix_versions || []).map((v) => `Fix ${v}`), c.sprint]
+    .filter(Boolean).map((x) => `<span class="tag">${esc(x)}</span>`).join('');
+  const rows = [];
+  const row = (label, html) => rows.push(`<div class="brow ctx-row"><span class="ctx-k">${label}</span><span class="ctx-v">${html}</span></div>`);
+  const ref = (r) => `<span class="mono">${esc(r.key)}</span> ${esc(r.title)}${r.status ? ` <span style="color:var(--faint)">· ${esc(r.status)}</span>` : ''}`;
+  row('Read', [`${c.comments} comment${c.comments === 1 ? '' : 's'}`, c.has_description ? 'description' : null, c.has_acceptance ? 'acceptance criteria' : null,
+    c.attachments.length ? `${c.attachments.length} attachment${c.attachments.length === 1 ? '' : 's'}` : null].filter(Boolean).map(esc).join(' · '));
+  if (c.reporter || c.assignee) row('People', esc([c.reporter && `Reported by ${c.reporter}`, c.assignee && `assigned to ${c.assignee}`].filter(Boolean).join(', ')));
+  if (c.parent) row('Parent', ref(c.parent));
+  if (c.links.length) row('Linked', c.links.map((l) => `${esc(l.relation)} ${ref(l)}`).join('<br>'));
+  if (c.subtasks.length) row('Subtasks', c.subtasks.map(ref).join('<br>'));
+  if (c.attachments.length) row('Attachments', c.attachments.map((a) => `<span class="mono">${esc(a)}</span>`).join(', '));
+  if (c.web_links.length) row('Web links', c.web_links.map((w) => `<a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.title || w.url)}</a>`).join('<br>'));
+  Object.entries(c.fields || {}).slice(0, 8).forEach(([k, v]) => row(esc(k), esc(String(v).slice(0, 160))));
+  const warn = !c.has_description && !c.has_acceptance
+    ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<span>The ticket has no description or acceptance criteria, so the checklist can only go on the title and comments.</span></div>` : '';
+  return `<div><div class="lbl">From the ticket</div>${tags ? `<div class="ctx-tags">${tags}</div>` : ''}<div class="box">${rows.join('')}</div>${warn}</div>`;
+}
+
 function viewDrawer() {
   const B = S.board;
   const t = B.data && B.data.tickets.find((x) => x.key === B.sel);
@@ -327,6 +350,7 @@ function viewDrawer() {
   const ran = t.ran;
   let body = '';
 
+  body += viewTicketContext(t);
   body += `<div><div class="lbl">Target environment</div>`;
   if (t.env) {
     body += `<div class="box"><div class="brow" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted)">${esc(t.env.kind)}</span><span class="mono trunc" style="max-width:100%">${esc(t.env.url)}</span><span style="color:var(--faint);font-size:11.5px">${esc(t.env.api)}</span></div></div>`;
@@ -342,7 +366,7 @@ function viewDrawer() {
   }
 
   if (st === 0 && sub !== 'gate') {
-    const steps = ['Context from Jira and the linked PR', sub === 'blocked' ? `Classified ${t.type || 'without FE/BE'} · no environment found` : `Classified ${t.type || 'without FE/BE'} · environment resolved`, 'Scenarios', 'QA checklist'];
+    const steps = ['Read the whole ticket', sub === 'blocked' ? `Classified ${t.type || 'without FE/BE'} · no environment found` : `Classified ${t.type || 'without FE/BE'} · environment resolved`, 'Scenarios', 'QA checklist'];
     body += `<div><div class="lbl">Phase 1 progress</div><div class="box">${steps.map((x, i) => {
       const doneN = sub === 'blocked' ? 1 : t.p1 + 1;
       const done = i < doneN - 1;

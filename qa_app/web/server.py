@@ -116,9 +116,9 @@ class Services:
         if store.tickets or store.done_keys:
             # Demo boards saved before FE/BE types only had Core/Frontend: take the types from the demo data.
             fresh = {t.key: t for t in seed.seed_tickets() + [seed.late_ticket()]}
-            stale = [t for t in store.tickets.values() if not t.components and t.key in fresh]
+            stale = [t for t in store.tickets.values() if t.key in fresh and (not t.components or not t.context)]
             for t in stale:
-                t.type, t.components = fresh[t.key].type, fresh[t.key].components
+                t.type, t.components, t.context = fresh[t.key].type, fresh[t.key].components, fresh[t.key].context
             if stale:
                 store.save()
             return

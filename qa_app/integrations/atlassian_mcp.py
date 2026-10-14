@@ -30,7 +30,7 @@ WRITE_OPS = {"addOrEditJiraIssueComment", "transitionJiraIssue", "createJiraIssu
 NO_CLOUD_OPS = {"getAccessibleAtlassianResources", "atlassianUserInfo"}
 # The same operation in the classic tool set.
 ALIASES = {"addOrEditJiraIssueComment": "addCommentToJiraIssue", "listJiraIssueTransitions": "getTransitionsForJiraIssue",
-           "listJiraProjects": "getVisibleJiraProjects"}
+           "listJiraProjects": "getVisibleJiraProjects", "listJiraIssueRemoteIssueLinks": "getJiraIssueRemoteIssueLinks"}
 STATUS_ORDER = {"new": 0, "to do": 0, "indeterminate": 1, "in progress": 1, "done": 2}
 
 
@@ -299,13 +299,6 @@ def _fields_components(f: dict) -> list[str]:
     return [c for c in out if c]
 
 
-def _body(c: Any) -> str:
-    if isinstance(c, str):
-        return c
-    b = c.get("body", "") if isinstance(c, dict) else ""
-    return b if isinstance(b, str) else str(b)
-
-
 class McpJira:
     """The Testing board's Jira, reached through Atlassian's MCP server with the signed-in user's access."""
 
@@ -335,28 +328,33 @@ class McpJira:
                  "components": _fields_components(i.get("fields") or {})} for i in issues]
 
     def get_issue(self, key: str) -> dict:
-        from .jira import preview_url
+        """Everything on the ticket: all fields (custom ones by name), every comment, attachments, links."""
+        from ..workflow.ticket_context import build
+        from .jira import issue_dict
 
-        if self.mcp.has("listJiraIssueComments"):
-            raw = self.mcp.op("getJiraIssue", issueIdOrKey=key, view="evidence")
-            f = raw.get("fields") or {}
-            comments: list[str] = []
-            try:
-                res = self.mcp.op("listJiraIssueComments", issueIdOrKey=key, maxResults=100, orderBy="created")
-                comments = [_body(c) for c in (res.get("comments", []) if isinstance(res, dict) else [])]
-            except McpError:
-                pass
-        else:  # classic tools: the comments come with the issue
-            raw = self.mcp.op("getJiraIssue", issueIdOrKey=key,
-                              fields=["summary", "description", "status", "components", "comment"])
-            f = raw.get("fields") or {}
-            cm = f.get("comment") or {}
-            comments = [_body(c) for c in (cm.get("comments", []) if isinstance(cm, dict) else cm or [])]
-        description = f.get("description") or ""
-        return {"key": raw.get("key", key), "title": f.get("summary", ""), "status": (f.get("status") or {}).get("name", ""),
-                "description": description if isinstance(description, str) else str(description),
-                "components": _fields_components(f), "comments": comments,
-                "merged": False, "pr_url": "", "preview_url": preview_url(comments)}
+        comments: Optional[list[dict]] = None
+        if self.mcp.has("listJiraIssueComments"):  # current tools: full view, comments paged separately
+            raw = self.mcp.op("getJiraIssue", issueIdOrKey=key, view="full")
+            comments = []
+            while len(comments) < 1000:
+                try:
+                    res = self.mcp.op("listJiraIssueComments", issueIdOrKey=key, startAt=len(comments), maxResults=100, orderBy="created")
+                except McpError:
+                    comments = None  # fall back to the comments embedded in the issue
+                    break
+                page = res.get("comments", []) if isinstance(res, dict) else []
+                comments += page
+                if not page or res.get("isLast", True) or len(comments) >= int(res.get("total") or 0):
+                    break
+        else:  # classic tools: every field (custom ones resolved by the names map), comments embedded
+            raw = self.mcp.op("getJiraIssue", issueIdOrKey=key, fields=["*all"], expand="names")
+        links: list[dict] = []
+        try:
+            res = self.mcp.op("listJiraIssueRemoteIssueLinks", issueIdOrKey=key)
+            links = res if isinstance(res, list) else (res.get("values") or res.get("remoteLinks") or res.get("links") or []) if isinstance(res, dict) else []
+        except McpError:
+            pass
+        return issue_dict(build(raw, comments, links))
 
     def add_comment(self, key: str, text: str) -> None:
         self.mcp.op("addOrEditJiraIssueComment", issueIdOrKey=key, commentBody=text)  # markdown
