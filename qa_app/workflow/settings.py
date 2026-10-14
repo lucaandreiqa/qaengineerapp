@@ -5,9 +5,10 @@ import os
 from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from ..config import APP_DIR, WORKFLOW_DIR, load_settings
-from .models import DEFAULT_BE_COMPONENTS, DEFAULT_FE_COMPONENTS, classify_type, component_list
+from .models import DEFAULT_BE_COMPONENTS, DEFAULT_BOTH_NAMES, DEFAULT_FE_COMPONENTS, classify_type, component_list
 
 
 @dataclass
@@ -24,6 +25,7 @@ class WorkflowConfig:
     jira_host: str = ""
     fe_components: tuple[str, ...] = tuple(component_list(DEFAULT_FE_COMPONENTS))
     be_components: tuple[str, ...] = tuple(component_list(DEFAULT_BE_COMPONENTS))
+    both_names: tuple[str, ...] = tuple(component_list(DEFAULT_BOTH_NAMES))
     workspace: Path = APP_DIR / "workspace"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5-5"
@@ -34,8 +36,9 @@ class WorkflowConfig:
     def is_mock(self) -> bool:
         return self.demo
 
-    def ticket_type(self, components: list[str]) -> str:
-        return classify_type(components, list(self.fe_components), list(self.be_components))
+    def ticket_type(self, components: list[str], labels: Optional[list[str]] = None) -> str:
+        """FE / BE / FE+BE from the ticket's Jira components and labels."""
+        return classify_type(components, list(self.fe_components), list(self.be_components), labels, list(self.both_names))
 
     @property
     def shared_env_name(self) -> str:
@@ -66,6 +69,7 @@ class WorkflowConfig:
             jira_host=(urlparse(str(s.get("jira", {}).get("base_url") or "")).hostname or "").lower(),
             fe_components=tuple(component_list(w.get("fe_components") or DEFAULT_FE_COMPONENTS)),
             be_components=tuple(component_list(w.get("be_components") or DEFAULT_BE_COMPONENTS)),
+            both_names=tuple(component_list(w.get("both_names") or DEFAULT_BOTH_NAMES)),
             # Demo tickets write their files to a scratch folder, never into a real Playwright repo.
             workspace=WORKFLOW_DIR / "demo-workspace" if w.get("demo", True) else (Path(ws).expanduser() if ws else APP_DIR / "workspace"),
             anthropic_api_key=c.get("api_key", "") if c.get("enabled") else "",

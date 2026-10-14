@@ -12,6 +12,7 @@ Result = Literal["pass", "partial", "fail", "blocked", "nt"]
 TicketType = Literal["FE", "BE", "FE+BE", ""]
 DEFAULT_FE_COMPONENTS = "Frontend, FE, Front-end, UI"
 DEFAULT_BE_COMPONENTS = "Backend, BE, Back-end, Core, API"
+DEFAULT_BOTH_NAMES = "FE+BE, FE/BE, BE+FE, Fullstack, Full-stack, Full stack"
 
 
 def component_list(value: object) -> list[str]:
@@ -20,11 +21,18 @@ def component_list(value: object) -> list[str]:
     return [str(i).strip() for i in items if str(i).strip()]
 
 
-def classify_type(components: list[str], fe_names: list[str], be_names: list[str]) -> str:
-    """FE, BE or FE+BE from the ticket's Jira components (names match exactly, ignoring case)."""
-    names = {c.strip().lower() for c in components or []}
-    fe = bool(names & {n.lower() for n in fe_names})
-    be = bool(names & {n.lower() for n in be_names})
+def _norm(name: str) -> str:
+    return re.sub(r"\s+", "", str(name)).lower()  # "FE + BE" == "fe+be"
+
+
+def classify_type(components: list[str], fe_names: list[str], be_names: list[str],
+                  labels: Optional[list[str]] = None, both_names: Optional[list[str]] = None) -> str:
+    """FE, BE or FE+BE from the ticket's Jira components and labels (names match ignoring case and spaces).
+    A ticket with an FE name and a BE name, or a combined name such as "FE+BE", is FE+BE."""
+    names = {_norm(c) for c in list(components or []) + list(labels or []) if str(c).strip()}
+    both = names & {_norm(n) for n in (both_names if both_names is not None else component_list(DEFAULT_BOTH_NAMES))}
+    fe = bool(both) or bool(names & {_norm(n) for n in fe_names})
+    be = bool(both) or bool(names & {_norm(n) for n in be_names})
     return "FE+BE" if fe and be else "FE" if fe else "BE" if be else ""
 
 
@@ -103,6 +111,7 @@ class Ticket(BaseModel):
     title: str
     type: TicketType = ""
     components: list[str] = Field(default_factory=list)  # the Jira components the type came from
+    labels: list[str] = Field(default_factory=list)  # the Jira labels (the type can come from these too)
     context: dict = Field(default_factory=dict)  # what the ticket says (ticket_context.summary), for the drawer
     env_candidates: list[dict] = Field(default_factory=list)  # links on the ticket that could be the test environment
     issue_type: str = ""  # Jira issue type (Story, Bug, Task…), coloured like Jira

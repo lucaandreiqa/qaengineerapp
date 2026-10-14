@@ -287,3 +287,14 @@ def test_jira_colours_come_from_type_priority_and_status_category(wf):
         assert (t.status, t.status_cat, t.priority, t.issue_type) == ("Reopened", "new", "Highest", "Bug")
         assert wf.tickets.get("OPTR-48520").issue_type == "Story"  # new tickets arrive with them
     run(go())
+
+
+def test_type_comes_from_labels_too():
+    from qa_app.workflow.models import classify_type
+    fe, be = ["Frontend", "FE"], ["Backend", "BE"]
+    assert classify_type([], fe, be, labels=["FE+BE"]) == "FE+BE"  # how the real SCRUM tickets are marked
+    assert classify_type([], fe, be, labels=["fe + be"]) == "FE+BE"
+    assert classify_type([], fe, be, labels=["Fullstack"]) == "FE+BE"
+    assert classify_type([], fe, be, labels=["BE", "login"]) == "BE"
+    assert classify_type(["Frontend"], fe, be, labels=["BE"]) == "FE+BE"  # component + label
+    assert Config().ticket_type([], ["FE/BE"]) == "FE+BE"

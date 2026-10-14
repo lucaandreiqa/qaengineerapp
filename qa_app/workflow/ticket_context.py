@@ -225,7 +225,8 @@ def brief(i: dict) -> dict:
     return {"key": i.get("key", ""), "title": f.get("summary", ""), "status": text(f.get("status")),
             "status_cat": status_category(f.get("status") or {}), "issue_type": text(f.get("issuetype")),
             "priority": text(f.get("priority")),
-            "components": [text(c) for c in f.get("components") or [] if text(c)]}
+            "components": [text(c) for c in f.get("components") or [] if text(c)],
+            "labels": [text(x) for x in f.get("labels") or [] if text(x)]}
 
 
 def summary(ctx: dict) -> dict:

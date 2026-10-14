@@ -40,6 +40,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
                  "workspace": "",
                  # Jira components that make a ticket FE, BE, or FE+BE when it has both.
                  "fe_components": "Frontend, FE, Front-end, UI", "be_components": "Backend, BE, Back-end, Core, API",
+                 "both_names": "FE+BE, FE/BE, BE+FE, Fullstack, Full-stack, Full stack",
                  "jira_column_statuses": ""},
     # Claude writes the scenarios, QA checklist and Playwright spec for each ticket.
     "claude": {"enabled": False, "api_key": "", "model": "claude-sonnet-5-5"},

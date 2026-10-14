@@ -158,7 +158,8 @@ def issue_dict(ctx: dict) -> dict:
     """What the Testing board reads from a ticket, with the full context alongside."""
     bodies = [c["body"] for c in ctx["comments"]]
     return {"key": ctx["key"], "title": ctx["title"], "status": ctx["status"], "description": ctx["description"],
-            "components": ctx["components"], "comments": bodies, "merged": False, "pr_url": "", "context": ctx}
+            "components": ctx["components"], "labels": ctx["labels"], "comments": bodies, "merged": False, "pr_url": "",
+            "context": ctx}
 
 
 def add_comment(cfg: dict, key: str, text: str) -> None:

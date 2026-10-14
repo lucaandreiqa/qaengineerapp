@@ -95,7 +95,7 @@ const TYPES = ['FE', 'BE', 'FE+BE', ''];
 const typeName = (ty) => ({ FE: 'Frontend', BE: 'Backend', 'FE+BE': 'Frontend and backend' }[ty] || 'No FE/BE component');
 function typeBadge(t) {
   const ty = t.type || '';
-  const tip = esc(typeName(ty) + ' · Jira components: ' + ((t.components || []).join(', ') || 'none'));
+  const tip = esc(typeName(ty) + ' · from Jira components: ' + ((t.components || []).join(', ') || 'none') + ' · labels: ' + ((t.labels || []).join(', ') || 'none'));
   if (ty === 'FE+BE') return `<span class="ttype tt-both" title="${tip}"><i>FE</i><i>BE</i></span>`;
   if (ty) return `<span class="ttype tt-${ty.toLowerCase()}" title="${tip}">${ty}</span>`;
   return `<span class="ttype tt-none" title="${tip}">No type</span>`;
@@ -982,8 +982,8 @@ ${err}
   const live = !st.demo && st.column && st.column === col;
   const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="jiraCol" data-v="${esc(x.name)}"><span class="lz lz-${esc(x.category || 'new')}">${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
   const comps = c.components && c.components.length
-    ? `Components in ${esc(c.project.key)}: <span class="mono">${esc(c.components.join(', '))}</span>. They set each ticket's FE / BE type (names are set on the Testing board card).`
-    : `${esc(c.project.key)} has no components yet, so tickets show as <b>No type</b>. Add Frontend / Backend components in Jira to get FE, BE and FE+BE.`;
+    ? `Components in ${esc(c.project.key)}: <span class="mono">${esc(c.components.join(', '))}</span>. Components and labels set each ticket's FE / BE type (FE, BE, FE+BE…; the names are on the Testing board card).`
+    : `Each ticket's FE / BE type comes from its components or labels, for example a label <span class="mono">FE</span>, <span class="mono">BE</span> or <span class="mono">FE+BE</span>. Tickets with neither show as <b>No type</b>.`;
   return `<section class="card jc" aria-labelledby="int-jira-connect">${head(`<span class="conn"><span class="d ${st.signedIn ? 'd-ok' : 'd-err'}"></span>${st.signedIn ? 'Connected' : 'Signed out'}</span>`)}
 <div class="jc-body">
 <dl class="jc-facts">

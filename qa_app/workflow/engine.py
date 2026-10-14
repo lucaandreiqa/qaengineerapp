@@ -143,13 +143,19 @@ class Workflow:
             if i["key"] in self.tickets.tickets:  # keep what the card shows in step with Jira
                 cur = self.tickets.get(i["key"])
                 upd = {k: i[k] for k in ("status", "status_cat", "issue_type", "priority") if i.get(k) and getattr(cur, k) != i[k]}
+                if "components" in i or "labels" in i:  # the FE/BE type follows the ticket's components and labels
+                    comps, labels = list(i.get("components", [])), list(i.get("labels", []))
+                    ttype = self.cfg.ticket_type(comps, labels)
+                    if (ttype, comps, labels) != (cur.type, cur.components, cur.labels):
+                        upd.update(type=ttype, components=comps, labels=labels)
                 if upd:
                     self.patch(i["key"], **upd)
                 continue
             if i["key"] in self.tickets.done_keys:
                 continue
-            comps = list(i.get("components", []))
-            t = Ticket(key=i["key"], title=i["title"], type=self.cfg.ticket_type(comps), components=comps, status=i.get("status", ""),
+            comps, labels = list(i.get("components", [])), list(i.get("labels", []))
+            t = Ticket(key=i["key"], title=i["title"], type=self.cfg.ticket_type(comps, labels), components=comps, labels=labels,
+                       status=i.get("status", ""),
                        status_cat=i.get("status_cat", ""), issue_type=i.get("issue_type", ""), priority=i.get("priority", ""),
                        description=i.get("description", ""), stage=0, sub="working", doing="Gathering context from Jira")
             if self.cfg.is_mock:
@@ -358,7 +364,7 @@ class Workflow:
             await self.pause(2.5)
         if t.p1 <= 1 or self.tickets.get(key).env is None:  # type: ignore[union-attr]
             self.patch(key, p1=1, doing="Classifying and resolving the environment",
-                       type=issue["type"], components=issue["components"])
+                       type=issue["type"], components=issue["components"], labels=issue["labels"])
             await self.pause(2.5)
             env = self.tickets.get(key).env  # type: ignore[union-attr]
             if env is None:
@@ -398,7 +404,8 @@ class Workflow:
     def _typed(self, issue: dict) -> dict:
         """The issue plus its FE / BE / FE+BE type from the Jira components."""
         comps = list(issue.get("components", []))
-        return {**issue, "components": comps, "type": self.cfg.ticket_type(comps)}
+        labels = list(issue.get("labels") or (issue.get("context") or {}).get("labels") or [])
+        return {**issue, "components": comps, "labels": labels, "type": self.cfg.ticket_type(comps, labels)}
 
     def _context_md(self, issue: dict) -> str:
         if issue.get("context"):
@@ -412,7 +419,8 @@ class Workflow:
     @staticmethod
     def _qa_facts(issue: dict) -> dict:
         comps = ", ".join(issue.get("components", [])) or "none"
-        return {"QA type": f"{type_label(issue.get('type', ''))} (from components: {comps})",
+        labels = ", ".join(issue.get("labels", [])) or "none"
+        return {"QA type": f"{type_label(issue.get('type', ''))} (from components: {comps}; labels: {labels})",
                 "Merged": "yes" if issue.get("merged") else "no", "PR": issue.get("pr_url") or "none linked"}
 
     async def _build_and_run(self, key: str) -> None:

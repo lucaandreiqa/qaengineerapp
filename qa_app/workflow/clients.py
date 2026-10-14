@@ -101,7 +101,8 @@ class MockJira:
         return {"key": i["key"], "title": i["title"], "status": i["status"], "description": i.get("description", ""),
                 "status_cat": status_category(i["status"]), "issue_type": i.get("issue_type", "Story"),
                 "priority": i.get("priority", "Medium"),
-                "components": list(i.get("components", [])), "merged": i.get("merged", i["status"] == "Merged"),
+                "components": list(i.get("components", [])), "labels": list(i.get("labels", [])),
+                "merged": i.get("merged", i["status"] == "Merged"),
                 "pr_url": i.get("pr_url", ""),
                 "comments": comments, "context": build(raw)}
 
