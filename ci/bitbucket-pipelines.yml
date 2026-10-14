@@ -1,0 +1,17 @@
+# Add to bitbucket-pipelines.yml. Repository variables: QA_TARGET_URL, QA_APP_JIRA_* , QA_APP_SLACK_* (secured).
+image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+
+pipelines:
+  custom:
+    website-qa:
+      - step:
+          name: Website QA
+          script:
+            - git clone --depth 1 https://github.com/lucaandreiqa/qaengineerapp.git /qa && cd /qa
+            - pip install -r requirements-ci.txt
+            - apt-get update -qq && apt-get install -y -qq nodejs npm
+            - export QA_APP_JIRA_ENABLED=true
+            - python -m qa_app.cli "$QA_TARGET_URL" --checks all --max-pages 25 --publish --out "$BITBUCKET_CLONE_DIR/test-results"
+          artifacts:
+            - test-results/**
+# Bitbucket picks up JUnit XML from test-results/ automatically.

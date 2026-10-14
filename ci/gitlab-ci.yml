@@ -1,0 +1,17 @@
+# Add to .gitlab-ci.yml. Set CI/CD variables: QA_TARGET_URL, QA_APP_JIRA_* , QA_APP_SLACK_* (masked).
+website-qa:
+  image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+  stage: test
+  variables:
+    QA_APP_JIRA_ENABLED: "true"
+  before_script:
+    - git clone --depth 1 https://github.com/lucaandreiqa/qaengineerapp.git /qa && cd /qa
+    - pip install -r requirements-ci.txt
+    - apt-get update -qq && apt-get install -y -qq nodejs npm
+  script:
+    - python -m qa_app.cli "$QA_TARGET_URL" --checks all --max-pages 25 --publish --out "$CI_PROJECT_DIR/qa-results"
+  artifacts:
+    when: always
+    paths: [qa-results/]
+    reports:
+      junit: qa-results/junit.xml
