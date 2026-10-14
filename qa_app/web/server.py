@@ -30,19 +30,20 @@ from ..workflow import costs
 from ..workflow.models import Ticket
 from ..workflow.settings import WorkflowConfig
 from ..workflow.store import TicketStore, bus
-from . import jira_connect
+from . import azure_connect, jira_connect
 from .runs import RunManager
 
 log = logging.getLogger("qa_app.web")
 STATIC = Path(__file__).parent / "static"
 
-# Integrations screen. Keys match DEFAULT_SETTINGS in config.py, so the CLI, the classic window
+# Integrations screen (Jira and Azure Boards have their own connect flows under /api/jira and /api/azure;
+# AWS S3 report upload is off the screen for now, its settings stay). Keys match DEFAULT_SETTINGS in config.py, so the CLI, the classic window
 # and this UI all read and write the same settings.json.
 SEV_OPTS = [{"v": v, "label": v.title()} for v in ("critical", "major", "minor", "info")]
 CATALOGUE: list[dict[str, Any]] = [
-    {"key": "workflow", "name": "Testing board", "mono": "QA", "tint": "#5865E0", "desc": "Which Jira column the board takes tickets from",
+    {"key": "workflow", "name": "Testing board", "mono": "QA", "tint": "#5865E0", "desc": "Which Jira or Azure Boards column the board takes tickets from",
      "fields": [{"k": "demo", "label": "Demo data (sample tickets, simulated Jira and TestRail)", "check": True, "full": True},
-                {"k": "jira_project", "label": "Jira project"}, {"k": "jira_column", "label": "Board column (status)"},
+                {"k": "jira_project", "label": "Project key"}, {"k": "jira_column", "label": "Board column"},
                 {"k": "test_account", "label": "Test account (SSO)"},
                 {"k": "test_ou", "label": "Test scope (optional)", "ph": "e.g. a test store, tenant or workspace"},
                 {"k": "comment_signature", "label": "Comment signature"},
@@ -64,14 +65,6 @@ CATALOGUE: list[dict[str, Any]] = [
 {"k": "api_key", "label": "Anthropic API key", "secret": True, "full": True},
                 {"k": "model", "label": "Model", "full": True}],
      "required": ["api_key"]},
-    {"key": "jira", "name": "Jira · API token", "mono": "J", "tint": "#2F64D6",
-     "desc": "Bugs from site-check findings, and the fallback when an admin blocks Atlassian sign-in",
-     "fields": [{"k": "base_url", "label": "Base URL", "full": True, "ph": "https://your-site.atlassian.net"},
-                {"k": "email", "label": "Email"}, {"k": "api_token", "label": "API token", "secret": True},
-                {"k": "project_key", "label": "Project key (for bugs)"},
-                {"k": "issue_type", "label": "Issue type", "options": [{"v": v, "label": v} for v in ("Bug", "Task", "Story")]},
-                {"k": "min_severity", "label": "Minimum severity", "options": SEV_OPTS, "full": True}],
-     "required": ["base_url", "email", "api_token", "project_key"]},
     {"key": "slack", "name": "Slack", "mono": "S", "tint": "#7B3F8C", "desc": "Post a run summary to a channel",
      "fields": [{"k": "webhook_url", "label": "Webhook URL", "secret": True, "full": True, "ph": "https://hooks.slack.com/services/…"},
                 {"k": "only_on_failure", "label": "Only on failure", "check": True, "full": True}],
@@ -93,12 +86,6 @@ CATALOGUE: list[dict[str, Any]] = [
      "fields": [{"k": "api_token", "label": "API token", "secret": True, "full": True, "ph": "Paste an API token"},
                 {"k": "project_key", "label": "Project key"}],
      "required": ["api_token", "project_key"]},
-    {"key": "aws", "name": "AWS S3", "mono": "S3", "tint": "#9A5B00", "desc": "Upload reports and screenshots",
-     "fields": [{"k": "bucket", "label": "Bucket"}, {"k": "prefix", "label": "Prefix"},
-                {"k": "region", "label": "Region", "options": [{"v": r, "label": r} for r in
-                                                               ("us-east-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-north-1")]},
-                {"k": "profile", "label": "Profile"}, {"k": "public_base_url", "label": "Public base URL", "full": True}],
-     "required": ["bucket"]},
 ]
 STATUS_FILE = WORKFLOW_DIR / "integration-status.json"
 
@@ -155,8 +142,16 @@ class Services:
         d["canRedo"] = self.workflow.can_redo_gather(t)
         d["cost"] = costs.summary(t.usage)
         d.pop("usage", None)
-        base = load_settings().get("jira", {}).get("base_url") or "https://example.atlassian.net"
-        d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
+        st = load_settings()
+        if not cfg.is_mock and st.get("workflow", {}).get("tracker") == "azure":
+            a = st.get("azure", {})
+            from urllib.parse import quote
+            d["jiraUrl"] = f"{str(a.get('org_url', '')).rstrip('/')}/{quote(a.get('project', ''), safe='')}/_workitems/edit/{t.key}"
+            d["tracker"] = "Azure Boards"
+        else:
+            base = st.get("jira", {}).get("base_url") or "https://example.atlassian.net"
+            d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
+            d["tracker"] = "Jira"
         d["envShort"] = agent.env_name(t, cfg) if t.env else ""
         return d
 
@@ -197,6 +192,7 @@ def state() -> dict:
         # Demo tickets always come from the sample OPTR · Testing column, whatever Jira is connected.
         "config": {"mode": "mock" if cfg.is_mock else "live", "project": "OPTR" if cfg.is_mock else cfg.jira_project,
                    "column": "Testing" if cfg.is_mock else cfg.jira_column,
+                   "tracker": "Azure Boards" if not cfg.is_mock and load_settings().get("workflow", {}).get("tracker") == "azure" else "Jira",
                    "account": cfg.test_account, "ou": cfg.test_ou, "claude": cfg.claude_ready, "claudeMode": cfg.claude_mode},
         "tickets": [s.ticket_view(t) for t in store.all()],
         "claude": costs.summary([e for t in store.all() for e in t.usage]),
@@ -370,7 +366,8 @@ def list_integrations() -> dict:
         logo = next((f"/static/logos/{c['key']}.{ext}" for ext in ("svg", "png") if (STATIC / "logos" / f"{c['key']}.{ext}").exists()), None)
         cards.append({**c, "values": values, "enabled": bool(settings.get(c["key"], {}).get("enabled")),
                       "result": status.get(c["key"]), "logo": logo})
-    return {"cards": cards, "mode": "mock" if WorkflowConfig.load().is_mock else "live"}
+    logos = {f.stem: f"/static/logos/{f.name}" for f in sorted((STATIC / "logos").glob("*")) if f.suffix in (".svg", ".png")}
+    return {"cards": cards, "logos": logos, "mode": "mock" if WorkflowConfig.load().is_mock else "live"}
 
 
 class IntegrationIn(BaseModel):
@@ -482,6 +479,35 @@ def _callback_page(ok: bool, text: str, back: str) -> HTMLResponse:
 <p>{html.escape(text)}</p><p><a href="{html.escape(back)}">Back to QA Engineer App</a></p></body>""", status_code=200 if ok else 400)
 
 
+class JiraTokenIn(BaseModel):
+    link: str
+    email: str
+    api_token: str
+
+
+@app.post("/api/jira/connect-token")
+async def jira_connect_token(body: JiraTokenIn) -> dict:
+    try:
+        info = await asyncio.to_thread(jira_connect.connect_token, body.link, body.email, body.api_token)
+    except jira_connect.ConnectError as e:
+        raise _jira_error(e)
+    return {"connected": info}
+
+
+class JiraBugsIn(BaseModel):
+    on_runs: bool = False
+    issue_type: str = "Bug"
+    min_severity: str = "major"
+
+
+@app.post("/api/jira/bugs")
+def jira_bugs(body: JiraBugsIn) -> dict:
+    try:
+        return jira_connect.save_bugs(body.on_runs, body.issue_type, body.min_severity)
+    except jira_connect.ConnectError as e:
+        raise _jira_error(e)
+
+
 @app.post("/api/jira/column")
 def jira_column(body: JiraColumnIn) -> dict:
     try:
@@ -504,6 +530,46 @@ async def jira_refresh() -> dict:
 @app.post("/api/jira/disconnect")
 def jira_disconnect() -> dict:
     return jira_connect.disconnect()
+
+
+# ------------------------------------------------------------------ Azure Boards: paste a board link + personal access token
+class AzureConnectIn(BaseModel):
+    link: str
+    pat: str = ""
+
+
+@app.get("/api/azure")
+def azure_status() -> dict:
+    return azure_connect.status()
+
+
+@app.post("/api/azure/connect")
+async def azure_connect_start(body: AzureConnectIn) -> dict:
+    try:
+        return {"connected": await asyncio.to_thread(azure_connect.connect, body.link, body.pat)}
+    except azure_connect.ConnectError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/azure/column")
+def azure_column(body: JiraColumnIn) -> dict:
+    try:
+        return azure_connect.choose_column(body.column, body.use_on_board)
+    except azure_connect.ConnectError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/azure/refresh")
+async def azure_refresh() -> dict:
+    try:
+        return await asyncio.to_thread(azure_connect.refresh)
+    except azure_connect.ConnectError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/azure/disconnect")
+def azure_disconnect() -> dict:
+    return azure_connect.disconnect()
 
 
 # ------------------------------------------------------------------ skills: how Claude does each step

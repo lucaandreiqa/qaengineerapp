@@ -86,10 +86,13 @@ class Workflow:
         if self.cfg.is_mock:
             return self.mock_jira
         s = load_settings()
+        if s.get("workflow", {}).get("tracker") == "azure":  # Azure Boards: same calls, work items instead of issues
+            from ..integrations.azure_boards import AzureBoards
+            return AzureBoards(s.get("azure", {}), s.get("workflow", {}))
         if s.get("jira", {}).get("auth") == "mcp":  # signed in with Atlassian (MCP)
             from ..integrations.atlassian_mcp import McpJira
             return McpJira(s.get("jira", {}), s.get("workflow", {}))
-        return RealJira(s.get("jira", {}))
+        return RealJira(s.get("jira", {}), s.get("workflow", {}))
 
     def testrail(self):
         if self.cfg.is_mock:

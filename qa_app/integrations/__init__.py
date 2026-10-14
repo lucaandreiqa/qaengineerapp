@@ -22,6 +22,8 @@ def publish(result: RunResult, settings: dict, log: Callable[[str], None] = prin
         cfg = settings.get(name, {})
         if not cfg.get("enabled") or (only and name not in only):
             continue
+        if name == "jira" and not cfg.get("bugs_on_runs"):  # Jira is connected for the board; bugs only when asked
+            continue
         try:
             outcomes[name] = module.publish(result, cfg, shared, log) or "ok"
             log(f"{name}: {outcomes[name]}")

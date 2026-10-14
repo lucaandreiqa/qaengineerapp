@@ -29,12 +29,15 @@ def _need(cfg: dict, keys: list[str], name: str) -> None:
 
 
 class RealJira:
-    def __init__(self, cfg: dict) -> None:
+    """Jira connected with email + API token."""
+
+    def __init__(self, cfg: dict, workflow: Optional[dict] = None) -> None:
         _need(cfg, ["base_url", "email", "api_token"], "Jira")
         self.cfg = cfg
+        self.status_ids = [x.strip() for x in str((workflow or {}).get("jira_column_statuses") or "").split(",") if x.strip()]
 
     def search_column(self, project: str, column: str) -> list[dict]:
-        return jira_api.search_column(self.cfg, project, column)
+        return jira_api.search_column(self.cfg, project, column, self.status_ids)
 
     def get_issue(self, key: str) -> dict:
         return jira_api.get_issue(self.cfg, key)

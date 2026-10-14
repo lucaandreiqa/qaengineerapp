@@ -1,4 +1,6 @@
-"""Connect Jira from a pasted link: sign in with Atlassian (MCP server), pick the board column, done.
+"""Connect Jira from a pasted link, then pick the board column. Two ways to sign in, same result:
+  start/finish     Atlassian sign-in (OAuth, through Atlassian's MCP server): no token to copy
+  connect_token    email + API token (Jira REST), for sites whose admin blocks the sign-in
 
 Plain functions so they can be tested without the web server; server.py exposes them as /api/jira/*.
 """
@@ -9,6 +11,7 @@ from typing import Any, Optional
 
 from ..config import load_settings, save_section
 from ..integrations import atlassian_mcp as am
+from ..integrations import jira as jira_rest
 from ..integrations.mcp_client import McpAuthRequired, McpError, TokenStore
 
 PENDING_TTL = 15 * 60
@@ -70,9 +73,28 @@ def _discover_and_save(link: dict, store: Optional[TokenStore] = None, mcp: Opti
     return info
 
 
-def save_connection(info: dict) -> None:
+def connect_token(link_text: str, email: str, api_token: str) -> dict:
+    """Connect with email + API token: read the board from the link the same way the sign-in does."""
+    try:
+        link = am.parse_jira_link(link_text)
+    except ValueError as e:
+        raise ConnectError(str(e)) from e
+    email, api_token = (email or "").strip(), (api_token or "").strip()
+    if not email or not api_token:
+        raise ConnectError("Enter the email you sign in to Jira with and an API token")
+    try:
+        info = jira_rest.discover({"email": email, "api_token": api_token}, link)
+    except jira_rest.JiraError as e:
+        raise ConnectError(str(e)) from e
+    save_connection(info, auth="token", extra={"email": email, "api_token": api_token})
+    return info
+
+
+def save_connection(info: dict, auth: str = "mcp", extra: Optional[dict] = None) -> None:
     s = load_settings()
-    save_section("jira", {"enabled": True, "auth": "mcp", "base_url": info["base_url"], "cloud_id": info["cloud_id"],
+    if auth == "mcp":
+        extra = {"api_token": "", **(extra or {})}  # one way in at a time: don't keep a token that's no longer used
+    save_section("jira", {"enabled": True, "auth": auth, **(extra or {}), "base_url": info["base_url"], "cloud_id": info["cloud_id"],
                           "board_id": info["board"]["id"], "project_key": info["project"]["key"],
                           "link": info["link"].get("site", ""), "connection": {**info, "connected_at": time.time()}})
     wf = s.get("workflow", {})
@@ -86,9 +108,25 @@ def status(store: Optional[TokenStore] = None) -> dict:
     s = load_settings()
     j, wf = s.get("jira", {}), s.get("workflow", {})
     conn = j.get("connection") or {}
-    return {"connected": j.get("auth") == "mcp" and bool(conn), "signedIn": am.oauth(store).signed_in(),
-            "connection": conn or None, "column": wf.get("jira_column", ""), "demo": bool(wf.get("demo", True)),
+    auth = j.get("auth") or ""
+    signed_in = am.oauth(store).signed_in() if auth == "mcp" else bool(j.get("api_token"))
+    return {"connected": auth in ("mcp", "token") and bool(conn), "auth": auth, "signedIn": signed_in,
+            "email": j.get("email", "") if auth == "token" else "",
+            "connection": conn or None, "demo": bool(wf.get("demo", True)),
+            # the column only while Jira feeds the Testing board (Azure Boards may be the one in use)
+            "column": wf.get("jira_column", "") if (wf.get("tracker") or "jira") == "jira" else "",
+            "active": (wf.get("tracker") or "jira") == "jira",
+            "bugs": {"on_runs": bool(j.get("bugs_on_runs")), "issue_type": j.get("issue_type") or "Bug",
+                     "min_severity": j.get("min_severity") or "major"},
             "server": am.ATLASSIAN_MCP_URL}
+
+
+def save_bugs(on_runs: bool, issue_type: str, min_severity: str) -> dict:
+    """How site-check findings become Jira bugs."""
+    if min_severity not in ("critical", "major", "minor", "info"):
+        raise ConnectError("Minimum severity must be critical, major, minor or info")
+    save_section("jira", {"bugs_on_runs": bool(on_runs), "issue_type": (issue_type or "Bug").strip()[:60], "min_severity": min_severity})
+    return status()
 
 
 def choose_column(name: str, use_on_board: bool) -> dict:
@@ -101,19 +139,29 @@ def choose_column(name: str, use_on_board: bool) -> dict:
                               "jira_column_statuses": ",".join(col["status_ids"])}
     if use_on_board:
         values["demo"] = False
+        values["tracker"] = "jira"
     save_section("workflow", values)
     return status()
 
 
 def refresh(store: Optional[TokenStore] = None) -> dict:
-    conn = load_settings().get("jira", {}).get("connection") or {}
+    j = load_settings().get("jira", {})
+    conn = j.get("connection") or {}
     if not conn.get("link"):
         raise ConnectError("Jira is not connected yet")
+    if j.get("auth") == "token":
+        try:
+            info = jira_rest.discover(j, conn["link"])
+        except jira_rest.JiraError as e:
+            raise ConnectError(str(e)) from e
+        save_connection(info, auth="token")
+        return info
     return _discover_and_save(conn["link"], store)
 
 
 def disconnect(store: Optional[TokenStore] = None) -> dict:
     am.oauth(store).store.sign_out(am.ATLASSIAN_MCP_URL)
-    save_section("jira", {"auth": "", "cloud_id": "", "connection": {}, "enabled": False})
-    save_section("workflow", {"demo": True})  # the board falls back to demo tickets instead of failing
+    save_section("jira", {"auth": "", "cloud_id": "", "connection": {}, "enabled": False, "api_token": ""})
+    if (load_settings().get("workflow", {}).get("tracker") or "jira") == "jira":
+        save_section("workflow", {"demo": True})  # the board falls back to demo tickets instead of failing
     return status(store)

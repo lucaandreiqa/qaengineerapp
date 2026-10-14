@@ -70,7 +70,7 @@ const JIRA_TYPE = [
   [/bug|defect|incident/i, 'bug', '<circle cx="8" cy="8" r="3" fill="#fff"></circle>'],
   [/epic/i, 'epic', '<path d="M9.2 2.8L4.8 9h2.7l-.8 4.2L11.2 7H8.4z" fill="#fff"></path>'],
   [/sub-?task/i, 'subtask', '<rect x="4" y="4" width="4.2" height="4.2" rx=".6" fill="none" stroke="#fff" stroke-width="1.4"></rect><rect x="7.8" y="7.8" width="4.2" height="4.2" rx=".6" fill="#fff"></rect>'],
-  [/story/i, 'story', '<path d="M5.2 3.8h5.6v8.6L8 10.5l-2.8 1.9z" fill="#fff"></path>'],
+  [/story|backlog item|requirement/i, 'story', '<path d="M5.2 3.8h5.6v8.6L8 10.5l-2.8 1.9z" fill="#fff"></path>'],
   [/improvement|feature|enhancement/i, 'improvement', '<path d="M8 3.8v8.4M4.4 7.4L8 3.8l3.6 3.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>'],
   [/task|chore/i, 'task', '<path d="M4.6 8.3l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>'],
 ];
@@ -146,7 +146,8 @@ const S = {
   },
   hist: { runs: null, site: null, q: '', status: 'all', pub: {} },
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
-  jira: { st: null, link: '', busy: '', err: '', col: '' },
+  jira: { st: null, link: '', busy: '', err: '', col: '', method: store.get('jiraMethod', 'atlassian'), email: '', token: '' },
+  azure: { st: null, link: '', pat: '', busy: '', err: '', col: '', changing: false },
   skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
 };
 
@@ -321,7 +322,7 @@ function viewBoard() {
 <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 ${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${onPlan(data.claude) ? '≈' : ''}${fmtUsd(data.claude.cost)} on this board${onPlan(data.claude) ? ' · your plan' : ''}</span>` : ''}
 <span class="pill" title="Auto mode never skips a review gate">${svg(IC.lock, 'ic ic-s')}Auto mode · 4 gates always stop</span>
-<span class="pill" role="status"><span class="d d-ok"></span>Jira · ${esc(c.project)} · ${esc(c.column)} · ${ago(data.lastSync)}</span>
+<span class="pill" role="status"><span class="d d-ok"></span>${esc(c.tracker || 'Jira')} · ${esc(c.project)} · ${esc(c.column)} · ${ago(data.lastSync)}</span>
 <button type="button" class="btn" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic spin' : 'ic')}Sync now</button>
 </div>
 </header>
@@ -581,7 +582,7 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
 ${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${lozenge(t.status, statusCat(t))}
-<a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in Jira${svg(IC.ext, 'ic ic-s')}</a>
+<a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" data-act="close">${svg(IC.close)}</button>
 </div>
 <h2 style="margin:0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em">${esc(t.title)}</h2>
@@ -977,7 +978,7 @@ function viewJiraConnect() {
   const J = S.jira, st = J.st;
   const head = (right) => `<div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)">
 ${integTile('jira', '#2F64D6', 'J', jiraLogo())}
-<div style="min-width:0;flex:1"><h2 id="int-jira-connect" style="margin:0;font-size:14px;font-weight:600">Jira</h2><div style="color:var(--muted);font-size:12px">The board you test from: tickets, comments and moves, with your own Atlassian access</div></div>${right}</div>`;
+<div style="min-width:0;flex:1"><h2 id="int-jira-connect" style="margin:0;font-size:14px;font-weight:600">Jira</h2><div style="color:var(--muted);font-size:12px">The board you test from: tickets, comments and moves, plus bugs from site checks</div></div>${right}</div>`;
   const err = J.err ? `<div class="callout c-err" role="alert">${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<span>${esc(J.err)}</span></div>` : '';
   if (!st) return `<section class="card jc" aria-labelledby="int-jira-connect">${head('')}<div class="jc-body"><div class="notice">Loading…</div></div></section>`;
   const c = st.connection;
@@ -987,20 +988,29 @@ ${integTile('jira', '#2F64D6', 'J', jiraLogo())}
     const preview = !p ? `<span style="color:var(--faint)">Example: https://your-site.atlassian.net/jira/software/projects/KEY/boards/1</span>`
       : p.err ? `<span class="c-crit" style="font-size:12px">${esc(p.err)}</span>`
       : `${chip('Site', p.site)}${chip('Project', p.project)}${chip('Board', p.board)}${p.issue ? chip('Ticket', p.issue) : ''}`;
-    const ready = p && !p.err;
+    const token = J.method === 'token';
+    const ready = p && !p.err && (!token || (J.email.trim() && J.token.trim()));
+    const btn = token ? (J.busy === 'connect' ? svg(IC.spin, 'ic spin') + 'Connecting…' : 'Connect' + svg(IC.arrow, 'ic ic-s'))
+      : (J.busy === 'connect' ? svg(IC.spin, 'ic spin') + 'Opening Atlassian…' : 'Sign in with Atlassian' + svg(IC.arrow, 'ic ic-s'));
+    const how = (v, label) => `<button type="button" role="radio" aria-checked="${J.method === v}" class="jc-how${J.method === v ? ' is-on' : ''}" data-act="jiraMethod" data-v="${v}">${label}</button>`;
     return `<section class="card jc" aria-labelledby="int-jira-connect">${head(c ? `<button type="button" class="btn btn-quiet btn-sm" data-act="jiraCancel">Cancel</button>` : '<span class="conn"><span class="d d-off"></span>Not connected</span>')}
 <div class="jc-body">
 <label class="lbl" for="jira-link" style="margin:0">Paste the link of your Jira board</label>
-<div class="jc-row"><input id="jira-link" class="inp mono" type="text" inputmode="url" placeholder="https://your-site.atlassian.net/jira/software/projects/KEY/boards/1" value="${esc(J.link)}" data-in="jiraLink" spellcheck="false" autocomplete="off">
-<button type="button" class="btn btn-primary" data-act="jiraConnect" ${ready && !J.busy ? '' : 'disabled'}>${J.busy === 'connect' ? svg(IC.spin, 'ic spin') + 'Opening Atlassian…' : 'Sign in with Atlassian' + svg(IC.arrow, 'ic ic-s')}</button></div>
+<input id="jira-link" class="inp mono" type="text" inputmode="url" placeholder="https://your-site.atlassian.net/jira/software/projects/KEY/boards/1" value="${esc(J.link)}" data-in="jiraLink" spellcheck="false" autocomplete="off">
 <div class="jc-chips" aria-live="polite">${preview}</div>
+<div><div class="lbl" id="jc-how-l">Sign in with</div><div class="jc-hows" role="radiogroup" aria-labelledby="jc-how-l">${how('atlassian', 'Atlassian sign-in')}${how('token', 'Email + API token')}</div></div>
+${token ? `<div class="jc-grid"><div><label class="lbl" for="jira-email">Email</label><input id="jira-email" class="inp" type="email" autocomplete="username" value="${esc(J.email)}" data-in="jiraEmail" placeholder="you@company.com"></div>
+<div><label class="lbl" for="jira-token">API token</label><input id="jira-token" class="inp mono" type="password" autocomplete="off" value="${esc(J.token)}" data-in="jiraToken" placeholder="Paste an API token"></div></div>` : ''}
+<div class="jc-row"><button type="button" class="btn btn-primary" data-act="jiraConnect" ${ready && !J.busy ? '' : 'disabled'}>${btn}</button></div>
 ${err}
-<p class="jc-foot">You approve access on Atlassian's own page, then come straight back here. No API token to copy. It uses Atlassian's MCP server, so the app sees only what your Jira account can see. The first time on a site, a site admin approves the app once.</p>
+<p class="jc-foot">${token
+    ? `Create a token at <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com → Security → API tokens</a>. It acts as you, so the app sees what your Jira account sees. It's kept in the app's settings on this computer. Use this when your site admin blocks Atlassian sign-in.`
+    : `You approve access on Atlassian's own page, then come straight back here. No token to copy. It uses Atlassian's MCP server, so the app sees only what your Jira account can see. The first time on a site, a site admin approves the app once.`}</p>
 </div></section>`;
   }
   const col = J.col || st.column;
   const byStatus = c.columns_from === 'statuses';
-  const live = !st.demo && st.column && st.column === col;
+  const live = st.active && !st.demo && st.column && st.column === col;
   const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="jiraCol" data-v="${esc(x.name)}"><span class="lz lz-${esc(x.category || 'new')}">${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
   const comps = c.components && c.components.length
     ? `Components in ${esc(c.project.key)}: <span class="mono">${esc(c.components.join(', '))}</span>. Components and labels set each ticket's FE / BE type (FE, BE, FE+BE…; the names are on the Testing board card).`
@@ -1009,11 +1019,11 @@ ${err}
 <div class="jc-body">
 <dl class="jc-facts">
 <div><dt>Site</dt><dd class="mono"><a href="${esc(c.base_url)}" target="_blank" rel="noopener">${esc(c.site)}</a></dd></div>
-<div><dt>Signed in as</dt><dd>${esc(c.user.name || c.user.email || c.user.account_id || 'your Atlassian account')}</dd></div>
+<div><dt>Signed in as</dt><dd>${esc(c.user.name || c.user.email || c.user.account_id || 'your Atlassian account')} <span style="color:var(--muted)">· ${st.auth === 'token' ? 'API token' : 'Atlassian sign-in'}</span></dd></div>
 <div><dt>Project</dt><dd>${esc(c.project.name)} <span class="mono" style="color:var(--muted)">${esc(c.project.key)}</span></dd></div>
 <div><dt>Board</dt><dd>${esc(c.board.name)}${c.board.id ? ` <span class="mono" style="color:var(--muted)">#${esc(c.board.id)}</span>` : ''}</dd></div>
 </dl>
-${st.signedIn ? '' : `<div class="callout c-err" role="alert">${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<span>Your Atlassian sign-in has ended. Sign in again to keep the board in sync.</span><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="jiraReconnect">Sign in again</button></div>`}
+${st.signedIn ? '' : `<div class="callout c-err" role="alert">${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<span>${st.auth === 'token' ? 'The API token is missing. Connect again with a new token.' : 'Your Atlassian sign-in has ended. Sign in again to keep the board in sync.'}</span><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="${st.auth === 'token' ? 'jiraChange' : 'jiraReconnect'}">${st.auth === 'token' ? 'Connect again' : 'Sign in again'}</button></div>`}
 <div><div class="lbl" id="jc-col-l">Which ${byStatus ? 'status' : 'column'} holds the tickets ready for QA?</div>
 ${c.columns.length ? `<div class="jc-cols" role="radiogroup" aria-labelledby="jc-col-l">${colChips}</div>` : `<div class="notice">${esc(c.project.key)} has no tickets yet, so its statuses can't be read. Create a ticket, then press Refresh.</div>`}
 ${byStatus && c.columns.length ? `<p class="jc-foot" style="margin-top:8px">Your Atlassian access doesn't include board settings, so these are the project's statuses. On a simple board each status is a column.</p>` : ''}</div>
@@ -1023,26 +1033,140 @@ ${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;he
 </div>
 ${err}
 <p class="jc-foot">${comps}</p>
+${jiraBugs(st)}
 <div class="jc-actions"><button type="button" class="btn btn-quiet btn-sm" data-act="jiraRefresh" ${J.busy ? 'disabled' : ''}>${svg(J.busy === 'refresh' ? IC.spin : IC.sync, J.busy === 'refresh' ? 'ic spin' : 'ic')}Refresh columns</button>
 <button type="button" class="btn btn-quiet btn-sm" data-act="jiraChange">Use a different board</button>
 <button type="button" class="btn btn-quiet btn-sm" style="margin-left:auto" data-act="jiraDisconnect" ${J.busy ? 'disabled' : ''}>Disconnect</button></div>
 </div></section>`;
 }
 
+/* Bugs from site checks: same Jira connection, no second setup. */
+function jiraBugs(st) {
+  const b = st.bugs || { on_runs: false, issue_type: 'Bug', min_severity: 'major' };
+  const sev = ['critical', 'major', 'minor', 'info'].map((v) => `<option value="${v}"${v === b.min_severity ? ' selected' : ''}>${v[0].toUpperCase() + v.slice(1)} and worse</option>`).join('').replace('Critical and worse', 'Critical only').replace('Info and worse', 'Everything');
+  const types = ['Bug', 'Task', 'Story'].map((v) => `<option${v === b.issue_type ? ' selected' : ''}>${v}</option>`).join('');
+  return `<div class="jc-bugs"><div class="lbl" style="margin:0">Bugs from site checks <span style="font-weight:400;color:var(--muted)">· filed in ${esc(st.connection.project.key)}, one per finding, never twice</span></div>
+<label class="jc-check"><input type="checkbox" data-in="jiraBugs" data-v="on_runs" ${b.on_runs ? 'checked' : ''}> File bugs automatically after each site check <span style="color:var(--muted)">(the Run screen's "Create Jira issue" works either way)</span></label>
+<div class="jc-grid"><div><label class="lbl" for="jb-type">Issue type</label><select id="jb-type" class="inp" data-in="jiraBugs" data-v="issue_type">${types}</select></div>
+<div><label class="lbl" for="jb-sev">Which findings</label><select id="jb-sev" class="inp" data-in="jiraBugs" data-v="min_severity">${sev}</select></div></div></div>`;
+}
+
 async function loadJira() {
   try { S.jira.st = await api('GET', '/api/jira'); S.jira.col = ''; } catch (e) { S.jira.err = 'Could not read the Jira connection: ' + e.message; }
-  if (/[?&]jira=connected/.test(location.hash)) { history.replaceState(null, '', '#/integrations'); if (S.jira.st && S.jira.st.connected) toast(`Jira connected · ${S.jira.st.connection.board.name}. Pick the QA column.`); }
+  if (/[?&]jira=connected/.test(location.hash)) { history.replaceState(null, '', '#/integrations'); S.integ.open['jira-mcp'] = true; if (S.jira.st && S.jira.st.connected) toast(`Jira connected · ${S.jira.st.connection.board.name}. Pick the QA column.`); }
   schedule();
 }
 
 async function jiraConnect() {
   const J = S.jira; J.busy = 'connect'; J.err = ''; schedule();
   try {
-    const r = await api('POST', '/api/jira/connect', { link: J.link });
+    const r = J.method === 'token'
+      ? await api('POST', '/api/jira/connect-token', { link: J.link, email: J.email.trim(), api_token: J.token.trim() })
+      : await api('POST', '/api/jira/connect', { link: J.link });
+    if (r.connected) J.token = '';
     if (r.authorize_url) { location.href = r.authorize_url; return; } // Atlassian sends the browser back to /api/jira/oauth/callback
-    J.changing = false; await loadJira(); toast(`Jira connected · ${r.connected.board.name}`);
+    J.changing = false; S.integ.open['jira-mcp'] = true; await loadJira(); toast(`Jira connected · ${r.connected.board.name}. Pick the QA column.`);
   } catch (e) { J.err = e.message; }
   J.busy = ''; schedule();
+}
+
+/* Azure Boards: paste the board link + a personal access token, pick the QA column. */
+function parseAzureLink(text) {
+  let s = (text || '').trim().replace(/^[<"']+|[>"']+$/g, '');
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  let u;
+  try { u = new URL(s); } catch (e) { return { err: "That doesn't look like an Azure DevOps link" }; }
+  const host = u.hostname.toLowerCase();
+  const parts = u.pathname.split('/').filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch (e) { return x; } });
+  let org, rest;
+  if (host === 'dev.azure.com') { org = parts[0]; rest = parts.slice(1); }
+  else if (host.endsWith('.visualstudio.com')) { org = host.split('.')[0]; rest = parts[0] && parts[0].toLowerCase() === 'defaultcollection' ? parts.slice(1) : parts; }
+  else return { err: 'Use your Azure DevOps link: dev.azure.com/ORG/PROJECT/_boards/… or ORG.visualstudio.com/…' };
+  if (!org || !rest.length || rest[0].startsWith('_')) return { err: 'The link needs the organization and the project. Open your board in Azure Boards and copy its link.' };
+  const low = rest.map((x) => x.toLowerCase()), i = low.indexOf('t');
+  return { org, project: rest[0], team: i > 0 ? rest[i + 1] || '' : '', board: i > 0 ? rest[i + 2] || '' : '' };
+}
+
+function viewAzureConnect() {
+  const A = S.azure, st = A.st;
+  const head = (right) => `<div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)">
+${integTile('azure', '#0A6CBC', 'AZ', integLogo('azure'))}
+<div style="min-width:0;flex:1"><h2 id="int-azure-connect" style="margin:0;font-size:14px;font-weight:600">Azure Boards</h2><div style="color:var(--muted);font-size:12px">The board you test from, if your team uses Azure DevOps: work items, comments and moves</div></div>${right}</div>`;
+  const err = A.err ? `<div class="callout c-err" role="alert">${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<span>${esc(A.err)}</span></div>` : '';
+  if (!st) return `<section class="card jc" aria-labelledby="int-azure-connect">${head('')}<div class="jc-body"><div class="notice">Loading…</div></div></section>`;
+  const c = st.connection;
+  if (!st.connected || !c || A.changing) {
+    const p = parseAzureLink(A.link);
+    const chip = (label, v, empty) => `<span class="jc-chip${v ? '' : ' is-empty'}"><span>${label}</span><b class="mono">${esc(v || empty)}</b></span>`;
+    const preview = !p ? `<span style="color:var(--faint)">Example: https://dev.azure.com/your-org/Your%20Project/_boards/board/t/Your%20Team/Stories</span>`
+      : p.err ? `<span class="c-crit" style="font-size:12px">${esc(p.err)}</span>`
+      : `${chip('Organization', p.org)}${chip('Project', p.project)}${chip('Team', p.team, 'default team')}${chip('Board', p.board, 'first board')}`;
+    const ready = p && !p.err && (A.pat.trim() || (c && A.changing));
+    return `<section class="card jc" aria-labelledby="int-azure-connect">${head(c ? `<button type="button" class="btn btn-quiet btn-sm" data-act="azCancel">Cancel</button>` : '<span class="conn"><span class="d d-off"></span>Not connected</span>')}
+<div class="jc-body">
+<label class="lbl" for="az-link" style="margin:0">Paste the link of your Azure Boards board</label>
+<input id="az-link" class="inp mono" type="text" inputmode="url" placeholder="https://dev.azure.com/your-org/Project/_boards/board/t/Team/Stories" value="${esc(A.link)}" data-in="azLink" spellcheck="false" autocomplete="off">
+<div class="jc-chips" aria-live="polite">${preview}</div>
+<div><label class="lbl" for="az-pat">Personal access token</label>
+<div class="jc-row"><input id="az-pat" class="inp mono" type="password" autocomplete="off" value="${esc(A.pat)}" data-in="azPat" placeholder="${c ? 'Leave empty to keep the current token' : 'Paste a personal access token'}">
+<button type="button" class="btn btn-primary" data-act="azConnect" ${ready && !A.busy ? '' : 'disabled'}>${A.busy === 'connect' ? svg(IC.spin, 'ic spin') + 'Connecting…' : 'Connect' + svg(IC.arrow, 'ic ic-s')}</button></div></div>
+${err}
+<p class="jc-foot">Create one in Azure DevOps: <b>User settings → Personal access tokens → New token</b>, for this organization, with scope <b>Work Items: Read &amp; write</b>. It acts as you and is kept in the app's settings on this computer.</p>
+</div></section>`;
+  }
+  const col = A.col || st.column;
+  const live = st.active && !st.demo && st.column && st.column === col;
+  const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="azCol" data-v="${esc(x.name)}"><span class="lz lz-${esc(x.category || 'new')}">${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
+  return `<section class="card jc" aria-labelledby="int-azure-connect">${head(`${statusChip('ok', 'Connected')}<button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="azure" aria-expanded="true" aria-label="Collapse Azure Boards" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
+<div class="jc-body">
+<dl class="jc-facts">
+<div><dt>Organization</dt><dd class="mono"><a href="${esc(c.base_url)}" target="_blank" rel="noopener">${esc(c.site)}</a></dd></div>
+<div><dt>Signed in as</dt><dd>${esc(c.user.name || 'your Azure DevOps account')} <span style="color:var(--muted)">· personal access token</span></dd></div>
+<div><dt>Project</dt><dd>${esc(c.project.name)}</dd></div>
+<div><dt>Board</dt><dd>${esc(c.board.name)}</dd></div>
+</dl>
+<div><div class="lbl" id="az-col-l">Which column holds the work items ready for QA?</div>
+${c.columns.length ? `<div class="jc-cols" role="radiogroup" aria-labelledby="az-col-l">${colChips}</div>` : `<div class="notice">This board has no columns.</div>`}</div>
+<div class="jc-row" style="align-items:center">
+${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}The Testing board shows ${esc(c.board.name)} · ${esc(col)}</span><a class="btn btn-sm" href="#/board" style="margin-left:4px">Open board${svg(IC.arrow, 'ic ic-s')}</a>`
+    : `<button type="button" class="btn btn-primary" data-act="azUse" ${col && !A.busy ? '' : 'disabled'}>${A.busy === 'use' ? svg(IC.spin, 'ic spin') : ''}${col ? `Show ${esc(col)} on the Testing board` : 'Pick a column first'}</button>`}
+</div>
+${err}
+<p class="jc-foot">Tags work like Jira labels and the area path like a component: a tag <span class="mono">FE</span>, <span class="mono">BE</span> or <span class="mono">FE+BE</span>, or an area ending in Frontend / Backend, sets the ticket's FE / BE type. Moving a ticket moves its card to another board column.</p>
+<div class="jc-actions"><button type="button" class="btn btn-quiet btn-sm" data-act="azRefresh" ${A.busy ? 'disabled' : ''}>${svg(A.busy === 'refresh' ? IC.spin : IC.sync, A.busy === 'refresh' ? 'ic spin' : 'ic')}Refresh columns</button>
+<button type="button" class="btn btn-quiet btn-sm" data-act="azChange">Use a different board</button>
+<button type="button" class="btn btn-quiet btn-sm" style="margin-left:auto" data-act="azDisconnect" ${A.busy ? 'disabled' : ''}>Disconnect</button></div>
+</div></section>`;
+}
+
+async function loadAzure() {
+  try { S.azure.st = await api('GET', '/api/azure'); S.azure.col = ''; } catch (e) { S.azure.err = 'Could not read the Azure Boards connection: ' + e.message; }
+  schedule();
+}
+
+async function azureConnect() {
+  const A = S.azure; A.busy = 'connect'; A.err = ''; schedule();
+  try {
+    const r = await api('POST', '/api/azure/connect', { link: A.link, pat: A.pat.trim() });
+    A.changing = false; A.pat = ''; S.integ.open.azure = true; await loadAzure(); toast(`Azure Boards connected · ${r.connected.board.name}. Pick the QA column.`);
+  } catch (e) { A.err = e.message; }
+  A.busy = ''; schedule();
+}
+
+function azureRow() {
+  const A = S.azure, st = A.st;
+  const connected = st && st.connected && st.connection;
+  const kind = connected ? 'ok' : 'setup';
+  if (A.changing || integIsOpen('azure', kind)) return `<div class="irow is-open irow-jira">${viewAzureConnect()}</div>`;
+  const c = connected ? st.connection : null;
+  const summary = c ? `${c.site} · ${c.project.name} · ${c.board.name}${st.column ? ' · ' + st.column : ''}` : 'Paste your board link and a personal access token';
+  return `<section class="irow" aria-labelledby="int-azure"><div class="irow-head">
+<button type="button" class="irow-btn" data-act="integOpen" data-key="azure" aria-expanded="false">
+${integTile('azure', '#0A6CBC', 'AZ', integLogo('azure'))}
+<span class="irow-text"><span id="int-azure" class="irow-name">Azure Boards</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
+${statusChip(kind, kind === 'ok' ? 'Connected' : 'Not connected')}${svg(IC.chev, 'ic irow-chev')}</button>
+</div></section>`;
 }
 
 /* Integrations: grouped by what they're for. A connected integration is a one-line row with a green check;
@@ -1058,6 +1182,7 @@ const INTEG_ICON = {
   xray: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"></path><path d="M7.5 12h9"></path><path d="M9.5 9.2l2.5 5.6 2.5-5.6"></path>',
   zephyr: '<path d="M19 12a7 7 0 0 1-12.4 4.4M5 12a7 7 0 0 1 12.4-4.4"></path><path d="M17.6 4v3.8h-3.8M6.4 20v-3.8h3.8"></path>',
   aws: '<ellipse cx="12" cy="6.2" rx="7" ry="2.6"></ellipse><path d="M5 6.2l1.5 11.7c.2 1.5 2.6 2.6 5.5 2.6s5.3-1.1 5.5-2.6L19 6.2"></path><path d="M6 11.2c1.4.9 3.6 1.4 6 1.4s4.6-.5 6-1.4"></path>',
+  azure: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z"></path><path d="M4 9h16"></path><path d="M7.5 12.5h3.5v4H7.5zM13 12.5h3.5v2.2H13z"></path>',
   workflow: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
 };
 function integTile(key, tint, mono, logo) {
@@ -1065,14 +1190,14 @@ function integTile(key, tint, mono, logo) {
   const d = INTEG_ICON[key];
   return `<span class="mono-tile" style="background:${tint}" aria-hidden="true">${d ? svg(d, 'itile-ic') : esc(mono || '?')}</span>`;
 }
-const jiraLogo = () => { const c = (S.integ.cards || []).find((x) => x.key === 'jira'); return c && c.logo; };
+const integLogo = (key) => (S.integ.logos || {})[key];
+const jiraLogo = () => integLogo('jira');
 
 const INTEG_GROUPS = [
-  ['Project management', 'Where tickets come from, and where QA comments and moves go', ['jira-mcp', 'jira']],
+  ['Project management', 'Where tickets come from, and where QA comments and moves go', ['jira-mcp', 'azure']],
   ['AI', 'Who does the work in each board step', ['claude']],
   ['Test case management', 'Where passing checks become test cases, and runs are recorded', ['testrail', 'xray', 'zephyr']],
   ['Communication', 'Where run summaries are posted', ['slack', 'teams']],
-  ['Reports & storage', 'Where full reports are uploaded and shared from', ['aws']],
   ['Testing board', 'How the board works for your project', ['workflow']],
 ];
 
@@ -1158,11 +1283,12 @@ function viewIntegrations() {
   I.cards.forEach((c) => { if (c.key !== 'workflow') { const k = integStatus(c)[2]; if (k in sum) sum[k] += 1; } });
   const js = S.jira.st;
   if (js && js.connected) sum[js.signedIn ? 'ok' : 'err'] += 1;
+  if (S.azure.st && S.azure.st.connected) sum.ok += 1;
   const byKey = Object.fromEntries(I.cards.map((c) => [c.key, c]));
   const listed = new Set(INTEG_GROUPS.flatMap((g) => g[2]));
   const groups = [...INTEG_GROUPS, ['Other', '', I.cards.map((c) => c.key).filter((k) => !listed.has(k))]];
   const html = groups.map(([name, desc, keys]) => {
-    const rows = keys.map((k) => (k === 'jira-mcp' ? jiraRow() : byKey[k] ? integRow(byKey[k]) : '')).join('');
+    const rows = keys.map((k) => (k === 'jira-mcp' ? jiraRow() : k === 'azure' ? azureRow() : byKey[k] ? integRow(byKey[k]) : '')).join('');
     return rows ? `<section class="igroup" aria-label="${esc(name)}"><div class="igroup-head"><h2>${esc(name)}</h2>${desc ? `<p>${esc(desc)}</p>` : ''}</div><div class="igroup-rows">${rows}</div></section>` : '';
   }).join('');
   return `<main class="main">
@@ -1170,7 +1296,7 @@ function viewIntegrations() {
 <div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">Connected services show a green check; click one to see or change its settings.</p></div>
 <div style="margin-left:auto;display:flex;gap:16px;flex-wrap:wrap"><span class="conn"><span class="d d-ok"></span>${sum.ok} connected</span><span class="conn"><span class="d d-err"></span>${sum.err} error</span><span class="conn"><span class="d d-off"></span>${sum.off} off</span></div>
 </header>
-${I.mode !== 'live' ? `<div class="notice">${svg(IC.info)}Demo data is on for the Testing board: it uses sample tickets and simulated Jira and TestRail. Connect Jira below and pick a column to test your real tickets.</div>` : ''}
+${I.mode !== 'live' ? `<div class="notice">${svg(IC.info)}Demo data is on for the Testing board: it uses sample tickets and simulated Jira and TestRail. Connect Jira or Azure Boards below and pick a column to test your real tickets.</div>` : ''}
 ${html}</main>`;
 }
 
@@ -1178,7 +1304,7 @@ async function loadIntegrations() {
   try {
     const d = await api('GET', '/api/integrations');
     const I = S.integ;
-    I.cards = d.cards; I.mode = d.mode;
+    I.cards = d.cards; I.mode = d.mode; I.logos = d.logos || {};
     d.cards.forEach((c) => {
       I.vals[c.key] = { ...c.values }; I.enabled[c.key] = c.enabled;
       if (c.result) I.results[c.key] = c.result;
@@ -1207,7 +1333,7 @@ const ACTS = {
     try {
       const r = await api('POST', '/api/sync');
       S.board.data.lastSync = r.lastSync;
-      toast(r.new.length ? `Pulled ${r.new.join(', ')} from Jira ${S.board.data.config.column}` : `No new tickets in ${S.board.data.config.column}`);
+      toast(r.new.length ? `Pulled ${r.new.join(', ')} from ${S.board.data.config.tracker || 'Jira'} ${S.board.data.config.column}` : `No new tickets in ${S.board.data.config.column}`);
     } catch (e) { toast(e.message); }
     S.board.syncing = false;
   },
@@ -1297,6 +1423,7 @@ const ACTS = {
     jiraConnect();
   },
   jiraCol: (el) => { S.jira.col = el.dataset.v; },
+  jiraMethod: (el) => { S.jira.method = el.dataset.v; S.jira.err = ''; store.set('jiraMethod', el.dataset.v); },
   jiraUse: async () => {
     const J = S.jira; J.busy = 'use'; J.err = ''; schedule();
     try {
@@ -1318,11 +1445,36 @@ const ACTS = {
     try { J.st = await api('POST', '/api/jira/disconnect'); J.link = ''; S.board.data = null; loadBoard(); S.integ.cards = null; loadIntegrations(); toast('Jira disconnected. The board shows demo tickets again.'); } catch (e) { J.err = e.message; }
     J.busy = '';
   },
+  // azure boards
+  azConnect: () => azureConnect(),
+  azCol: (el) => { S.azure.col = el.dataset.v; },
+  azUse: async () => {
+    const A = S.azure; A.busy = 'use'; A.err = ''; schedule();
+    try {
+      A.st = await api('POST', '/api/azure/column', { column: A.col || A.st.column, use_on_board: true }); A.col = '';
+      loadJira(); S.board.data = null; S.board.sel = null; loadBoard(); S.integ.cards = null; loadIntegrations();
+      toast(`The Testing board now shows ${A.st.connection.board.name} · ${A.st.column}. Press Sync now on the board to pull work items.`);
+    } catch (e) { A.err = e.message; }
+    A.busy = '';
+  },
+  azRefresh: async () => {
+    const A = S.azure; A.busy = 'refresh'; A.err = ''; schedule();
+    try { A.st = await api('POST', '/api/azure/refresh'); } catch (e) { A.err = e.message; }
+    A.busy = '';
+  },
+  azChange: () => { const A = S.azure; A.changing = true; A.err = ''; A.pat = ''; const c = A.st && A.st.connection; A.link = c && c.link ? `${c.base_url}/${encodeURIComponent(c.project.name)}/_boards/board/t/${encodeURIComponent(c.board.team)}/${encodeURIComponent(c.board.board)}` : ''; },
+  azCancel: () => { S.azure.changing = false; S.azure.err = ''; },
+  azDisconnect: async () => {
+    const A = S.azure; A.busy = 'disconnect'; schedule();
+    try { A.st = await api('POST', '/api/azure/disconnect'); A.link = ''; loadJira(); S.board.data = null; loadBoard(); S.integ.cards = null; loadIntegrations(); toast('Azure Boards disconnected.'); } catch (e) { A.err = e.message; }
+    A.busy = '';
+  },
   // integrations
   reveal: (el) => { const k = el.dataset.key + '.' + el.dataset.v; S.integ.reveal[k] = !S.integ.reveal[k]; },
   integOpen: (el) => {
     const I = S.integ, k = el.dataset.key;
     const kind = k === 'jira-mcp' ? (S.jira.st && S.jira.st.connected ? (S.jira.st.signedIn ? 'ok' : 'err') : 'setup')
+      : k === 'azure' ? (S.azure.st && S.azure.st.connected ? 'ok' : 'setup')
       : integStatus(I.cards.find((c) => c.key === k))[2];
     I.open[k] = !integIsOpen(k, kind);
   },
@@ -1351,6 +1503,19 @@ const INPUTS = {
   runCheck: (el) => { S.run.check = el.value; },
   histQ: (el) => { S.hist.q = el.value; },
   jiraLink: (el) => { S.jira.link = el.value; S.jira.err = ''; },
+  jiraEmail: (el) => { S.jira.email = el.value; S.jira.err = ''; },
+  jiraToken: (el) => { S.jira.token = el.value; S.jira.err = ''; },
+  jiraBugs: async (el) => {
+    const J = S.jira, b = { ...(J.st.bugs || {}) };
+    b[el.dataset.v] = el.type === 'checkbox' ? el.checked : el.value;
+    const sig = JSON.stringify(b);
+    if (sig === J.bugsSent) return;  // a select sends both input and change
+    J.bugsSent = sig;
+    try { J.st = await api('POST', '/api/jira/bugs', b); toast('Saved'); } catch (e) { J.err = e.message; }
+    schedule();
+  },
+  azLink: (el) => { S.azure.link = el.value; S.azure.err = ''; },
+  azPat: (el) => { S.azure.pat = el.value; S.azure.err = ''; },
   skText: (el) => { S.skills.draft[skillKey(S.skills)] = el.value; S.skills.saved = ''; },
   skMode: (el) => { S.skills.mode[S.skills.sel + '|' + S.skills.data.project] = el.value; },
   skNewKey: (el) => { S.skills.newKey = el.value.trim(); },
@@ -1388,6 +1553,15 @@ document.addEventListener('keydown', (ev) => {
     if (envUrl(S.board.env[key]) && !S.board.busy) primaryAction(key);
     return;
   }
+  if (ev.key === 'Enter' && ev.target && (ev.target.id === 'az-link' || ev.target.id === 'az-pat')) {
+    ev.preventDefault(); const p = parseAzureLink(S.azure.link);
+    if (p && !p.err && (S.azure.pat.trim() || S.azure.changing) && !S.azure.busy) azureConnect(); return;
+  }
+  if (ev.key === 'Enter' && ev.target && (ev.target.id === 'jira-email' || ev.target.id === 'jira-token')) {
+    ev.preventDefault(); const p = parseJiraLink(S.jira.link);
+    if (p && !p.err && S.jira.email.trim() && S.jira.token.trim() && !S.jira.busy) jiraConnect(); return;
+  }
+  if (ev.key === 'Enter' && ev.target && ev.target.id === 'jira-link' && S.jira.method === 'token') { ev.preventDefault(); return; }
   if (ev.key === 'Enter' && ev.target && ev.target.id === 'jira-link') { ev.preventDefault(); const p = parseJiraLink(S.jira.link); if (p && !p.err && !S.jira.busy) jiraConnect(); return; }
   const mod = ev.metaKey || ev.ctrlKey;
   if (mod && ['1', '2', '3', '4', '5'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }
@@ -1418,7 +1592,7 @@ function route() {
   }
   if (S.route === 'history') loadHistory();
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
-  if (S.route === 'integrations') loadJira();
+  if (S.route === 'integrations') { loadJira(); loadAzure(); }
   if (S.route === 'skills') {
     const p = new URLSearchParams(query || '');
     if (STEP_SKILL.includes(p.get('step'))) S.skills.sel = p.get('step');

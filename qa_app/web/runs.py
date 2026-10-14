@@ -275,9 +275,9 @@ class RunManager:
         if finding_id in keys:
             return keys[finding_id]
         cfg = load_settings().get("jira", {})
-        missing = [k for k in ("base_url", "email", "api_token", "project_key") if not str(cfg.get(k, "")).strip()]
-        if missing:
-            raise ValueError("Set up Jira on the Integrations screen first (" + ", ".join(missing) + " missing)")
+        why = jira_api.ready(cfg)
+        if why:
+            raise ValueError(why)
         key = jira_api.create_for_finding(cfg, result.findings[idx], result)
         _save_sidecar(run_dir, jira={**keys, finding_id: key})
         return key

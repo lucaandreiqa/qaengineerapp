@@ -100,9 +100,19 @@ formats stay in the code, so editing a skill changes how Claude works, not what 
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
-**Integrations page.** Grouped by purpose (project management, AI, test case management, communication, reports &
-storage, board settings). Connected services are one-line rows with a green check; click one to change it. Each has
-its own icon; to show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
+**Integrations page.** Grouped by purpose (project management, AI, test case management, communication, board
+settings). Connected services are one-line rows with a green check; click one to change it. Each has its own icon; to
+show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
+
+**Where tickets come from: Jira or Azure Boards.** One card each; whichever column you pick last feeds the Testing board.
+
+- *Jira*: paste the board link once, then choose how to sign in: **Atlassian sign-in** (no token to copy) or
+  **email + API token** (when a site admin blocks the sign-in). Both read the same board and columns. The same
+  connection files bugs from site checks: turn on "File bugs automatically after each site check" and pick the issue
+  type and which findings.
+- *Azure Boards*: paste the board link (`https://dev.azure.com/ORG/PROJECT/_boards/board/t/TEAM/Stories`) and a personal
+  access token with **Work Items: Read & write**. Tags work like Jira labels and the area path like a component (FE / BE
+  type); moving a ticket moves its card to another board column.
 
 **Two ways to connect Claude** (Integrations › Claude › *Connection*):
 - **API key**: an Anthropic API key from platform.claude.com, billed per use. Works for a team and in the background.

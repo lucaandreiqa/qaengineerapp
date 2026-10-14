@@ -22,7 +22,12 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     "jira": {"enabled": False, "base_url": "", "email": "", "api_token": "",
              "project_key": "", "issue_type": "Bug", "min_severity": "major",
              # auth "mcp": signed in with Atlassian (MCP server); "token" or "": email + API token.
-             "auth": "", "cloud_id": "", "board_id": "", "link": "", "connection": {}},
+             "auth": "", "cloud_id": "", "board_id": "", "link": "", "connection": {},
+             # File a bug for each site-check finding after every run (the Run screen's button works either way).
+             "bugs_on_runs": False},
+    # Azure Boards: board link + personal access token (Work items: read & write).
+    "azure": {"enabled": False, "org_url": "", "pat": "", "project": "", "team": "", "board": "", "column_field": "",
+              "link": "", "connection": {}},
     "testrail": {"enabled": False, "base_url": "", "username": "", "api_key": "",
                  "project_id": "", "suite_id": ""},
     "xray": {"enabled": False, "client_id": "", "client_secret": "", "project_key": ""},
@@ -31,7 +36,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
             "profile": "", "public_base_url": ""},
     # Testing board: takes tickets from a Jira column through the gated QA workflow.
     # demo=True uses sample tickets and simulated Jira/TestRail, so nothing real is touched.
-    "workflow": {"enabled": True, "demo": True, "jira_project": "OPTR", "jira_column": "Testing",
+    "workflow": {"enabled": True, "demo": True, "tracker": "jira", "jira_project": "OPTR", "jira_column": "Testing",
                  "test_account": "", "test_ou": "", "comment_signature": "Commented by QA Engineer App",
                  # Where to test when the ticket names no environment: used only once a ticket is merged/done.
                  "default_env_url": "", "default_env_name": "",
