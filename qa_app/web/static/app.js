@@ -306,8 +306,9 @@ function viewBoard() {
     const cards = visible.filter((t) => t.stage === i);
     return `<section class="lane" role="listitem" aria-labelledby="lane-${i + 1}">
 <div class="lane-head">
-<div style="display:flex;align-items:center;gap:8px"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" style="margin:0;font-size:13px;font-weight:600">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span></div>
-<p style="margin:0;color:var(--muted);font-size:12px;line-height:1.4">${l.desc}</p>
+<div style="display:flex;align-items:center;gap:8px"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" style="margin:0;font-size:13px;font-weight:600">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span>
+<button type="button" class="lane-info" aria-label="What ${esc(l.name)} does" aria-describedby="lane-tip-${i + 1}">${svg(IC.info, 'ic ic-s')}</button></div>
+<p class="lane-tip" id="lane-tip-${i + 1}" role="tooltip">${l.desc}</p>
 <div class="gate-line${i === 1 ? '' : ' has-gate'}">${svg(IC.lock, 'ic ic-s')}${l.gate}<a class="lane-skill" href="#/skills?step=${STEP_SKILL[i]}" title="How Claude does this step">${svg(IC.skill, 'ic ic-s')}Skill</a></div>
 </div>
 <div class="lane-body">${cards.map(viewCard).join('') || `<div class="lane-empty">${l.empty}</div>`}</div>
@@ -1103,7 +1104,7 @@ ${integTile('azure', '#0A6CBC', 'AZ', integLogo('azure'))}
       : p.err ? `<span class="c-crit" style="font-size:12px">${esc(p.err)}</span>`
       : `${chip('Organization', p.org)}${chip('Project', p.project)}${chip('Team', p.team, 'default team')}${chip('Board', p.board, 'first board')}`;
     const ready = p && !p.err && (A.pat.trim() || (c && A.changing));
-    return `<section class="card jc" aria-labelledby="int-azure-connect">${head(c ? `<button type="button" class="btn btn-quiet btn-sm" data-act="azCancel">Cancel</button>` : '<span class="conn"><span class="d d-off"></span>Not connected</span>')}
+    return `<section class="card jc" aria-labelledby="int-azure-connect">${head(c ? `<button type="button" class="btn btn-quiet btn-sm" data-act="azCancel">Cancel</button>` : `<span class="conn"><span class="d d-off"></span>Not connected</span><button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="azure" aria-expanded="true" aria-label="Collapse Azure Boards" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
 <div class="jc-body">
 <label class="lbl" for="az-link" style="margin:0">Paste the link of your Azure Boards board</label>
 <input id="az-link" class="inp mono" type="text" inputmode="url" placeholder="https://dev.azure.com/your-org/Project/_boards/board/t/Team/Stories" value="${esc(A.link)}" data-in="azLink" spellcheck="false" autocomplete="off">
@@ -1157,7 +1158,7 @@ async function azureConnect() {
 function azureRow() {
   const A = S.azure, st = A.st;
   const connected = st && st.connected && st.connection;
-  const kind = connected ? 'ok' : 'setup';
+  const kind = connected ? 'ok' : 'off';
   if (A.changing || integIsOpen('azure', kind)) return `<div class="irow is-open irow-jira">${viewAzureConnect()}</div>`;
   const c = connected ? st.connection : null;
   const summary = c ? `${c.site} · ${c.project.name} · ${c.board.name}${st.column ? ' · ' + st.column : ''}` : 'Paste your board link and a personal access token';
@@ -1165,7 +1166,8 @@ function azureRow() {
 <button type="button" class="irow-btn" data-act="integOpen" data-key="azure" aria-expanded="false">
 ${integTile('azure', '#0A6CBC', 'AZ', integLogo('azure'))}
 <span class="irow-text"><span id="int-azure" class="irow-name">Azure Boards</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
-${statusChip(kind, kind === 'ok' ? 'Connected' : 'Not connected')}${svg(IC.chev, 'ic irow-chev')}</button>
+${statusChip(kind, kind === 'ok' ? 'Connected' : 'Off')}${svg(IC.chev, 'ic irow-chev')}</button>
+${connected ? '' : `<button type="button" class="btn btn-sm" data-act="integSetup" data-key="azure">Set up</button>`}
 </div></section>`;
 }
 
@@ -1283,7 +1285,7 @@ function viewIntegrations() {
   I.cards.forEach((c) => { if (c.key !== 'workflow') { const k = integStatus(c)[2]; if (k in sum) sum[k] += 1; } });
   const js = S.jira.st;
   if (js && js.connected) sum[js.signedIn ? 'ok' : 'err'] += 1;
-  if (S.azure.st && S.azure.st.connected) sum.ok += 1;
+  if (S.azure.st) sum[S.azure.st.connected ? 'ok' : 'off'] += 1;
   const byKey = Object.fromEntries(I.cards.map((c) => [c.key, c]));
   const listed = new Set(INTEG_GROUPS.flatMap((g) => g[2]));
   const groups = [...INTEG_GROUPS, ['Other', '', I.cards.map((c) => c.key).filter((k) => !listed.has(k))]];
@@ -1474,7 +1476,7 @@ const ACTS = {
   integOpen: (el) => {
     const I = S.integ, k = el.dataset.key;
     const kind = k === 'jira-mcp' ? (S.jira.st && S.jira.st.connected ? (S.jira.st.signedIn ? 'ok' : 'err') : 'setup')
-      : k === 'azure' ? (S.azure.st && S.azure.st.connected ? 'ok' : 'setup')
+      : k === 'azure' ? (S.azure.st && S.azure.st.connected ? 'ok' : 'off')
       : integStatus(I.cards.find((c) => c.key === k))[2];
     I.open[k] = !integIsOpen(k, kind);
   },
