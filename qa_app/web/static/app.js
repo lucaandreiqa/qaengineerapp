@@ -332,7 +332,7 @@ function viewFilters(B, F) {
   const itypes = [chip('fitype', 'all', 'Any', B.itype === 'all', null)].concat(F.itypes.map((v) =>
     chip('fitype', v, v, B.itype === v, F.count('itype', (t) => t.issue_type === v), issueTypeIcon(v, 14)))).join('');
   const prios = chip('fprio', 'all', 'Any', B.prio === 'all', null) + chip('fprio', 'high', 'High and above', B.prio === 'high', F.count('prio', isHighPrio), priorityIcon('High', 14));
-  const menu = B.fopen ? `<div class="fmenu" role="dialog" aria-label="Filter tickets">
+  const menu = B.fopen ? `<div class="fmenu" role="dialog" aria-label="Filter tickets" data-keep="fmenu">
 <div class="fsec"><div class="fsec-h">Show</div><div class="fviews" role="menu">${views}</div></div>
 <div class="fsec"><div class="fsec-h">FE / BE</div><div class="fchips">${types}</div></div>
 ${F.itypes.length > 1 ? `<div class="fsec"><div class="fsec-h">Issue type</div><div class="fchips">${itypes}</div></div>` : ''}

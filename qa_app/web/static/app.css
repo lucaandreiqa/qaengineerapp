@@ -205,7 +205,7 @@ html,body{background:#0B0C0E}
 .fwrap{position:relative}
 .fwrap > .btn.is-active{border-color:var(--accent);color:var(--fg)}
 .fcount{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;margin-left:2px;border-radius:9px;background:var(--accent);color:var(--accent-fg);font-size:11px;font-weight:600}
-.fmenu{position:absolute;left:0;top:calc(100% + 6px);z-index:40;width:340px;max-width:calc(100vw - 32px);max-height:min(560px,calc(100vh - 160px));overflow:auto;padding:6px;border-radius:10px;background:var(--panel);border:1px solid var(--border2);box-shadow:0 12px 32px var(--shadow)}
+.fmenu{position:absolute;left:0;top:calc(100% + 6px);z-index:40;width:340px;max-width:calc(100vw - 32px);max-height:min(560px,calc(100vh - 160px));overflow-y:auto;overscroll-behavior:contain;padding:6px;border-radius:10px;background:var(--panel);border:1px solid var(--border2);box-shadow:0 12px 32px var(--shadow)}
 .fsec{padding:8px 8px 10px}
 .fsec + .fsec{border-top:1px solid var(--border)}
 .fsec-h{font-size:11.5px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px}
