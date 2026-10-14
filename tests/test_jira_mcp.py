@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -27,9 +29,17 @@ ISSUES = {"SCRUM-2": {"summary": "Task 2", "status": "In Progress", "components"
           "SCRUM-3": {"summary": "Task 3", "status": "In Review", "components": []}}
 
 
+# The tools (names + input schemas) Atlassian's MCP server gave a real account: the classic set, no board tools.
+CLASSIC_TOOLS = json.loads((Path(__file__).parent / "fixtures" / "atlassian-mcp-tools-classic.json").read_text())
+STATUS = {"10000": ("To Do", "new"), "10001": ("In Progress", "indeterminate"), "10002": ("In Review", "indeterminate"),
+          "10003": ("Done", "done")}
+STATUS_ID = {name: sid for sid, (name, _) in STATUS.items()}
+
+
 class Fake:
     """State of the fake server, inspected by the tests."""
-    def __init__(self) -> None:
+    def __init__(self, classic: bool = False) -> None:
+        self.classic = classic
         self.codes: dict[str, dict] = {}
         self.tokens: set[str] = set()
         self.refreshes = 0
@@ -39,6 +49,10 @@ class Fake:
         self.registered: list[dict] = []
         self.direct_tools = {"getAccessibleAtlassianResources", "atlassianUserInfo", "getJiraIssue", "searchJiraIssuesUsingJql",
                              "addOrEditJiraIssueComment", "transitionJiraIssue", "executeRead", "executeWrite"}
+        self.schemas: dict[str, dict] = {}
+        if classic:
+            self.schemas = {t["name"]: t["inputSchema"] for t in CLASSIC_TOOLS}
+            self.direct_tools = set(self.schemas)
 
 
 def make_server(fake: Fake):
@@ -103,15 +117,23 @@ def make_server(fake: Fake):
                     return self._json(200, {"jsonrpc": "2.0", "id": msg["id"], "result": {"protocolVersion": "2025-06-18"}},
                                       {"Mcp-Session-Id": "s-1"})
                 if msg["method"] == "tools/list":
-                    return self._json(200, {"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": [{"name": n} for n in fake.direct_tools]}})
+                    tools = [{"name": n, **({"inputSchema": fake.schemas[n]} if n in fake.schemas else {})} for n in sorted(fake.direct_tools)]
+                    return self._json(200, {"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": tools}})
                 name, args = msg["params"]["name"], msg["params"]["arguments"]
-                if name in ("executeRead", "executeWrite"):
+                if name in fake.schemas:  # like the real server: reject inputs the tool doesn't declare
+                    sch = fake.schemas[name]
+                    extra = set(args) - set(sch.get("properties", {}))
+                    missing = set(sch.get("required", [])) - set(args)
+                    if extra or missing:
+                        return self._json(200, {"jsonrpc": "2.0", "id": msg["id"], "result": {"isError": True, "content": [
+                            {"type": "text", "text": f"{name}: bad input, unexpected {sorted(extra)} missing {sorted(missing)}"}]}}, sse=True)
+                if name in ("executeRead", "executeWrite") and not fake.classic:
                     name, args = args["name"], {**args["inputs"], "cloudId": args["cloudId"]}
                 elif name not in fake.direct_tools:
                     return self._json(200, {"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32602, "message": f"Unknown tool {name}"}})
                 fake.calls.append((name, args))
                 try:
-                    data = tool(fake, name, args)
+                    data = classic_tool(fake, name, args) if fake.classic else tool(fake, name, args)
                 except KeyError as e:
                     return self._json(200, {"jsonrpc": "2.0", "id": msg["id"],
                                             "result": {"isError": True, "content": [{"type": "text", "text": f"not found {e}"}]}}, sse=True)
@@ -122,6 +144,43 @@ def make_server(fake: Fake):
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
+
+
+def classic_tool(fake: Fake, name: str, a: dict):
+    """Replies in the shape of the classic tool set (Jira REST shapes)."""
+    def st(name):
+        sid = STATUS_ID[name]
+        return {"id": sid, "name": name, "statusCategory": {"key": STATUS[sid][1]}}
+    if name == "atlassianUserInfo":
+        return {"account_id": "712020:abc", "email": "luca@example.com", "name": "Andrei Luca"}
+    if name == "getVisibleJiraProjects":
+        assert a.get("searchString") == "SCRUM"
+        return {"values": [{"id": "10000", "key": "SCRUM", "name": "QA Testing", "style": "next-gen"}]}
+    if name == "searchJiraIssuesUsingJql":
+        assert re.match(r'project = "SCRUM"', a["jql"])
+        m = re.search(r"status in \((.*?)\)", a["jql"])
+        want = None if not m else {STATUS[v][0] if v in STATUS else v.strip('"') for v in (x.strip() for x in m.group(1).split(","))}
+        keys = [k for k, s in fake.status.items() if want is None or s in want]
+        if a.get("searchResultMode") == "count":
+            return {"total": len(keys)}
+        return {"issues": [{"key": k, "fields": {"summary": ISSUES[k]["summary"], "status": st(fake.status[k]),
+                                                  "components": ISSUES[k]["components"]}} for k in keys]}
+    if name == "getTransitionsForJiraIssue":
+        return {"transitions": [{"id": str(11 + 10 * i), "name": n, "to": st(n)} for i, n in enumerate(["To Do", "In Progress", "In Review", "Done"])]}
+    if name == "getJiraIssue":
+        k = a["issueIdOrKey"]
+        f = {"summary": ISSUES[k]["summary"], "description": "- Export works", "status": st(fake.status[k]), "components": ISSUES[k]["components"],
+             "comment": {"comments": [{"body": b} for b in fake.comments.get(k, [])]}}
+        return {"key": k, "fields": {x: f[x] for x in a.get("fields") or f}}
+    if name == "addCommentToJiraIssue":
+        assert a["contentFormat"] == "markdown"
+        fake.comments.setdefault(a["issueIdOrKey"], []).append(a["commentBody"])
+        return {"id": "1"}
+    if name == "transitionJiraIssue":
+        to = {"11": "To Do", "21": "In Progress", "31": "In Review", "41": "Done"}[a["transition"]["id"]]
+        fake.status[a["issueIdOrKey"]] = to
+        return {}
+    return tool(fake, name, a)
 
 
 def tool(fake: Fake, name: str, a: dict):
@@ -169,15 +228,27 @@ def tool(fake: Fake, name: str, a: dict):
     raise KeyError(name)
 
 
-@pytest.fixture()
-def env(tmp_path, monkeypatch):
-    fake = Fake()
+def _env(tmp_path, monkeypatch, classic):
+    fake = Fake(classic)
     srv = make_server(fake)
     url = f"http://127.0.0.1:{srv.server_port}/v1/mcp"
     monkeypatch.setattr(am, "ATLASSIAN_MCP_URL", url)
     monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
     store = TokenStore(tmp_path / "atlassian-mcp.json")
     monkeypatch.setattr(am, "store_path", lambda: tmp_path / "atlassian-mcp.json")
+    return fake, store, url, srv
+
+
+@pytest.fixture()
+def env(tmp_path, monkeypatch):
+    fake, store, url, srv = _env(tmp_path, monkeypatch, classic=False)
+    yield fake, store, url
+    srv.shutdown()
+
+
+@pytest.fixture()
+def classic_env(tmp_path, monkeypatch):
+    fake, store, url, srv = _env(tmp_path, monkeypatch, classic=True)
     yield fake, store, url
     srv.shutdown()
 
@@ -286,3 +357,40 @@ def test_wrong_site_and_bad_board_give_clear_messages(env):
         jira_connect.start("https://qaengineerapp.atlassian.net/jira/software/projects/SCRUM/boards/9", REDIRECT, pending, store)
     with pytest.raises(jira_connect.ConnectError, match="doesn't look like a Jira link"):
         jira_connect.start("not a link", REDIRECT, pending, store)
+
+
+def test_classic_tool_set_uses_project_statuses_and_classic_tool_names(classic_env):
+    """The tools a real account got: no board settings, other names and inputs for comment, transitions, projects."""
+    fake, store, _ = classic_env
+    assert "getJiraBoardConfig" not in fake.direct_tools and "executeRead" not in fake.direct_tools
+    pending: dict = {}
+    code, state = approve(fake, jira_connect.start(LINK, REDIRECT, pending, store)["authorize_url"])
+    info = jira_connect.finish(code, state, pending, store)
+    assert info["columns_from"] == "statuses" and info["user"]["name"] == "Andrei Luca"
+    assert info["project"] == {"key": "SCRUM", "name": "QA Testing", "style": "team-managed"}
+    assert info["board"] == {"id": "1", "name": "QA Testing board", "type": "statuses"}
+    assert [(c["name"], c["status_ids"], c["count"]) for c in info["columns"]] == \
+        [("To Do", ["10000"], 0), ("In Progress", ["10001"], 1), ("In Review", ["10002"], 1), ("Done", ["10003"], 0)]
+    assert info["components"] == ["Frontend", "Backend"]  # seen on the tickets
+
+    jira_connect.choose_column("In Review", True)
+    s = config.load_settings()
+    jira = am.McpJira(s["jira"], s["workflow"], am.AtlassianMcp.signed_in(CLOUD, store))
+    assert jira.search_column("SCRUM", "In Review") == [{"key": "SCRUM-3", "title": "Task 3", "status": "In Review", "components": []}]
+    issue = jira.get_issue("SCRUM-2")
+    assert issue["components"] == ["Frontend", "Backend"] and issue["preview_url"] == "https://feature-x.pages.dev/"
+    jira.add_comment("SCRUM-2", "QA result: **pass**")
+    assert fake.comments["SCRUM-2"][-1] == "QA result: **pass**"
+    tr = {t["name"]: t["id"] for t in jira.get_transitions("SCRUM-2")}
+    assert jira.transition("SCRUM-2", tr["Done"]) == "Done"  # read back: the classic tool returns nothing
+    assert ("transitionJiraIssue", {"cloudId": CLOUD, "issueIdOrKey": "SCRUM-2", "transition": {"id": "41"}}) in fake.calls
+    errors = [c for c in fake.calls if c[0] == "error"]
+    assert not errors
+
+
+def test_classic_tools_need_the_project_in_the_link(classic_env):
+    fake, store, _ = classic_env
+    pending: dict = {}
+    code, state = approve(fake, jira_connect.start("qaengineerapp.atlassian.net", REDIRECT, pending, store)["authorize_url"])
+    with pytest.raises(jira_connect.ConnectError, match="no project in it"):
+        jira_connect.finish(code, state, pending, store)

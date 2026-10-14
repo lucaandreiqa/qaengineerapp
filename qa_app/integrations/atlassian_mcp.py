@@ -4,8 +4,12 @@ parse_jira_link()  site, project, board and ticket from any Jira URL
 discover()         who signed in, the site's cloudId, the project, the board and its columns
 McpJira            what the Testing board needs (tickets in a column, ticket detail, comment, move)
 
-Tool names and inputs match Atlassian's MCP server. Tools it exposes directly are called directly;
-the rest go through its executeRead / executeWrite runner, so both server layouts work.
+Atlassian's MCP server does not give every account the same tools. Two sets are handled:
+  current  getJiraBoardConfig, listJiraIssueTransitions, addOrEditJiraIssueComment, … (some only
+           through its executeRead / executeWrite runner)
+  classic  getTransitionsForJiraIssue, addCommentToJiraIssue, getVisibleJiraProjects, and no board
+           tools: the columns then come from the project's statuses.
+Inputs are fitted to each tool's own input schema (renamed where the sets differ, unknown ones dropped).
 """
 from __future__ import annotations
 
@@ -17,9 +21,40 @@ from urllib.parse import parse_qs, urlparse
 
 from .mcp_client import McpError, McpSession, OAuth, TokenStore
 
+
+class McpMissingTool(McpError):
+    """This account's Atlassian MCP tools don't include the operation."""
+
 ATLASSIAN_MCP_URL = os.environ.get("QA_APP_ATLASSIAN_MCP_URL") or "https://mcp.atlassian.com/v1/mcp/authv2"
 WRITE_OPS = {"addOrEditJiraIssueComment", "transitionJiraIssue", "createJiraIssue", "editJiraIssue"}
 NO_CLOUD_OPS = {"getAccessibleAtlassianResources", "atlassianUserInfo"}
+# The same operation in the classic tool set.
+ALIASES = {"addOrEditJiraIssueComment": "addCommentToJiraIssue", "listJiraIssueTransitions": "getTransitionsForJiraIssue",
+           "listJiraProjects": "getVisibleJiraProjects"}
+STATUS_ORDER = {"new": 0, "to do": 0, "indeterminate": 1, "in progress": 1, "done": 2}
+
+
+def status_jql(values: list[str]) -> str:
+    """Status ids as numbers, names quoted: 10002, "In Review"."""
+    return ", ".join(v if v.isdigit() else '"' + v.replace('"', '\\"') + '"' for v in values)
+
+
+def _fit(args: dict, tool: dict) -> dict:
+    """Shape the arguments for this tool's input schema: rename where the tool sets differ, drop unknown ones."""
+    props = (tool.get("inputSchema") or {}).get("properties") or {}
+    if not props:
+        return args
+    a = dict(args)
+    if "transitionId" in a and "transition" in props and "transitionId" not in props:
+        a["transition"] = {"id": str(a.pop("transitionId"))}
+    if "query" in a and "searchString" in props and "query" not in props:
+        a["searchString"] = a.pop("query")
+    if "commentBody" in a and "contentFormat" in props:
+        a.setdefault("contentFormat", "markdown")
+    rcf = props.get("responseContentFormat")
+    if rcf is not None and "markdown" in (rcf.get("enum") or ["markdown"]):
+        a.setdefault("responseContentFormat", "markdown")
+    return {k: v for k, v in a.items() if k in props}
 
 
 # ------------------------------------------------------------------------------------- links
@@ -86,19 +121,27 @@ class AtlassianMcp:
         o = oauth(store)
         return cls(McpSession(ATLASSIAN_MCP_URL, o.access_token, o.refresh), cloud_id)
 
+    def _tools(self) -> dict[str, dict]:
+        return {t.get("name", ""): t for t in self.s.tools()}
+
+    def has(self, name: str) -> bool:
+        tools = self._tools()
+        return name in tools or ALIASES.get(name, "") in tools or "executeRead" in tools
+
     def op(self, name: str, **inputs: Any) -> Any:
-        names = self.s.tool_names()
+        tools = self._tools()
         if name not in NO_CLOUD_OPS:
             if not self.cloud_id:
                 raise McpError("No Atlassian site selected yet")
             inputs = {"cloudId": self.cloud_id, **inputs}
-        if name in names:
-            return _unwrap(self.s.call(name, inputs))
+        tool = name if name in tools else ALIASES.get(name) if ALIASES.get(name) in tools else None
+        if tool:
+            return _unwrap(self.s.call(tool, _fit(inputs, tools[tool])))
         runner = "executeWrite" if name in WRITE_OPS else "executeRead"
-        if runner in names:
+        if runner in tools:
             rest = {k: v for k, v in inputs.items() if k != "cloudId"}
             return _unwrap(self.s.call(runner, {"name": name, "cloudId": self.cloud_id, "inputs": rest}))
-        raise McpError(f"Atlassian's MCP server has no '{name}' tool for this account")
+        raise McpMissingTool(f"Atlassian's MCP server has no '{name}' tool for this account")
 
     # ---- reads used when connecting
     def sites(self) -> list[dict]:
@@ -148,47 +191,104 @@ def discover(mcp: AtlassianMcp, link: dict) -> dict:
 
     board_id, project_key = link.get("board_id", ""), link.get("project_key", "")
     boards: list[dict] = []
-    if not board_id:
-        if not project_key:
-            raise McpError("The link has no project or board in it. Paste the link of the board you test from.")
-        res = mcp.op("listJiraBoards", projectKeyOrId=project_key, maxResults=50)
-        boards = [{"id": str(b.get("id")), "name": b.get("name", "")} for b in (res.get("values", []) if isinstance(res, dict) else [])]
-        if not boards:
-            raise McpError(f"No board found for project {project_key}. Paste the board's link instead.")
-        board_id = boards[0]["id"]
+    cfg: Optional[dict] = None  # board settings, when this account's tools can read them
+    if not board_id and project_key and mcp.has("listJiraBoards"):
+        try:
+            res = mcp.op("listJiraBoards", projectKeyOrId=project_key, maxResults=50)
+            boards = [{"id": str(b.get("id")), "name": b.get("name", "")} for b in (res.get("values", []) if isinstance(res, dict) else [])]
+        except McpMissingTool:
+            pass
+        board_id = boards[0]["id"] if boards else ""
+    if board_id:
+        try:
+            cfg = mcp.op("getJiraBoardConfig", boardId=int(board_id))
+        except McpMissingTool:
+            cfg = None
+        except McpError as e:
+            raise McpError(f"Can't open board {board_id} on {link['site']}: {e}") from e
+    if cfg:
+        loc = cfg.get("location") or {}
+        project_key = project_key or loc.get("key") or loc.get("projectKey") or ""
+    if not project_key:
+        raise McpError("The link has no project in it. Paste the link of the board you test from "
+                       "(it contains /projects/KEY/boards/…).")
+    project = {"key": project_key, "name": ((cfg or {}).get("location") or {}).get("name") or project_key, "style": ""}
     try:
-        cfg = mcp.op("getJiraBoardConfig", boardId=int(board_id))
-    except McpError as e:
-        raise McpError(f"Can't open board {board_id} on {link['site']}: {e}") from e
-    loc = cfg.get("location") or {}
-    project_key = project_key or loc.get("key") or loc.get("projectKey") or ""
-    project = {"key": project_key, "name": loc.get("name") or loc.get("projectName") or project_key, "style": ""}
-    try:
-        res = mcp.op("listJiraProjects", query=project_key, maxResults=10)
-        hit = next((p for p in (res.get("values", []) if isinstance(res, dict) else []) if p.get("key") == project_key), None)
+        res = mcp.op("listJiraProjects", query=project_key, maxResults=50)
+        values = res.get("values", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+        hit = next((p for p in values if isinstance(p, dict) and p.get("key") == project_key), None)
         if hit:
             project = {"key": project_key, "name": hit.get("name", project_key),
-                       "style": "team-managed" if hit.get("style") == "next-gen" else "company-managed"}
-    except McpError:
+                       "style": "team-managed" if hit.get("style") == "next-gen" else "company-managed" if hit.get("style") else ""}
+        elif not cfg:
+            raise McpError(f"Project {project_key} is not on {link['site']}, or your account can't see it.")
+    except McpMissingTool:
         pass
-    columns = _columns(cfg)
-    for c in columns:
-        c["count"] = None
-        if c["status_ids"]:
-            try:
-                c["count"] = _count(mcp.op("getJiraBoardIssueData", boardId=int(board_id), dataset="board",
-                                           jql=f"status in ({','.join(c['status_ids'])})", searchResultMode="count"))
-            except McpError:
-                pass
+
+    seen_components: list[str] = []
+    if cfg:
+        columns_from = "board"
+        board = {"id": str(board_id), "name": cfg.get("name", f"Board {board_id}"), "type": cfg.get("type", "")}
+        columns = _columns(cfg)
+        for c in columns:
+            c["count"] = None
+            if c["status_ids"]:
+                try:
+                    c["count"] = _count(mcp.op("getJiraBoardIssueData", boardId=int(board_id), dataset="board",
+                                               jql=f"status in ({status_jql(c['status_ids'])})", searchResultMode="count"))
+                except McpError:
+                    pass
+    else:  # classic tools: no board settings, so the columns are the project's statuses
+        columns_from = "statuses"
+        board = {"id": str(board_id), "name": f"{project['name']} board" if board_id else f"{project['name']} statuses", "type": "statuses"}
+        columns, seen_components = _status_columns(mcp, project_key)
     components: list[str] = []
     try:
         res = mcp.op("listJiraProjectComponents", projectIdOrKey=project_key)
         components = [c.get("name", "") for c in (res.get("values", []) if isinstance(res, dict) else []) if c.get("name")]
     except McpError:
-        pass
+        components = seen_components
     return {"site": link["site"], "base_url": link["base_url"], "cloud_id": mcp.cloud_id, "user": me,
-            "project": project, "board": {"id": str(board_id), "name": cfg.get("name", f"Board {board_id}"), "type": cfg.get("type", "")},
-            "boards": boards, "columns": columns, "components": components, "link": link}
+            "project": project, "board": board, "boards": boards, "columns": columns, "columns_from": columns_from,
+            "components": components, "link": link}
+
+
+def _status_columns(mcp: AtlassianMcp, project_key: str) -> tuple[list[dict], list[str]]:
+    """The project's statuses in workflow order (to do, in progress, done), with ticket counts.
+    Read from the project's tickets and the transitions open to one of them."""
+    res = mcp.op("searchJiraIssuesUsingJql", jql=f'project = "{project_key}" ORDER BY updated DESC',
+                 fields=["status", "components"], maxResults=100)
+    issues = res.get("issues", []) if isinstance(res, dict) else []
+    found: dict[str, dict] = {}
+
+    def add(st: dict) -> None:
+        name = (st or {}).get("name", "")
+        if not name:
+            return
+        cat = (st.get("statusCategory") or {})
+        rank = STATUS_ORDER.get(str(cat.get("key") or cat.get("name") or "").lower(), 1)
+        cur = found.setdefault(name, {"id": "", "rank": rank, "seen": len(found), "count": 0})
+        cur["id"] = cur["id"] or str(st.get("id") or "")
+
+    components: list[str] = []
+    for i in issues:
+        f = i.get("fields") or {}
+        add(f.get("status") or {})
+        if (f.get("status") or {}).get("name"):
+            found[f["status"]["name"]]["count"] += 1
+        components += [c for c in _fields_components(f) if c not in components]
+    if issues:
+        try:
+            tr = mcp.op("listJiraIssueTransitions", issueIdOrKey=issues[0]["key"], includeUnavailableTransitions=True)
+            for t in (tr.get("transitions", []) if isinstance(tr, dict) else tr or []):
+                add(t.get("to") or {})
+        except McpError:
+            pass
+    complete = len(issues) < 100
+    cols = []
+    for name, v in sorted(found.items(), key=lambda kv: (kv[1]["rank"], kv[1]["seen"])):
+        cols.append({"name": name, "status_ids": [v["id"] or name], "statuses": [name], "count": v["count"] if complete else None})
+    return cols, components
 
 
 # ------------------------------------------------------------------------------------- Testing board client
@@ -220,9 +320,12 @@ class McpJira:
 
     def search_column(self, project: str, column: str) -> list[dict]:
         fields = ["summary", "status", "components", "labels"]
-        if self.board_id and self.status_ids:
+        if self.board_id and self.status_ids and self.mcp.has("getJiraBoardIssueData"):
             res = self.mcp.op("getJiraBoardIssueData", boardId=int(self.board_id), dataset="board",
-                              jql=f"status in ({','.join(self.status_ids)})", fields=fields, maxResults=50)
+                              jql=f"status in ({status_jql(self.status_ids)})", fields=fields, maxResults=50)
+        elif self.status_ids:
+            jql = f'project = "{project}" AND status in ({status_jql(self.status_ids)}) ORDER BY updated DESC'
+            res = self.mcp.op("searchJiraIssuesUsingJql", jql=jql, fields=fields, maxResults=50)
         else:
             jql = f'project = "{project}" AND status = "{column}" ORDER BY updated DESC'
             res = self.mcp.op("searchJiraIssuesUsingJql", jql=jql, fields=fields, maxResults=50)
@@ -234,14 +337,21 @@ class McpJira:
     def get_issue(self, key: str) -> dict:
         from .jira import preview_url
 
-        raw = self.mcp.op("getJiraIssue", issueIdOrKey=key, view="evidence")
-        f = raw.get("fields") or {}
-        comments: list[str] = []
-        try:
-            res = self.mcp.op("listJiraIssueComments", issueIdOrKey=key, maxResults=100, orderBy="created")
-            comments = [_body(c) for c in (res.get("comments", []) if isinstance(res, dict) else [])]
-        except McpError:
-            pass
+        if self.mcp.has("listJiraIssueComments"):
+            raw = self.mcp.op("getJiraIssue", issueIdOrKey=key, view="evidence")
+            f = raw.get("fields") or {}
+            comments: list[str] = []
+            try:
+                res = self.mcp.op("listJiraIssueComments", issueIdOrKey=key, maxResults=100, orderBy="created")
+                comments = [_body(c) for c in (res.get("comments", []) if isinstance(res, dict) else [])]
+            except McpError:
+                pass
+        else:  # classic tools: the comments come with the issue
+            raw = self.mcp.op("getJiraIssue", issueIdOrKey=key,
+                              fields=["summary", "description", "status", "components", "comment"])
+            f = raw.get("fields") or {}
+            cm = f.get("comment") or {}
+            comments = [_body(c) for c in (cm.get("comments", []) if isinstance(cm, dict) else cm or [])]
         description = f.get("description") or ""
         return {"key": raw.get("key", key), "title": f.get("summary", ""), "status": (f.get("status") or {}).get("name", ""),
                 "description": description if isinstance(description, str) else str(description),
@@ -262,4 +372,10 @@ class McpJira:
         if isinstance(res, dict):
             st = res.get("status") or res.get("toStatus") or res.get("landedStatus") or {}
             landed = st.get("name", "") if isinstance(st, dict) else str(st)
+        if not landed:  # the classic tool returns nothing: read the status back
+            try:
+                f = (self.mcp.op("getJiraIssue", issueIdOrKey=key, fields=["status"]) or {}).get("fields") or {}
+                landed = (f.get("status") or {}).get("name", "")
+            except McpError:
+                pass
         return landed or names.get(str(transition_id), "")

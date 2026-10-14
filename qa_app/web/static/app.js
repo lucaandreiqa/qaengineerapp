@@ -807,6 +807,7 @@ ${err}
 </div></section>`;
   }
   const col = J.col || st.column;
+  const byStatus = c.columns_from === 'statuses';
   const live = !st.demo && st.column && st.column === col;
   const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="jiraCol" data-v="${esc(x.name)}"><span>${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
   const comps = c.components && c.components.length
@@ -818,14 +819,15 @@ ${err}
 <div><dt>Site</dt><dd class="mono"><a href="${esc(c.base_url)}" target="_blank" rel="noopener">${esc(c.site)}</a></dd></div>
 <div><dt>Signed in as</dt><dd>${esc(c.user.name || c.user.email || c.user.account_id || 'your Atlassian account')}</dd></div>
 <div><dt>Project</dt><dd>${esc(c.project.name)} <span class="mono" style="color:var(--muted)">${esc(c.project.key)}</span></dd></div>
-<div><dt>Board</dt><dd>${esc(c.board.name)}</dd></div>
+<div><dt>Board</dt><dd>${esc(c.board.name)}${c.board.id ? ` <span class="mono" style="color:var(--muted)">#${esc(c.board.id)}</span>` : ''}</dd></div>
 </dl>
 ${st.signedIn ? '' : `<div class="callout c-err" role="alert">${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<span>Your Atlassian sign-in has ended. Sign in again to keep the board in sync.</span><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="jiraReconnect">Sign in again</button></div>`}
-<div><div class="lbl" id="jc-col-l">Which column holds the tickets ready for QA?</div>
-<div class="jc-cols" role="radiogroup" aria-labelledby="jc-col-l">${colChips}</div></div>
+<div><div class="lbl" id="jc-col-l">Which ${byStatus ? 'status' : 'column'} holds the tickets ready for QA?</div>
+${c.columns.length ? `<div class="jc-cols" role="radiogroup" aria-labelledby="jc-col-l">${colChips}</div>` : `<div class="notice">${esc(c.project.key)} has no tickets yet, so its statuses can't be read. Create a ticket, then press Refresh.</div>`}
+${byStatus && c.columns.length ? `<p class="jc-foot" style="margin-top:8px">Your Atlassian access doesn't include board settings, so these are the project's statuses. On a simple board each status is a column.</p>` : ''}</div>
 <div class="jc-row" style="align-items:center">
 ${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}The Testing board shows ${esc(c.board.name)} · ${esc(col)}</span><a class="btn btn-sm" href="#/board" style="margin-left:4px">Open board${svg(IC.arrow, 'ic ic-s')}</a>`
-    : `<button type="button" class="btn btn-primary" data-act="jiraUse" ${col && !J.busy ? '' : 'disabled'}>${J.busy === 'use' ? svg(IC.spin, 'ic spin') : ''}${col ? `Show ${esc(col)} on the Testing board` : 'Pick a column first'}</button>`}
+    : `<button type="button" class="btn btn-primary" data-act="jiraUse" ${col && !J.busy ? '' : 'disabled'}>${J.busy === 'use' ? svg(IC.spin, 'ic spin') : ''}${col ? `Show ${esc(col)} on the Testing board` : `Pick a ${byStatus ? 'status' : 'column'} first`}</button>`}
 </div>
 ${err}
 <p class="jc-foot">${comps}</p>
