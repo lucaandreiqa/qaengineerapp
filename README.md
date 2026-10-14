@@ -100,6 +100,12 @@ formats stay in the code, so editing a skill changes how Claude works, not what 
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
+**Claude cost per ticket.** Every Claude call records the exact tokens from the API reply (input, output, cache
+writes and reads) on the ticket it was for, priced from Anthropic's list prices (`qa_app/workflow/costs.py`, e.g.
+Sonnet 5.5 $2 / $10 per million input / output tokens). Cards show the ticket's cost, the drawer breaks it down by
+step, and the board header shows the total. Redos add to it. A model without a known price is counted in tokens
+and shown as unpriced, never guessed.
+
 **Where to test.** Step 1 looks for the test environment in what the ticket says: the Environment field, custom
 fields (e.g. "Preview URL"), web links, every comment (newest first) and the description. Each link is scored by
 where it is, the words around it ("deployed to", "preview", "staging", "test on"…), and its address (preview / staging

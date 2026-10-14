@@ -22,7 +22,7 @@ from typing import Any, Callable, Optional
 from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
-from . import ticket_context
+from . import costs, ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
@@ -65,6 +65,13 @@ class Workflow:
         self.mock_testrail = mock_testrail or MockTestRail()
         self.tasks: dict[str, asyncio.Task] = {}
         self.toast: Callable[[str], None] = lambda msg: bus.publish({"type": "toast", "message": msg})
+        agent.usage_listeners.append(self._on_usage)
+
+    def _on_usage(self, key: str, step: str, model: str, usage: dict) -> None:
+        """Keep each Claude call's tokens and cost on its ticket (redos add to it)."""
+        t = self.tickets.get(key) if key else None
+        if t:
+            self.patch(key, usage=(t.usage + [costs.entry(step, model, usage)])[-500:])
 
     @property
     def cfg(self) -> WorkflowConfig:
@@ -273,6 +280,7 @@ class Workflow:
     async def _a_approve_results(self, t: Ticket, p: dict) -> Ticket:
         if not t.ran:
             raise GateError("These results did not come from a run")
+        agent.CURRENT_TICKET.set(t.key)
         try:
             comment = await agent.write_comment(self.cfg, t)
             if self.cfg.anthropic_api_key and not self.cfg.is_mock:
@@ -349,6 +357,7 @@ class Workflow:
     # ---------------------------------------------------------------- background steps
     async def _gather(self, key: str) -> None:
         """Phase 1: context → classification and environment → scenarios → checklist → gate 1."""
+        agent.CURRENT_TICKET.set(key)
         t = self.tickets.get(key)
         assert t
         jira = self.jira()
@@ -424,6 +433,7 @@ class Workflow:
                 "Merged": "yes" if issue.get("merged") else "no", "PR": issue.get("pr_url") or "none linked"}
 
     async def _build_and_run(self, key: str) -> None:
+        agent.CURRENT_TICKET.set(key)
         t = self.tickets.get(key)
         assert t
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
@@ -442,6 +452,7 @@ class Workflow:
 
     async def _run(self, key: str) -> None:
         """Phase 2: run, fill in the checklist, write bug notes and the report, revert settings."""
+        agent.CURRENT_TICKET.set(key)
         t = self.tickets.get(key)
         assert t
         self.patch(key, stage=2, sub="working", doing=f"Running {key}.spec.ts on {agent.env_name(t, self.cfg)}")
@@ -477,6 +488,7 @@ class Workflow:
         return f"{area} › {t.checklist[0].name if t.checklist else t.title}"
 
     async def _draft(self, key: str) -> None:
+        agent.CURRENT_TICKET.set(key)
         """Phase 4 draft: PASS items only, read-only section lookup and duplicate check."""
         t = self.tickets.get(key)
         assert t

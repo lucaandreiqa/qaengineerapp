@@ -26,6 +26,7 @@ from ..config import APP_DIR, DEFAULT_SETTINGS, RUNS_DIR, SECRET_KEYS, WORKFLOW_
 from ..workflow import agent, seed
 from ..workflow.clients import MockJira, MockTestRail
 from ..workflow.engine import GateError, Workflow
+from ..workflow import costs
 from ..workflow.models import Ticket
 from ..workflow.settings import WorkflowConfig
 from ..workflow.store import TicketStore, bus
@@ -122,11 +123,13 @@ class Services:
         if store.tickets or store.done_keys:
             # Demo boards saved before FE/BE types only had Core/Frontend: take the types from the demo data.
             fresh = {t.key: t for t in seed.seed_tickets() + [seed.late_ticket()]}
-            stale = [t for t in store.tickets.values() if t.key in fresh and (not t.components or not t.context or not t.issue_type)]
+            stale = [t for t in store.tickets.values() if t.key in fresh and (not t.components or not t.context or not t.issue_type
+                                                                              or (not t.usage and fresh[t.key].usage))]
             for t in stale:
                 f = fresh[t.key]
                 t.type, t.components, t.context = f.type, f.components, f.context
                 t.issue_type, t.priority, t.status_cat = f.issue_type, f.priority, f.status_cat
+                t.usage = t.usage or f.usage
             if stale:
                 store.save()
             return
@@ -146,6 +149,8 @@ class Services:
         d["files"] = agent.ticket_files(cfg, t)
         d["expected"] = self.workflow.expected_action(t)
         d["canRedo"] = self.workflow.can_redo_gather(t)
+        d["cost"] = costs.summary(t.usage)
+        d.pop("usage", None)
         base = load_settings().get("jira", {}).get("base_url") or "https://example.atlassian.net"
         d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
         d["envShort"] = agent.env_name(t, cfg) if t.env else ""
@@ -190,6 +195,8 @@ def state() -> dict:
                    "column": "Testing" if cfg.is_mock else cfg.jira_column,
                    "account": cfg.test_account, "ou": cfg.test_ou, "claude": bool(cfg.anthropic_api_key)},
         "tickets": [s.ticket_view(t) for t in store.all()],
+        "claude": costs.summary([e for t in store.all() for e in t.usage]),
+        "model": cfg.anthropic_model,
         "finishedToday": store.finished_today(),
         "lastSync": store.last_sync,
     }

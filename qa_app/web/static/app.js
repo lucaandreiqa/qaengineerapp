@@ -90,6 +90,24 @@ function priorityIcon(name, size = 16) {
 const statusCat = (t) => t.status_cat || (/done|closed|resolved|merged|released/i.test(t.status || '') ? 'done' : /to ?do|open|backlog|new/i.test(t.status || '') ? 'new' : t.status ? 'indeterminate' : 'new');
 const lozenge = (text, cat) => text ? `<span class="lz lz-${cat || 'new'}" title="Jira status">${esc(text)}</span>` : '';
 
+/* ------------------------------------------------------------------ Claude cost (exact tokens from each API reply) */
+const fmtUsd = (v) => v == null ? '?' : v > 0 && v < 0.01 ? '<$0.01' : '$' + v.toFixed(2);
+const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n || 0);
+const costTip = (c) => `Claude: ${c.calls} call${c.calls === 1 ? '' : 's'} · ${fmtTok(c.input)} tokens in · ${fmtTok(c.output)} out${c.unpriced ? ` · ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} on a model without a known price` : ''}`;
+function costChip(c) {
+  if (!c || !c.calls) return '';
+  return `<span class="cost" title="${esc(costTip(c))}">${svg(IC.bolt, 'ic ic-s')}${fmtUsd(c.cost)}${c.unpriced ? '+' : ''}</span>`;
+}
+function viewCost(t) {
+  const c = t.cost;
+  if (!c || !c.calls) return '';
+  const rows = Object.values(c.by_step).map((s) => `<div class="brow cost-row"><span class="ctx-k" style="flex-basis:150px">${esc(s.name)}</span>
+<span class="cost-n">${s.calls}×</span><span class="cost-n">${fmtTok(s.input)} in</span><span class="cost-n">${fmtTok(s.output)} out</span><span class="cost-v">${fmtUsd(s.cost)}</span></div>`).join('');
+  return `<div><div class="lbl">Claude cost for this ticket</div><div class="box">${rows}
+<div class="brow cost-row cost-total"><span class="ctx-k" style="flex-basis:150px">Total</span><span class="cost-n">${c.calls}×</span><span class="cost-n">${fmtTok(c.input)} in</span><span class="cost-n">${fmtTok(c.output)} out</span><span class="cost-v">${fmtUsd(c.cost)}</span></div></div>
+<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">Exact token counts from each Claude reply, priced at Anthropic's list prices. Redos add to the total.${c.unpriced ? ` ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} used a model without a known price and count as $0.` : ''}</p></div>`;
+}
+
 /* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
 const TYPES = ['FE', 'BE', 'FE+BE', ''];
 const typeName = (ty) => ({ FE: 'Frontend', BE: 'Backend', 'FE+BE': 'Frontend and backend' }[ty] || 'No FE/BE component');
@@ -301,6 +319,7 @@ function viewBoard() {
 <p style="margin:2px 0 0;color:var(--muted)">Tickets in the Jira <strong style="color:var(--fg);font-weight:500">${esc(c.column)}</strong> column of ${esc(c.project)}, taken through the test-ticket workflow. <strong style="color:var(--fg);font-weight:500">${waiting} waiting on you</strong> · ${data.finishedToday} finished today.</p>
 </div>
 <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${fmtUsd(data.claude.cost)} on this board</span>` : ''}
 <span class="pill" title="Auto mode never skips a review gate">${svg(IC.lock, 'ic ic-s')}Auto mode · 4 gates always stop</span>
 <span class="pill" role="status"><span class="d d-ok"></span>Jira · ${esc(c.project)} · ${esc(c.column)} · ${ago(data.lastSync)}</span>
 <button type="button" class="btn" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic spin' : 'ic')}Sync now</button>
@@ -330,7 +349,7 @@ function viewCard(t) {
 <span class="trunc" style="white-space:normal">${esc(d.summary)}</span>
 ${d.working ? '<div class="bar" aria-hidden="true"><i></i></div>' : ''}
 </div>
-<div class="tk-foot"><span class="trunc mono" style="font-size:11px">${esc(t.env ? t.envShort : 'no environment yet')}</span><span style="margin-left:auto"></span>
+<div class="tk-foot"><span class="trunc mono" style="font-size:11px">${esc(t.env ? t.envShort : 'no environment yet')}</span><span style="margin-left:auto"></span>${costChip(t.cost)}
 ${d.you ? `<button type="button" class="btn btn-sm" data-act="open" data-key="${esc(t.key)}">${esc(d.act)}${svg(IC.arrow, 'ic ic-s')}</button>` : ''}</div>
 </article>`;
 }
@@ -549,6 +568,7 @@ ${t.left ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<s
 ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(--faint);width:52px;flex:none">Draft ${i + 1}</span><span>${esc(c.title)}</span></div>`).join('')}</div>
 <p style="margin:6px 0 0;color:var(--muted);font-size:12px">${t.dups ? t.dups + ' existing case' + (t.dups > 1 ? 's' : '') + ' matched and ' + (t.dups > 1 ? 'were' : 'was') + ' left out. ' : 'No duplicates found. '}Only PASS items become cases.</p></div>`;
   }
+  body += viewCost(t);
   const used = Object.entries(t.skills || {});
   if (used.length) {
     const names = { gather: 'Gather requirements', 'create-tests': 'Create tests', 'run-tests': 'Run tests', 'jira-comment': 'Jira comment', testrail: 'TestRail cases' };

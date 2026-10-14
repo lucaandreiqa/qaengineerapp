@@ -117,7 +117,8 @@ class Ticket(BaseModel):
     issue_type: str = ""  # Jira issue type (Story, Bug, Task…), coloured like Jira
     priority: str = ""
     status_cat: str = ""  # new | indeterminate | done (Jira's status category)
-    skills: dict[str, str] = Field(default_factory=dict)  # step → which skill Claude used ("general", "general + KEY", "KEY")
+    skills: dict[str, str] = Field(default_factory=dict)
+    usage: list[dict] = Field(default_factory=list)  # every Claude call for this ticket (costs.entry): tokens and USD  # step → which skill Claude used ("general", "general + KEY", "KEY")
     status: str = "Open"
     description: str = ""
     stage: int = 0

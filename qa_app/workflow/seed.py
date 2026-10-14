@@ -87,6 +87,7 @@ def _ticket(d: dict) -> Ticket:
         mock_cleanup=cleanup, mock_left=d.get("left", ""),
     )
     t.issue_type, t.priority, t.status_cat = d["issue_type"], d["priority"], status_category(d["status"])
+    t.usage = _demo_usage(d, ran)
     t.context = _demo_context(d)
     if d["stage"] == 4 and d["sub"] != "drafting":
         existing = {"An unknown card returns not found"} if d.get("dups") else set()  # already in the mock TestRail section
@@ -94,6 +95,27 @@ def _ticket(d: dict) -> Ticket:
     if d["stage"] == 3 and d["sub"] == "transition":
         t.transitions = ["Docs", "Ready to merge", "Done", "Reopened"]
     return t
+
+
+def _demo_usage(d: dict, ran: bool) -> list[dict]:
+    """Sample Claude usage for the demo: one call per step the ticket has been through (Sonnet 5.5 prices)."""
+    from .costs import entry
+
+    calls = []
+    st, sub = d["stage"], d["sub"]
+    n = sum(len(items) for _, items in d["check"])
+    if st > 0 or sub == "gate":
+        calls.append(("gather", 7000 + 900 * n, 900 + 160 * n))
+    if st > 1 or (st == 1 and sub != "working"):
+        calls.append(("create-tests", 5200 + 400 * n, 3600 + 520 * n))
+    if ran and any(r[1] in ("fail", "partial", "blocked") for _, items in d["check"] for r in items):
+        calls.append(("run-tests", 3100 + 200 * n, 650))
+    if st >= 3:
+        calls.append(("jira-comment", 2900 + 150 * n, 520 + 40 * n))
+    if st == 4 and sub != "drafting":
+        calls.append(("testrail", 2600 + 160 * n, 1300 + 210 * n))
+    base = 1791990000.0
+    return [entry(step, "claude-sonnet-5-5", {"input_tokens": i, "output_tokens": o}, at=base + k * 600) for k, (step, i, o) in enumerate(calls)]
 
 
 def _demo_context(d: dict) -> dict:

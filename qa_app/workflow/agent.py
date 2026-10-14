@@ -6,13 +6,14 @@ Without a key the app falls back to deterministic templates, so the workflow sti
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import re
 import shutil
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -109,17 +110,32 @@ def env_name(t: Ticket, cfg: Config) -> str:
 # Claude
 # --------------------------------------------------------------------------------------
 
-def _ask_claude_sync(cfg: Config, system: str, prompt: str, max_tokens: int) -> str:
+# The ticket a step is working on, set by the engine, so each Claude call's cost lands on the right ticket.
+CURRENT_TICKET: contextvars.ContextVar[str] = contextvars.ContextVar("qa_current_ticket", default="")
+# Called after every Claude call with (ticket key, step, model, usage block from the API reply).
+usage_listeners: list[Callable[[str, str, str, dict], None]] = []
+
+
+def _ask_claude_sync(cfg: Config, system: str, prompt: str, max_tokens: int) -> tuple[str, str, dict]:
     r = requests.post("https://api.anthropic.com/v1/messages", timeout=180, headers={
         "x-api-key": cfg.anthropic_api_key, "anthropic-version": "2023-06-01", "content-type": "application/json",
     }, json={"model": cfg.anthropic_model, "max_tokens": max_tokens, "system": system,
              "messages": [{"role": "user", "content": prompt}]})
     r.raise_for_status()
-    return "".join(b.get("text", "") for b in r.json().get("content", []))
+    data = r.json()
+    text = "".join(b.get("text", "") for b in data.get("content", []))
+    return text, data.get("model") or cfg.anthropic_model, data.get("usage") or {}
 
 
 async def ask_claude(cfg: Config, system: str, prompt: str, max_tokens: int = 4000) -> str:
-    return await asyncio.to_thread(_ask_claude_sync, cfg, system, prompt, max_tokens)
+    text, model, usage = await asyncio.to_thread(_ask_claude_sync, cfg, system, prompt, max_tokens)
+    step = re.search(r'<skill step="([^"]+)"', system)
+    for listener in list(usage_listeners):
+        try:
+            listener(CURRENT_TICKET.get(), step.group(1) if step else "other", model, usage)
+        except Exception:  # cost tracking never breaks a step
+            pass
+    return text
 
 
 def _json_block(text: str) -> dict:

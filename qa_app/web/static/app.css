@@ -207,3 +207,11 @@ html,body{background:#0B0C0E}
 .tk-meta .mono{white-space:nowrap;flex:none}
 .tk-jira{min-width:0}
 .tk-jira .lz{max-width:92px}
+
+/* Claude cost */
+.cost{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.cost .ic{width:11px;height:11px;color:var(--faint)}
+.cost-row{gap:10px;font-variant-numeric:tabular-nums}
+.cost-n{flex:0 0 58px;color:var(--muted);font-size:12px;text-align:right}
+.cost-v{margin-left:auto;font-weight:500;text-align:right;min-width:52px}
+.cost-total{font-weight:600}.cost-total .ctx-k{color:var(--fg)}
