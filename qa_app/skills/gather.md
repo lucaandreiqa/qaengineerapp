@@ -17,7 +17,7 @@ You read the whole Jira ticket (fields, description, acceptance criteria, every 
 - **FE** (frontend): what the user sees and does. Layout and states (loading, empty, error, disabled), validation messages, navigation, permissions in the UI, responsive behaviour if relevant, accessibility of new controls.
 - **BE** (backend): the API contract. Status codes, response shape and fields, validation and error messages, permissions and auth, persistence (read it back), side effects, idempotency, limits and pagination.
 - **FE+BE**: both, plus the integration: what the UI sends, what it shows for each backend outcome, and that data round-trips correctly.
-- No type: decide from the content and say which side each section covers.
+- No FE/BE component or label: decide from the content and say which side each section covers.
 
 ## Writing checklist items
 - One behaviour per item, phrased as a capability that is either true or false: "Search ignores letter case", not "Test search".

@@ -215,3 +215,29 @@ html,body{background:#0B0C0E}
 .cost-n{flex:0 0 58px;color:var(--muted);font-size:12px;text-align:right}
 .cost-v{margin-left:auto;font-weight:500;text-align:right;min-width:52px}
 .cost-total{font-weight:600}.cost-total .ctx-k{color:var(--fg)}
+
+/* Integrations: grouped, collapsible rows */
+.igroup{display:flex;flex-direction:column;gap:8px}
+.igroup-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.01em}
+.igroup-head p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.igroup-rows{display:flex;flex-direction:column;gap:8px}
+.irow{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.irow.is-open{border-color:var(--border2)}
+.irow-jira{border:0;background:transparent;overflow:visible}
+.irow-jira .jc{margin:0}
+.irow-head{display:flex;align-items:center;gap:10px;padding-right:14px}
+.irow-btn{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:10px 14px;background:transparent;border:0;color:var(--fg);text-align:left;cursor:pointer;border-radius:10px}
+.irow-btn:hover{background:var(--hover)}
+.irow-text{flex:1;min-width:0;display:flex;flex-direction:column}
+.irow-name{font-weight:600;font-size:13.5px}
+.irow-sum{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.irow-chev{width:16px;height:16px;color:var(--faint);transition:transform .15s;flex:none}
+.irow.is-open .irow-chev,[aria-expanded=true] .irow-chev{transform:rotate(180deg)}
+.irow-body{border-top:1px solid var(--border)}
+.ifoot{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--raised);flex-wrap:wrap}
+.ist{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:600;white-space:nowrap;flex:none}
+.ist .ic{width:12px;height:12px}
+.ist-ok{background:var(--pass-bg);color:var(--pass)}
+.ist-err{background:var(--crit-bg);color:var(--crit)}
+.ist-setup{background:var(--minor-bg);color:var(--minor)}
+.ist-off{background:var(--raised);color:var(--faint);border:1px solid var(--border)}

@@ -110,14 +110,14 @@ function viewCost(t) {
 }
 
 /* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
-const TYPES = ['FE', 'BE', 'FE+BE', ''];
+const TYPES = ['FE', 'BE', 'FE+BE'];
 const typeName = (ty) => ({ FE: 'Frontend', BE: 'Backend', 'FE+BE': 'Frontend and backend' }[ty] || 'No FE/BE component');
 function typeBadge(t) {
   const ty = t.type || '';
   const tip = esc(typeName(ty) + ' · from Jira components: ' + ((t.components || []).join(', ') || 'none') + ' · labels: ' + ((t.labels || []).join(', ') || 'none'));
   if (ty === 'FE+BE') return `<span class="ttype tt-both" title="${tip}"><i>FE</i><i>BE</i></span>`;
   if (ty) return `<span class="ttype tt-${ty.toLowerCase()}" title="${tip}">${ty}</span>`;
-  return `<span class="ttype tt-none" title="${tip}">No type</span>`;
+  return '';  // no FE/BE component or label: no badge
 }
 const RES = { pass: 'PASS', partial: 'PARTIAL', fail: 'FAIL', blocked: 'BLOCKED', nt: 'NOT TESTED' };
 const CHECKS = { functional: 'Functional', visual: 'Visual', accessibility: 'Accessibility', seo: 'SEO', performance: 'Performance', 'best-practices': 'Best practices' };
@@ -145,7 +145,7 @@ const S = {
     optsOpen: false, logOpen: true, cur: null, sel: null, sev: 'all', check: 'all', q: '', zoom: false, starting: false, err: '', jiraBusy: false,
   },
   hist: { runs: null, site: null, q: '', status: 'all', pub: {} },
-  integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {} },
+  integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
   jira: { st: null, link: '', busy: '', err: '', col: '' },
   skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
 };
@@ -299,7 +299,6 @@ function viewBoard() {
   if (B.type !== 'all' && !TYPES.includes(B.type)) B.type = 'all';
   const visible = B.type === 'all' ? base : base.filter((t) => (t.type || '') === B.type);
   const typeOpts = [['all', 'All', base.length], ['FE', 'FE', typeCount('FE')], ['BE', 'BE', typeCount('BE')], ['FE+BE', 'FE+BE', typeCount('FE+BE')]];
-  if (typeCount('') || B.type === '') typeOpts.push(['', 'No type', typeCount('')]);
   const typeSeg = `<div class="seg seg-type" role="group" aria-label="Ticket type">${typeOpts.map(([v, label, n]) =>
     `<button type="button" aria-pressed="${B.type === v}" data-act="ttype" data-v="${esc(v)}" title="${esc(v === 'all' ? 'Every ticket type' : typeName(v))}">${v && v !== 'all' ? `<span class="tdot tdot-${v === 'FE+BE' ? 'both' : v.toLowerCase()}" aria-hidden="true"></span>` : ''}${label}<span class="seg-n">${n}</span></button>`).join('')}</div>`;
   const lanes = LANES.map((l, i) => {
@@ -1005,8 +1004,8 @@ ${err}
   const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="jiraCol" data-v="${esc(x.name)}"><span class="lz lz-${esc(x.category || 'new')}">${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
   const comps = c.components && c.components.length
     ? `Components in ${esc(c.project.key)}: <span class="mono">${esc(c.components.join(', '))}</span>. Components and labels set each ticket's FE / BE type (FE, BE, FE+BE…; the names are on the Testing board card).`
-    : `Each ticket's FE / BE type comes from its components or labels, for example a label <span class="mono">FE</span>, <span class="mono">BE</span> or <span class="mono">FE+BE</span>. Tickets with neither show as <b>No type</b>.`;
-  return `<section class="card jc" aria-labelledby="int-jira-connect">${head(`<span class="conn"><span class="d ${st.signedIn ? 'd-ok' : 'd-err'}"></span>${st.signedIn ? 'Connected' : 'Signed out'}</span>`)}
+    : `Each ticket's FE / BE type comes from its components or labels, for example a label <span class="mono">FE</span>, <span class="mono">BE</span> or <span class="mono">FE+BE</span>. Tickets with neither show no FE / BE badge.`;
+  return `<section class="card jc" aria-labelledby="int-jira-connect">${head(`${statusChip(st.signedIn ? 'ok' : 'err', st.signedIn ? 'Connected' : 'Signed out')}<button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="jira-mcp" aria-expanded="true" aria-label="Collapse Jira" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
 <div class="jc-body">
 <dl class="jc-facts">
 <div><dt>Site</dt><dd class="mono"><a href="${esc(c.base_url)}" target="_blank" rel="noopener">${esc(c.site)}</a></dd></div>
@@ -1046,51 +1045,113 @@ async function jiraConnect() {
   J.busy = ''; schedule();
 }
 
+/* Integrations: grouped by what they're for. A connected integration is a one-line row with a green check;
+   click it to see or change its settings. Ones that need attention open by themselves. */
+const INTEG_GROUPS = [
+  ['Project management', 'Where tickets come from, and where QA comments and moves go', ['jira-mcp', 'jira']],
+  ['AI', 'Who does the work in each board step', ['claude']],
+  ['Test case management', 'Where passing checks become test cases, and runs are recorded', ['testrail', 'xray', 'zephyr']],
+  ['Communication', 'Where run summaries are posted', ['slack', 'teams']],
+  ['Reports & storage', 'Where full reports are uploaded and shared from', ['aws']],
+  ['Testing board', 'How the board works for your project', ['workflow']],
+];
+
+function statusChip(kind, label) {
+  if (kind === 'ok') return `<span class="ist ist-ok">${svg(IC.check, 'ic ic-s')}${esc(label || 'Connected')}</span>`;
+  if (kind === 'err') return `<span class="ist ist-err">${svg(IC.err, 'ic ic-s')}${esc(label || 'Error')}</span>`;
+  if (kind === 'off') return `<span class="ist ist-off">${esc(label || 'Off')}</span>`;
+  return `<span class="ist ist-setup">${esc(label || 'Needs setup')}</span>`;
+}
+
+function integIsOpen(key, kind) {
+  const o = S.integ.open[key];
+  if (o != null) return o;
+  if (key === 'workflow') return false;  // board settings: open when you want to change them
+  return kind === 'err' || kind === 'setup';  // connected and off ones stay closed until clicked
+}
+
+function integBody(c) {
+  const I = S.integ, res = I.results[c.key];
+  const on = c.key === 'workflow' || !!I.enabled[c.key];
+  const fields = c.fields.filter((f) => !(c.key === 'claude' && f.k === 'api_key' && I.vals.claude.mode === 'claude_code')).map((f) => {
+    const id = `f-${c.key}-${f.k}`, v = I.vals[c.key][f.k];
+    const wrap = f.full ? 'full' : '';
+    if (f.check) return `<div class="${wrap}"><label class="cb" style="height:32px"><input type="checkbox" ${v ? 'checked' : ''} data-in="integCheck" data-key="${c.key}" data-v="${f.k}">${esc(f.label)}</label></div>`;
+    if (f.options) return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><select id="${id}" class="inp" data-in="integVal" data-key="${c.key}" data-v="${f.k}">${f.options.map((o) => `<option value="${esc(o.v)}" ${o.v === v ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
+    const revealed = !!I.reveal[c.key + '.' + f.k];
+    const mono = f.secret || /url/i.test(f.label) || ['bucket', 'prefix', 'id'].includes(f.k);
+    return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><div class="${f.secret ? 'secret' : ''}">
+<input id="${id}" class="inp${mono ? ' mono' : ''}" type="${f.secret && !revealed ? 'password' : 'text'}" value="${esc(v)}" placeholder="${esc(f.ph || '')}" data-in="integVal" data-key="${c.key}" data-v="${f.k}" spellcheck="false" autocomplete="off">
+${f.secret ? `<button type="button" class="reveal" aria-label="${revealed ? 'Hide' : 'Show'} ${esc(f.label)}" aria-pressed="${revealed}" data-act="reveal" data-key="${c.key}" data-v="${f.k}">${svg(revealed ? IC.eyeoff : IC.eye)}</button>` : ''}
+</div></div>`;
+  }).join('');
+  const note = c.key === 'claude' && I.vals.claude.mode === 'claude_code' ? `<p class="full" style="margin:0;color:var(--muted);font-size:12px;line-height:1.5">Each step runs the <span class="mono">claude</span> command on this computer, signed in with your Claude account, with its tools turned off so it only writes the answer. Usage counts against your Claude plan. Meant for your own use: for a team, use an API key. Install Claude Code and run <span class="mono">claude</span> once to sign in, then press Test connection.</p>` : '';
+  return `<div class="fields${on ? '' : ' off'}">${fields}${note}</div>
+<div class="ifoot">
+<button type="button" class="btn" data-act="integTest" data-key="${c.key}" ${I.testing[c.key] ? 'disabled' : ''}>${svg(I.testing[c.key] ? IC.spin : IC.bolt, I.testing[c.key] ? 'ic spin' : 'ic')}Test connection</button>
+${res ? `<div class="tres ${res.ok ? 'tres-ok' : 'tres-err'}" role="status" style="flex:0 1 auto">${svg(res.ok ? IC.check : IC.err, 'ic', 'style="width:14px;height:14px"')}<span title="${esc(res.text)}">${esc(res.text)}</span></div>` : ''}
+<button type="button" class="btn ${I.saved[c.key] ? 'btn-done' : 'btn-primary'}" style="margin-left:auto" data-act="integSave" data-key="${c.key}">${I.saved[c.key] ? 'Saved' : 'Save'}</button>
+</div>`;
+}
+
+function integRow(c) {
+  const I = S.integ;
+  const [label, , kind] = integStatus(c);
+  const open = integIsOpen(c.key, kind);
+  const res = I.results[c.key];
+  const summary = kind === 'ok' && res ? res.text : c.desc;
+  const on = c.key === 'workflow' || !!I.enabled[c.key];
+  const chip = c.key === 'workflow' ? statusChip(I.vals.workflow.demo ? 'setup' : 'ok', I.vals.workflow.demo ? 'Demo data' : 'Live') : statusChip(kind, label);
+  return `<section class="irow${open ? ' is-open' : ''}" aria-labelledby="int-${c.key}">
+<div class="irow-head">
+<button type="button" class="irow-btn" data-act="integOpen" data-key="${c.key}" aria-expanded="${open}" aria-controls="ib-${c.key}">
+<span class="mono-tile" style="background:${c.tint}" aria-hidden="true">${esc(c.mono)}</span>
+<span class="irow-text"><span id="int-${c.key}" class="irow-name">${esc(c.name)}</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
+${chip}${svg(IC.chev, 'ic irow-chev')}</button>
+${c.key === 'workflow' ? '' : !on && !open ? `<button type="button" class="btn btn-sm" data-act="integSetup" data-key="${c.key}">Set up</button>`
+    : `<button type="button" class="swbtn" role="switch" aria-checked="${on}" aria-label="${on ? 'Turn off' : 'Turn on'} ${esc(c.name)}" data-act="integToggle" data-key="${c.key}"><span class="swi"></span></button>`}
+</div>
+${open ? `<div class="irow-body" id="ib-${c.key}">${integBody(c)}</div>` : ''}
+</section>`;
+}
+
+function jiraRow() {
+  const J = S.jira, st = J.st;
+  const connected = st && st.connected && st.connection;
+  const kind = !st ? 'setup' : connected ? (st.signedIn ? 'ok' : 'err') : 'setup';
+  const open = J.changing || integIsOpen('jira-mcp', kind);
+  if (open) return `<div class="irow is-open irow-jira">${viewJiraConnect()}</div>`;
+  const c = connected ? st.connection : null;
+  const summary = c ? `${c.site} · ${c.project.name} (${c.project.key}) · ${c.board.name}${st.column ? ' · ' + st.column : ''}` : 'Paste your board link and sign in with Atlassian';
+  return `<section class="irow" aria-labelledby="int-jira-mcp"><div class="irow-head">
+<button type="button" class="irow-btn" data-act="integOpen" data-key="jira-mcp" aria-expanded="false">
+<span class="mono-tile" style="background:#2F64D6" aria-hidden="true">J</span>
+<span class="irow-text"><span id="int-jira-mcp" class="irow-name">Jira</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
+${statusChip(kind, kind === 'ok' ? 'Connected' : kind === 'err' ? 'Signed out' : 'Not connected')}${svg(IC.chev, 'ic irow-chev')}</button>
+</div></section>`;
+}
+
 function viewIntegrations() {
   const I = S.integ;
   if (!I.cards) return `<main class="main"><h1 style="margin:0;font-size:18px;font-weight:600">Integrations</h1><div class="notice">Loading…</div></main>`;
   const sum = { ok: 0, err: 0, off: 0 };
-  const cards = I.cards.map((c) => {
-    const [label, dot, kind] = integStatus(c);
-    if (kind in sum) sum[kind] += 1;
-    const on = c.key === 'workflow' || !!I.enabled[c.key];
-    const res = I.results[c.key];
-    const fields = c.fields.filter((f) => !(c.key === 'claude' && f.k === 'api_key' && I.vals.claude.mode === 'claude_code')).map((f) => {
-      const id = `f-${c.key}-${f.k}`, v = I.vals[c.key][f.k];
-      const wrap = f.full ? 'full' : '';
-      if (f.check) return `<div class="${wrap}"><label class="cb" style="height:32px"><input type="checkbox" ${v ? 'checked' : ''} data-in="integCheck" data-key="${c.key}" data-v="${f.k}">${esc(f.label)}</label></div>`;
-      if (f.options) return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><select id="${id}" class="inp" data-in="integVal" data-key="${c.key}" data-v="${f.k}">${f.options.map((o) => `<option value="${esc(o.v)}" ${o.v === v ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
-      const revealed = !!I.reveal[c.key + '.' + f.k];
-      const mono = f.secret || /url/i.test(f.label) || ['bucket', 'prefix', 'id'].includes(f.k);
-      return `<div class="${wrap}"><label class="lbl" style="display:block;margin:0 0 6px" for="${id}">${esc(f.label)}</label><div class="${f.secret ? 'secret' : ''}">
-<input id="${id}" class="inp${mono ? ' mono' : ''}" type="${f.secret && !revealed ? 'password' : 'text'}" value="${esc(v)}" placeholder="${esc(f.ph || '')}" data-in="integVal" data-key="${c.key}" data-v="${f.k}" spellcheck="false" autocomplete="off">
-${f.secret ? `<button type="button" class="reveal" aria-label="${revealed ? 'Hide' : 'Show'} ${esc(f.label)}" aria-pressed="${revealed}" data-act="reveal" data-key="${c.key}" data-v="${f.k}">${svg(revealed ? IC.eyeoff : IC.eye)}</button>` : ''}
-</div></div>`;
-    }).join('');
-    return `<section class="card" aria-labelledby="int-${c.key}" style="display:flex;flex-direction:column;overflow:hidden">
-<div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)">
-<span class="mono-tile" style="background:${c.tint}" aria-hidden="true">${esc(c.mono)}</span>
-<div style="min-width:0;flex:1"><h2 id="int-${c.key}" style="margin:0;font-size:14px;font-weight:600">${esc(c.name)}</h2><div style="color:var(--muted);font-size:12px">${esc(c.desc)}</div></div>
-<span class="conn"><span class="${dot}"></span>${label}</span>
-${c.key === 'workflow' ? '' : `<button type="button" class="swbtn" role="switch" aria-checked="${on}" aria-label="Enable ${esc(c.name)}" data-act="integToggle" data-key="${c.key}"><span class="swi"></span></button>`}
-</div>
-<div class="fields${on ? '' : ' off'}">${fields}${c.key === 'claude' && I.vals.claude.mode === 'claude_code' ? `<p class="full" style="margin:0;color:var(--muted);font-size:12px;line-height:1.5">Each step runs the <span class="mono">claude</span> command on this computer, signed in with your Claude account, with its tools turned off so it only writes the answer. Usage counts against your Claude plan. Meant for your own use: for a team, use an API key. Install Claude Code and run <span class="mono">claude</span> once to sign in, then press Test connection.</p>` : ''}</div>
-<div style="margin-top:auto;display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--raised)">
-<button type="button" class="btn" data-act="integTest" data-key="${c.key}" ${I.testing[c.key] ? 'disabled' : ''}>${svg(I.testing[c.key] ? IC.spin : IC.bolt, I.testing[c.key] ? 'ic spin' : 'ic')}Test connection</button>
-${res ? `<div class="tres ${res.ok ? 'tres-ok' : 'tres-err'}" role="status" style="flex:0 1 auto">${svg(res.ok ? IC.check : IC.err, 'ic', 'style="width:14px;height:14px"')}<span title="${esc(res.text)}">${esc(res.text)}</span></div>` : ''}
-<button type="button" class="btn ${I.saved[c.key] ? 'btn-done' : 'btn-primary'}" style="margin-left:auto" data-act="integSave" data-key="${c.key}">${I.saved[c.key] ? 'Saved' : 'Save'}</button>
-</div></section>`;
-  }).join('');
+  I.cards.forEach((c) => { if (c.key !== 'workflow') { const k = integStatus(c)[2]; if (k in sum) sum[k] += 1; } });
   const js = S.jira.st;
   if (js && js.connected) sum[js.signedIn ? 'ok' : 'err'] += 1;
+  const byKey = Object.fromEntries(I.cards.map((c) => [c.key, c]));
+  const listed = new Set(INTEG_GROUPS.flatMap((g) => g[2]));
+  const groups = [...INTEG_GROUPS, ['Other', '', I.cards.map((c) => c.key).filter((k) => !listed.has(k))]];
+  const html = groups.map(([name, desc, keys]) => {
+    const rows = keys.map((k) => (k === 'jira-mcp' ? jiraRow() : byKey[k] ? integRow(byKey[k]) : '')).join('');
+    return rows ? `<section class="igroup" aria-label="${esc(name)}"><div class="igroup-head"><h2>${esc(name)}</h2>${desc ? `<p>${esc(desc)}</p>` : ''}</div><div class="igroup-rows">${rows}</div></section>` : '';
+  }).join('');
   return `<main class="main">
 <header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:36px">
-<div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">Where results go after a run with "Publish to integrations" on. Jira and TestRail also drive the board in live mode.</p></div>
+<div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">Connected services show a green check; click one to see or change its settings.</p></div>
 <div style="margin-left:auto;display:flex;gap:16px;flex-wrap:wrap"><span class="conn"><span class="d d-ok"></span>${sum.ok} connected</span><span class="conn"><span class="d d-err"></span>${sum.err} error</span><span class="conn"><span class="d d-off"></span>${sum.off} off</span></div>
 </header>
-${I.mode !== 'live' ? `<div class="notice">${svg(IC.info)}Demo data is on for the Testing board: it uses sample tickets and simulated Jira and TestRail. Connect Jira below and pick a column to test your real tickets. Runs and publishing always use the real settings below.</div>` : ''}
-${viewJiraConnect()}
-<div class="icard-grid">${cards}</div></main>`;
+${I.mode !== 'live' ? `<div class="notice">${svg(IC.info)}Demo data is on for the Testing board: it uses sample tickets and simulated Jira and TestRail. Connect Jira below and pick a column to test your real tickets.</div>` : ''}
+${html}</main>`;
 }
 
 async function loadIntegrations() {
@@ -1239,6 +1300,13 @@ const ACTS = {
   },
   // integrations
   reveal: (el) => { const k = el.dataset.key + '.' + el.dataset.v; S.integ.reveal[k] = !S.integ.reveal[k]; },
+  integOpen: (el) => {
+    const I = S.integ, k = el.dataset.key;
+    const kind = k === 'jira-mcp' ? (S.jira.st && S.jira.st.connected ? (S.jira.st.signedIn ? 'ok' : 'err') : 'setup')
+      : integStatus(I.cards.find((c) => c.key === k))[2];
+    I.open[k] = !integIsOpen(k, kind);
+  },
+  integSetup: (el) => { S.integ.open[el.dataset.key] = true; },
   integToggle: (el) => { const k = el.dataset.key; S.integ.enabled[k] = !S.integ.enabled[k]; saveIntegration(k, true); },
   integSave: (el) => saveIntegration(el.dataset.key),
   integTest: async (el) => {

@@ -130,8 +130,8 @@ asks for a second click). An environment you picked yourself is kept. Once the J
 **Ticket type.** Every ticket is **FE**, **BE** or **FE+BE**, taken from its Jira *Components* field. A ticket with
 both a frontend and a backend component is FE+BE. Which component names count as which is set on the
 **Testing board** card (*FE components*, *BE components*; defaults `Frontend, FE, Front-end, UI` and
-`Backend, BE, Back-end, Core, API`, matched ignoring case). A ticket with none of them shows **No type**, so a
-missing component is visible instead of guessed. The board's type filter (All · FE · BE · FE+BE) is remembered.
+`Backend, BE, Back-end, Core, API`, matched ignoring case). Labels count too (e.g. `FE+BE`). A ticket with none
+of them shows no FE/BE badge; the type is never guessed. The board's type filter (All · FE · BE · FE+BE) is remembered.
 A frontend preview link is used as the test environment only for FE and FE+BE tickets.
 
 **Connecting Jira.** On the Integrations screen, paste the link of the board you test from (for example
