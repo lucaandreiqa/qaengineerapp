@@ -140,12 +140,17 @@ def get_issue(cfg: dict, key: str) -> dict:
            "description": f.get("description") or "", "components": _components(f), "comments": comments,
            "merged": False, "pr_url": "", "preview_url": ""}
     out.update(_pull_requests(s, cfg, raw.get("id", "")))
-    for c in reversed(comments):  # a frontend preview link posted on the ticket
-        m = re.search(r"https://[\w.-]+\.(pages\.dev|on-eva\.io|eva-online\.cloud)/?\S*", c)
-        if m and not PR_ENV.match(m.group(0)):
-            out["preview_url"] = m.group(0)
-            break
+    out["preview_url"] = preview_url(comments)
     return out
+
+
+def preview_url(comments: list[str]) -> str:
+    """The latest frontend preview link posted on the ticket (not a PR environment)."""
+    for c in reversed(comments):
+        m = re.search(r"https://[\w.-]+\.(pages\.dev|on-eva\.io|eva-online\.cloud)/?[^\s)\]>]*", c)
+        if m and not PR_ENV.match(m.group(0)):
+            return m.group(0)
+    return ""
 
 
 def add_comment(cfg: dict, key: str, text: str) -> None:

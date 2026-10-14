@@ -1,6 +1,6 @@
 """App settings and data directories.
 
-Settings live in ~/.qa_app/settings.json (%USERPROFILE%\.qa_app on Windows). Any value can be overridden by an
+Settings live in ~/.qa_app/settings.json (%USERPROFILE%/.qa_app on Windows). Any value can be overridden by an
 environment variable (QA_APP_<SECTION>_<KEY>, e.g. QA_APP_JIRA_API_TOKEN), which is how CI
 pipelines should pass secrets instead of storing them on disk.
 """
@@ -20,7 +20,9 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     "slack": {"enabled": False, "webhook_url": "", "only_on_failure": False},
     "teams": {"enabled": False, "webhook_url": "", "only_on_failure": False},
     "jira": {"enabled": False, "base_url": "", "email": "", "api_token": "",
-             "project_key": "", "issue_type": "Bug", "min_severity": "major"},
+             "project_key": "", "issue_type": "Bug", "min_severity": "major",
+             # auth "mcp": signed in with Atlassian (MCP server); "token" or "": email + API token.
+             "auth": "", "cloud_id": "", "board_id": "", "link": "", "connection": {}},
     "testrail": {"enabled": False, "base_url": "", "username": "", "api_key": "",
                  "project_id": "", "suite_id": ""},
     "xray": {"enabled": False, "client_id": "", "client_secret": "", "project_key": ""},
@@ -34,7 +36,8 @@ DEFAULT_SETTINGS: dict[str, dict] = {
                  "comment_signature": "Commented by Claude for Luca", "shared_env": "euw",
                  "workspace": "",
                  # Jira components that make a ticket FE, BE, or FE+BE when it has both.
-                 "fe_components": "Frontend, FE, Front-end, UI", "be_components": "Backend, BE, Back-end, Core, API"},
+                 "fe_components": "Frontend, FE, Front-end, UI", "be_components": "Backend, BE, Back-end, Core, API",
+                 "jira_column_statuses": ""},
     # Claude writes the scenarios, QA checklist and Playwright spec for each ticket.
     "claude": {"enabled": False, "api_key": "", "model": "claude-sonnet-5-5"},
 }

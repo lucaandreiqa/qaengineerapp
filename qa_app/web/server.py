@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -29,6 +29,7 @@ from ..workflow.engine import GateError, Workflow
 from ..workflow.models import Ticket
 from ..workflow.settings import WorkflowConfig
 from ..workflow.store import TicketStore, bus
+from . import jira_connect
 from .runs import RunManager
 
 log = logging.getLogger("qa_app.web")
@@ -52,7 +53,8 @@ CATALOGUE: list[dict[str, Any]] = [
      "fields": [{"k": "api_key", "label": "Anthropic API key", "secret": True, "full": True},
                 {"k": "model", "label": "Model", "full": True}],
      "required": ["api_key"]},
-    {"key": "jira", "name": "Jira", "mono": "J", "tint": "#2F64D6", "desc": "Board tickets, comments and moves; bugs from findings",
+    {"key": "jira", "name": "Jira · API token", "mono": "J", "tint": "#2F64D6",
+     "desc": "Bugs from site-check findings, and the fallback when an admin blocks Atlassian sign-in",
      "fields": [{"k": "base_url", "label": "Base URL", "full": True, "ph": "https://your-site.atlassian.net"},
                 {"k": "email", "label": "Email"}, {"k": "api_token", "label": "API token", "secret": True},
                 {"k": "project_key", "label": "Project key (for bugs)"},
@@ -107,6 +109,7 @@ class Services:
         self.workflow = Workflow(TicketStore(WORKFLOW_DIR / "tickets-demo.json"), TicketStore(WORKFLOW_DIR / "tickets.json"),
                                  MockJira(issues, late), MockTestRail())
         self.runs = RunManager()
+        self.jira_pending: dict[str, dict] = {}  # Atlassian sign-ins in progress, by OAuth state
 
     def seed_demo(self) -> None:
         store = self.workflow.demo_store
@@ -173,7 +176,9 @@ def state() -> dict:
     s, cfg = S(), S().workflow.cfg
     store = s.workflow.tickets
     return {
-        "config": {"mode": "mock" if cfg.is_mock else "live", "project": cfg.jira_project, "column": cfg.jira_column,
+        # Demo tickets always come from the sample OPTR · Testing column, whatever Jira is connected.
+        "config": {"mode": "mock" if cfg.is_mock else "live", "project": "OPTR" if cfg.is_mock else cfg.jira_project,
+                   "column": "Testing" if cfg.is_mock else cfg.jira_column,
                    "account": cfg.test_account, "ou": cfg.test_ou, "claude": bool(cfg.anthropic_api_key)},
         "tickets": [s.ticket_view(t) for t in store.all()],
         "finishedToday": store.finished_today(),
@@ -377,6 +382,81 @@ def _test_claude(values: dict) -> dict:
     r = requests.get("https://api.anthropic.com/v1/models", timeout=15,
                      headers={"x-api-key": values["api_key"], "anthropic-version": "2023-06-01"})
     return {"ok": r.ok, "text": "API key works" if r.ok else f"HTTP {r.status_code} · {r.text[:150]}"}
+
+
+# ------------------------------------------------------------------ Jira: paste a link, sign in with Atlassian (MCP)
+def _jira_error(e: Exception) -> HTTPException:
+    return HTTPException(400, str(e))
+
+
+class JiraLinkIn(BaseModel):
+    link: str
+
+
+class JiraColumnIn(BaseModel):
+    column: str
+    use_on_board: bool = True
+
+
+@app.get("/api/jira")
+def jira_status() -> dict:
+    return jira_connect.status()
+
+
+@app.post("/api/jira/connect")
+async def jira_connect_start(body: JiraLinkIn, request: Request) -> dict:
+    # Atlassian sends the browser back here. "localhost" is the loopback name MCP clients register with.
+    redirect = f"http://localhost:{request.url.port or 8765}/api/jira/oauth/callback"
+    try:
+        return await asyncio.to_thread(jira_connect.start, body.link, redirect, S().jira_pending)
+    except (jira_connect.ConnectError, jira_connect.McpError) as e:
+        raise _jira_error(e)
+
+
+@app.get("/api/jira/oauth/callback")
+async def jira_oauth_callback(request: Request):
+    q = request.query_params
+    back = f"http://127.0.0.1:{request.url.port or 8765}/#/integrations"
+    if q.get("error"):
+        return _callback_page(False, q.get("error_description") or q.get("error") or "Sign-in was cancelled", back)
+    try:
+        info = await asyncio.to_thread(jira_connect.finish, q.get("code", ""), q.get("state", ""), S().jira_pending)
+    except (jira_connect.ConnectError, jira_connect.McpError) as e:
+        return _callback_page(False, str(e), back)
+    bus.publish({"type": "toast", "message": f"Jira connected: {info['project']['name']} · {info['board']['name']}"})
+    return RedirectResponse(back + "?jira=connected", status_code=303)
+
+
+def _callback_page(ok: bool, text: str, back: str) -> HTMLResponse:
+    import html
+    return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>Jira sign-in</title>
+<body style="font:15px system-ui;max-width:520px;margin:12vh auto;padding:0 16px;color:#17181B">
+<h1 style="font-size:20px">{'Jira connected' if ok else 'Jira sign-in did not finish'}</h1>
+<p>{html.escape(text)}</p><p><a href="{html.escape(back)}">Back to QA Engineer App</a></p></body>""", status_code=200 if ok else 400)
+
+
+@app.post("/api/jira/column")
+def jira_column(body: JiraColumnIn) -> dict:
+    try:
+        return jira_connect.choose_column(body.column, body.use_on_board)
+    except jira_connect.ConnectError as e:
+        raise _jira_error(e)
+
+
+@app.post("/api/jira/refresh")
+async def jira_refresh() -> dict:
+    try:
+        await asyncio.to_thread(jira_connect.refresh)
+    except jira_connect.McpAuthRequired as e:
+        raise HTTPException(401, str(e))
+    except (jira_connect.ConnectError, jira_connect.McpError) as e:
+        raise _jira_error(e)
+    return jira_connect.status()
+
+
+@app.post("/api/jira/disconnect")
+def jira_disconnect() -> dict:
+    return jira_connect.disconnect()
 
 
 # ------------------------------------------------------------------ static

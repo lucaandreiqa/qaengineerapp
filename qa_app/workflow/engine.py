@@ -75,7 +75,11 @@ class Workflow:
     def jira(self):
         if self.cfg.is_mock:
             return self.mock_jira
-        return RealJira(load_settings().get("jira", {}))
+        s = load_settings()
+        if s.get("jira", {}).get("auth") == "mcp":  # signed in with Atlassian (MCP)
+            from ..integrations.atlassian_mcp import McpJira
+            return McpJira(s.get("jira", {}), s.get("workflow", {}))
+        return RealJira(s.get("jira", {}))
 
     def testrail(self):
         if self.cfg.is_mock:

@@ -88,6 +88,18 @@ both a frontend and a backend component is FE+BE. Which component names count as
 missing component is visible instead of guessed. The board's type filter (All · FE · BE · FE+BE) is remembered.
 A frontend preview link is used as the test environment only for FE and FE+BE tickets.
 
+**Connecting Jira.** On the Integrations screen, paste the link of the board you test from (for example
+`https://your-site.atlassian.net/jira/software/projects/KEY/boards/1`) and press **Sign in with Atlassian**.
+You approve access on Atlassian's page and land back in the app, which then shows the site, your account,
+the project, the board and its columns with ticket counts. Pick the column that holds tickets ready for QA and
+press **Show … on the Testing board**. No API token is needed.
+
+This goes through [Atlassian's MCP server](https://github.com/atlassian/atlassian-mcp-server) (`mcp.atlassian.com`)
+with OAuth 2.1, so the app can do only what your own Jira account can do. The first time on a site, a site admin
+approves the app once; organisation admins can also restrict which apps may connect. The sign-in is stored in
+`~/.qa_app/atlassian-mcp.json` and refreshed automatically. If your organisation blocks it, the
+**Jira · API token** card is the fallback. That card is also what creates bugs from site-check findings.
+
 **Demo data** is on by default: the board shows sample OPTR tickets and simulates Jira and TestRail, so you can try it
 safely. To use your real column, set up **Jira** (and **TestRail**) on the Integrations screen, then untick
 *Demo data* on the **Testing board** card. Live mode also needs:
@@ -146,8 +158,9 @@ qa_app/
   runner.py          crawl + orchestrate checks
   checks/            functional, visual, accessibility, seo, lighthouse
   integrations/      jira, slack, teams, testrail, xray, zephyr, aws_s3
+                     mcp_client.py (remote MCP + OAuth 2.1), atlassian_mcp.py (Jira through Atlassian's MCP server)
   report.py          HTML (templates/report.html.j2) + JUnit output
-  web/               FastAPI server, Run bridge to runner.py, static front end
+  web/               FastAPI server, Run bridge to runner.py, Jira connect (jira_connect.py), static front end
   workflow/          Testing board: ticket models, gated engine, checklist/spec/comment logic, demo data
   ui/                PySide6 window and background workers (classic)
 tests/               pytest suite for the workflow rules and the report
