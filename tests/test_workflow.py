@@ -718,3 +718,17 @@ def test_claude_fetches_gaps_live_and_a_step_can_ask_for_more_once(wf, monkeypat
     wf._cfg.claude_mode = "api"
     assert run(wf._fetch(key, ["Read PR x"], "gather")) == ""
     assert any("Claude Code" in m["text"] for m in wf.tickets.get(key).chat[-2:])
+
+
+def test_the_cases_file_has_steps_and_expected_results():
+    from qa_app.workflow.models import DraftCase, Ticket
+    t = Ticket(key="OPTR-1", title="T", section="Finance › Gift cards",
+               cases=[DraftCase(title="A valid card returns its balance", steps="1. Create a card\n2. Call GET /balance", expected="200 with the balance")])
+    md = agent.cases_md(t)
+    assert "## C1. A valid card returns its balance" in md and "1. Create a card" in md and "2. Call GET /balance" in md
+    assert "**Expected:** 200 with the balance" in md
+
+
+def test_demo_cases_have_steps():
+    t = next(x for x in seed.seed_tickets() if x.key == "OPTR-48437")
+    assert t.cases and all(c.steps and c.expected for c in t.cases)

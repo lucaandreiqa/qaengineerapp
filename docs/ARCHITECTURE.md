@@ -199,6 +199,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-15: Lane 5 shows the drafted TestRail cases in full (steps, expected) and folds the checklist away; `<KEY>-testrail-cases.md` includes steps and expected results.
 - 2026-10-15: A TestRail project missing from the settings is worked out on first use (suite, link or only project) and saved.
 - 2026-10-15: TestRail card takes the project (and suite) from a pasted page link; Project ID is no longer required.
 - 2026-10-15: Claude fetches missing data with read-only tools enforced by Claude Code (`dontAsk` + allowlist), on gaps

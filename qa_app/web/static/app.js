@@ -745,7 +745,12 @@ function viewDrawer() {
   if (st === 2 && sub === 'sso') {
     body += `<div class="callout c-warn">${svg(IC.person)}<span>Sign in with SSO as <span class="mono">${esc(B.data.config.account)}</span> in the browser window that just opened, then continue. This account has no password login. The automation account is only used for unattended runs.</span></div>`;
   }
-  if (t.checklist.length && !(st === 0 && sub !== 'gate')) {
+  if (t.checklist.length && st === 4) {  // lane 5 is about the cases: the checklist folds away
+    const items = t.checklist.flatMap((x) => x.items), passed = items.filter((i) => i.result === 'pass').length;
+    const open = !!B.clOpen['lane5|' + t.key];
+    body += `<div><button type="button" class="lbl fold-head" data-act="clFold" data-key="${esc(t.key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}QA checklist · ${items.length} check${items.length === 1 ? '' : 's'}, ${passed} passed</button>
+${open ? qaChecklist({ key: t.key, sections: t.checklist, ran, running: t.running_item, runId: t.run_id, evidence: t.evidence || {}, live: false }) : ''}</div>`;
+  } else if (t.checklist.length && !(st === 0 && sub !== 'gate')) {
     body += `<div><div class="lbl">QA checklist</div>${qaChecklist({ key: t.key, sections: t.checklist, ran, running: t.running_item, runId: t.run_id, evidence: t.evidence || {}, live: st === 2 && sub === 'working' })}</div>`;
   }
   body += viewTerminal(t);
@@ -769,10 +774,20 @@ ${t.target_from === 'skill' && t.target ? `<p class="skill-pick">${svg(IC.doc, '
 <p style="margin:6px 0 0;color:var(--muted);font-size:12px">Only transitions Jira returns for this ticket are listed. Names are matched exactly.</p></div>`;
   }
   if (st === 4 && sub !== 'drafting') {
-    body += `<div><div class="lbl" style="justify-content:space-between"><span>TestRail cases · draft</span><span class="mono">${t.cases.length} cases</span></div>
-<div class="box"><div class="brow" style="color:var(--muted)">Section <span class="mono" style="color:var(--fg)">${esc(t.section)}</span></div>
-${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(--faint);width:52px;flex:none">Draft ${i + 1}</span><span>${esc(c.title)}</span></div>`).join('')}</div>
-<p style="margin:6px 0 0;color:var(--muted);font-size:12px">${t.dups ? t.dups + ' existing case' + (t.dups > 1 ? 's' : '') + ' matched and ' + (t.dups > 1 ? 'were' : 'was') + ' left out. ' : 'No duplicates found. '}Only PASS items become cases.</p></div>`;
+    const lines = (txt) => String(txt || '').split('\n').map((l) => l.replace(/^\s*(\d+[.)]|[-*•])\s*/, '').trim()).filter(Boolean);
+    const cards = t.cases.map((c, i) => {
+      const fk = 'case|' + t.key + '|' + i;
+      const open = B.clOpen[fk] != null ? B.clOpen[fk] : i === 0;
+      const steps = lines(c.steps), exp = lines(c.expected);
+      return `<div class="tc${open ? ' is-open' : ''}"><button type="button" class="tc-head" data-act="caseFold" data-key="${esc(fk)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}<span class="tc-n">C${i + 1}</span><span class="tc-title">${esc(c.title)}</span><span class="tc-meta">${steps.length} step${steps.length === 1 ? '' : 's'}</span></button>
+${open ? `<div class="tc-body">${steps.length ? `<div class="tc-lbl">Steps</div><ol class="tc-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : '<p class="tc-empty">No steps written.</p>'}
+${exp.length ? `<div class="tc-lbl">Expected result</div>${exp.length > 1 ? `<ul class="tc-exp">${exp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : `<p class="tc-exp1">${esc(exp[0])}</p>`}` : ''}</div>` : ''}</div>`;
+    }).join('');
+    const file = t.files.find((f) => f.ok && /testrail-cases\.md$/.test(f.name));
+    body += `<div><div class="lbl" style="display:flex;align-items:center;gap:8px"><span>TestRail cases · ${sub === 'gate' ? 'draft' : 'approved'}</span><span class="mono" style="color:var(--muted);font-weight:400">${t.cases.length} case${t.cases.length === 1 ? '' : 's'}</span>
+${file ? `<a class="btn btn-quiet btn-sm" style="margin-left:auto" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(file.name)}" target="_blank" rel="noopener">${esc(file.name)}${svg(IC.ext, 'ic ic-s')}</a>` : ''}</div>
+<p style="margin:0 0 8px;color:var(--muted);font-size:12px">Section <span class="mono" style="color:var(--fg)">${esc(t.section)}</span> · ${t.dups ? t.dups + ' existing case' + (t.dups > 1 ? 's' : '') + ' matched and ' + (t.dups > 1 ? 'were' : 'was') + ' left out' : 'no duplicates found'} · only passed checks become cases.</p>
+<div class="tc-list">${cards || '<div class="box"><div class="brow" style="color:var(--muted)">No cases: no check passed, or all of them already exist.</div></div>'}</div></div>`;
   }
   body += viewCost(t);
   body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
@@ -1634,6 +1649,8 @@ const ACTS = {
     try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'retry', stage: t.stage, sub: t.sub }); } catch (e) { S.board.actErr = e.message; }
   },
   openTicket: (el) => { S.board.sel = el.dataset.key; },
+  clFold: (el) => { const k = 'lane5|' + el.dataset.key; S.board.clOpen[k] = !S.board.clOpen[k]; },
+  caseFold: (el) => { const k = el.dataset.key; S.board.clOpen[k] = el.getAttribute('aria-expanded') !== 'true'; },
   termToggle: (el) => {
     const B = S.board, k = el.dataset.key;
     B.termOpen[k] = el.getAttribute('aria-expanded') !== 'true';

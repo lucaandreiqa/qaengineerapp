@@ -4,6 +4,7 @@ from __future__ import annotations
 from .models import (DEFAULT_BE_COMPONENTS, DEFAULT_FE_COMPONENTS, CheckItem, CleanupItem, DraftCase, Env, Section,
                      Ticket, classify_type, component_list, status_category, type_label)
 
+DEMO_ACCOUNT = "a user with the right permissions"
 STAGING = Env(kind="shared staging · ticket is merged", url="https://staging.shop-demo.test/", source="settings",
           api="Default environment from settings: confirm before changing sensitive settings", shared=True)
 
@@ -91,7 +92,11 @@ def _ticket(d: dict) -> Ticket:
     t.context = _demo_context(d)
     if d["stage"] == 4 and d["sub"] != "drafting":
         existing = {"An unknown card returns not found"} if d.get("dups") else set()  # already in the mock TestRail section
-        t.cases = [DraftCase(title=i.text) for i in passed if i.text not in existing]
+        t.cases = [DraftCase(title=i.text,
+                             steps=f"1. Sign in as {DEMO_ACCOUNT} on the staging environment.\n2. Prepare the data the check needs, "
+                                   f"prefixed with the ticket key.\n3. Do the action: {i.text[0].lower() + i.text[1:]}.",
+                             expected=f"{i.text}.")
+                   for i in passed if i.text not in existing]
     if d["stage"] == 3 and d["sub"] == "transition":
         t.transitions = ["Docs", "Ready to merge", "Done", "Reopened"]
     return t

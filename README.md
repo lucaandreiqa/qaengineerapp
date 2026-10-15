@@ -176,6 +176,11 @@ skill (editable on the Skills screen). Next time the comment is posted, that sta
 "picked by the skill"; in Gated mode you still approve the move, and choosing another state asks again. A state Jira
 doesn't offer for the ticket is never pre-selected.
 
+**TestRail cases.** In the last lane the drawer shows each drafted case in full: title, numbered steps and expected
+result (click a case to open or close it), with the target section and how many duplicates were left out. The QA
+checklist folds into one line there. `<KEY>-testrail-cases.md` has the same content. Nothing is pushed until you
+approve at Gate 4.
+
 **Terminal.** While a ticket runs, the drawer shows a **Terminal · Playwright** panel with every line Playwright
 prints, live (saved as `terminal.log` in the run folder). The first run installs Playwright and Chromium in the test
 workspace by itself, with the install output shown, and nothing ever waits for keyboard input. Claude turns key lines

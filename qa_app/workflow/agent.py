@@ -545,5 +545,9 @@ def draft_cases(t: Ticket) -> list[DraftCase]:
 
 def cases_md(t: Ticket) -> str:
     lines = [f"# {t.key} TestRail cases (draft)", "", f"Section: {t.section}", ""]
-    lines += [f"{n}. {c.title}" for n, c in enumerate(t.cases, 1)]
-    return "\n".join(lines) + "\n"
+    for n, c in enumerate(t.cases, 1):
+        lines += [f"## C{n}. {c.title}", ""]
+        steps = [re.sub(r"^\s*(\d+[.)]|[-*•])\s*", "", x).strip() for x in (c.steps or "").splitlines() if x.strip()]
+        lines += [f"{i}. {x}" for i, x in enumerate(steps, 1)] or ["_No steps written._"]
+        lines += ["", f"**Expected:** {c.expected.strip()}" if c.expected.strip() else "**Expected:** _not written_", ""]
+    return "\n".join(lines).rstrip() + "\n"
