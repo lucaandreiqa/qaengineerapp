@@ -24,7 +24,7 @@ from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
 from . import chat as chat_mod
-from . import costs, history, ticket_context
+from . import costs, history, terminal as term_mod, ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
@@ -71,6 +71,7 @@ class Workflow:
         self.chat_tasks: dict[str, asyncio.Task] = {}  # Claude's chat replies, apart from the steps
         self._next_trigger: dict[str, str] = {}  # why the next run of a ticket happens (History)
         self._stores: dict[str, "history.RunStore"] = {}
+        self._terminal: dict[str, list[dict]] = {}  # each ticket's live Playwright output (its current or last run)
         self.toast: Callable[[str], None] = lambda msg: bus.publish({"type": "toast", "message": msg})
         self.sync_error = ""          # the last automatic sync's error, shown on the board until one works
         self._sync_failed_at = 0.0
@@ -89,6 +90,17 @@ class Workflow:
         t = self.tickets.get(key)
         if t:
             self.patch(key, chat=(t.chat + [chat_mod.message(role, text, step=step)])[-chat_mod.MAX_MESSAGES:])
+
+    def terminal(self, key: str) -> list[dict]:
+        return list(self._terminal.get(key, []))
+
+    def term(self, key: str, kind: str, text: str) -> None:
+        """A line of the run's terminal: kept for the drawer and sent live to the board."""
+        line = {"kind": kind, "text": text[:2000], "at": time.time()}
+        lines = self._terminal.setdefault(key, [])
+        lines.append(line)
+        del lines[:-term_mod.MAX_LINES]
+        bus.publish({"type": "term", "key": key, "line": line})
 
     def _on_usage(self, key: str, step: str, model: str, usage: dict, billing: str = "api") -> None:
         """Keep each Claude call's tokens and cost on its ticket (redos add to it)."""
@@ -273,6 +285,8 @@ class Workflow:
             self.patch(key, error="")
             self._spawn_for(self.tickets.get(key))  # type: ignore[arg-type]
             return self.tickets.get(key)  # type: ignore[return-value]
+        if action == "stop":
+            return await self._stop(t)
         if (t.stage, t.sub) != (stage, sub):
             raise GateError(f"{key} has moved on (now lane {t.stage + 1} · {t.sub}). Review it again before acting.")
         if action == "redo_gather":
@@ -281,6 +295,19 @@ class Workflow:
         if expected != action:
             raise GateError(f"{key} is waiting for '{expected or 'nothing'}', not '{action}'")
         return await getattr(self, f"_a_{action}")(t, payload)
+
+    async def _stop(self, t: Ticket) -> Ticket:
+        """Stop the ticket's running step (the Playwright process is ended with it). Retry starts it again."""
+        task = self.tasks.get(t.key)
+        if t.sub not in WORKING_SUBS or not task or task.done():
+            raise GateError(f"Nothing is running for {t.key}")
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), 5)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass
+        self.say(t.key, "Stopped by you. Press Retry to run it again.", "run" if t.stage == 2 else "")
+        return self.patch(t.key, error="Stopped by you. Press Retry to start this step again.", running_item=-1, doing="")
 
     def save_draft(self, key: str, comment: Optional[str] = None, target: Optional[str] = None, env_draft: Optional[str] = None) -> Ticket:
         """Edits that are not approvals: the comment text and the chosen target state."""
@@ -676,6 +703,17 @@ class Workflow:
         self.patch(key, stage=2, sub="working", run_id=run_id, running_item=-1, checklist=t.checklist, ran=False,
                    doing=f"Running {key}.spec.ts on {agent.env_name(t, self.cfg)}")
         self.say(key, f"Run {store.get(run_id)['run_no']} started: {len(items)} checks on {agent.env_name(t, self.cfg)}.", "run")
+        self._terminal[key] = []
+        bus.publish({"type": "term", "key": key, "reset": True})
+
+        async def on_output(kind: str, text: str) -> None:
+            self.term(key, kind, text)
+            if kind == "stall":
+                self.say(key, term_mod.stall_message(text), "run", role="assistant")
+            elif kind in ("sys", "out"):
+                note = term_mod.friendly(text)
+                if note:
+                    self.say(key, note, "run")
 
         async def on_event(ev: dict) -> None:
             n = ev.get("n")
@@ -701,14 +739,17 @@ class Workflow:
         try:
             if self.cfg.is_mock:
                 sim = [(r[0], r[1]) for r in t.mock_results] or [("nt", "") for _ in items]
+                await on_output("sys", f"$ npx playwright test --config {store.dir(run_id) / 'playwright.config.js'}")
+                await on_output("out", f"Running {len(sim)} test{'s' if len(sim) != 1 else ''} using 1 worker")
                 for n, (res, bug) in enumerate(sim, start=1):
+                    await on_output("out", f"  {'✓' if res == 'pass' else '✘' if res == 'fail' else '-'}  {n} [chromium] › {key}.spec.ts › [{n}] {items[n - 1].text[:80]}")
                     await on_event({"type": "begin", "n": n})
                     await self.pause(0.6)
                     await on_event({"type": "end", "n": n, "result": res, "error": bug if res == "fail" else ""})
                 results, cleanup, left = sim, t.mock_cleanup, t.mock_left
                 errors, atts, exit_code = {}, {}, 0 if all(r == "pass" for r, _ in sim) else 1
             else:
-                out = await agent.run_spec(self.cfg, t, store.dir(run_id), on_event)
+                out = await agent.run_spec(self.cfg, t, store.dir(run_id), on_event, on_output)
                 results, cleanup, left = out["results"], out["cleanup"], t.left
                 errors, atts, exit_code = out["errors"], out["attachments"], out["exit_code"]
         except asyncio.CancelledError:

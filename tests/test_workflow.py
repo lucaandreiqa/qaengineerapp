@@ -469,3 +469,72 @@ def test_a_run_that_cannot_start_is_recorded_as_an_error(wf, monkeypatch):
     rec = wf.history().list(key=key)[0]
     assert rec["status"] == "error" and "history/live" in str(wf.history().root)
     assert wf.history().get(rec["id"])["error"] == "npx is not installed"
+
+
+def _live(wf, key):
+    t = wf.tickets.get(key)
+    wf._cfg.demo = False
+    wf.live_store.tickets[key] = t
+    return t
+
+
+def test_a_live_run_shows_its_terminal_and_explains_it_in_the_feed(wf, monkeypatch):
+    from qa_app.workflow import store as store_mod
+    published = []
+    monkeypatch.setattr(store_mod.bus, "publish", lambda ev: published.append(ev))
+
+    async def fake(cfg, t, run_dir, on_event, on_output=None):
+        await on_output("sys", "$ npm install")
+        await on_output("out", "added 3 packages in 2s")
+        await on_output("out", "Running 3 tests using 1 worker")
+        await on_output("stall", "No output for 45s. Last line: Ok to proceed? (y)")
+        raise RuntimeError("Playwright did not produce a report: exit code 1")
+    monkeypatch.setattr(agent, "run_spec", fake)
+    key = "OPTR-48498"
+    _live(wf, key)
+
+    async def go():
+        with pytest.raises(RuntimeError):
+            await wf._run(key)
+    run(go())
+    lines = wf.terminal(key)
+    assert [l["text"] for l in lines] == ["$ npm install", "added 3 packages in 2s", "Running 3 tests using 1 worker",
+                                         "No output for 45s. Last line: Ok to proceed? (y)"]
+    assert [e["line"]["text"] for e in published if e.get("type") == "term" and e.get("key") == key and "line" in e][:1] == ["$ npm install"]
+    t = wf.tickets.get(key)
+    progress = [m["text"] for m in t.chat if m["role"] == "progress"]
+    assert any("Installing Playwright" in p for p in progress)
+    assert any("Playwright started: 3 tests" in p for p in progress)
+    stall = [m["text"] for m in t.chat if m["role"] == "assistant" and "silent" in m["text"]]
+    assert stall and "Ok to proceed? (y)" in stall[0] and "Stop" in stall[0]  # what it saw + how to unblock
+
+
+def test_a_running_test_can_be_stopped(wf, monkeypatch):
+    started = asyncio.Event()
+
+    async def forever(cfg, t, run_dir, on_event, on_output=None):
+        started.set()
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(agent, "run_spec", forever)
+    key = "OPTR-48498"
+    t = _live(wf, key)
+    wf.live_store.tickets[key] = t.model_copy(update={"stage": 2, "sub": "working"})
+
+    async def go():
+        wf.spawn(key, wf._run(key))
+        await asyncio.wait_for(started.wait(), 2)
+        cur = wf.tickets.get(key)
+        await wf.act(key, "stop", cur.stage, cur.sub)
+        await asyncio.sleep(0.05)
+    run(go())
+    t = wf.tickets.get(key)
+    rec = wf.history().list(key=key)[0]
+    assert rec["status"] == "stopped" and t.error.startswith("Stopped by you") and t.running_item == -1
+    assert any("stopped" in m["text"].lower() for m in t.chat)
+
+
+def test_stop_needs_something_running(wf):
+    key = "OPTR-48498"
+    t = wf.tickets.get(key)
+    with pytest.raises(GateError):
+        run(wf.act(key, "stop", t.stage, t.sub))

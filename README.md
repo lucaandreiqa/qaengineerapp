@@ -147,6 +147,13 @@ QA checklist shows counts, progress and one row per check with clear pass / fail
 running check spins live, and a failed check opens to its note, error, screenshot, video and trace, with **Ask Claude
 about this**.
 
+**Terminal.** While a ticket runs, the drawer shows a **Terminal · Playwright** panel with every line Playwright
+prints, live (saved as `terminal.log` in the run folder). The first run installs Playwright and Chromium in the test
+workspace by itself, with the install output shown, and nothing ever waits for keyboard input. Claude turns key lines
+into plain updates in the feed ("Playwright started: 6 tests"). When the run prints nothing for 45 seconds, Claude
+says what it last printed, what that likely means (npm prompt, missing browser, site unreachable, sign-in page, slow
+check) and how to unblock it. **Stop** ends the run; **Retry this step** starts it again.
+
 **History.** Every run of a ticket's spec is recorded (`<app folder>/workflow/history/live/`, demo runs apart) with
 its results, the spec that ran, and evidence: each run gets its own Playwright settings (the ticket's environment as
 base URL, the saved SSO session, screenshots on failure or every check, video and trace for failures, JSON and HTML
@@ -201,7 +208,7 @@ approves the app once; organisation admins can also restrict which apps may conn
 safely. To use your real column, set up **Jira** (and **TestRail**) on the Integrations screen, then untick
 *Demo data* on the **Testing board** card. Live mode also needs:
 - **Claude** turned on with an API key, so it writes the scenarios, checklist and spec. Without it the spec is a template with `test.fixme` stubs.
-- A **Playwright workspace folder** (your Playwright repo). Ticket files go to `tests/tickets/<KEY>/` there and run with `npx playwright test --reporter=json`.
+- A **Playwright workspace folder** (your Playwright repo). Ticket files go to `tests/tickets/<KEY>/` there and run with the workspace's own Playwright (installed there automatically on the first run).
   Each checklist item is one test titled `[n] …`. A test can report PARTIAL or BLOCKED with
   `test.info().annotations.push({ type: 'qa-result', description: 'blocked: reason' })`.
 - **SSO**: when no session is saved, gate 2 opens a browser on the environment. Sign in, press *I've signed in*, and the session is reused.

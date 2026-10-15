@@ -313,7 +313,7 @@ def parse_playwright_json(report: dict, n_items: int, details: Optional[dict] = 
     return out
 
 
-async def run_spec(cfg: Config, t: Ticket, run_dir: Path, on_event) -> dict:
+async def run_spec(cfg: Config, t: Ticket, run_dir: Path, on_event, on_output=None) -> dict:
     """Run the ticket's spec(s) into a History run folder (see playwright_run.py), each check reported as it ends.
     Returns {results [(result, bug)] per item, cleanup, errors {n: text}, attachments {n: [...]}, exit_code}."""
     from . import playwright_run
@@ -325,7 +325,7 @@ async def run_spec(cfg: Config, t: Ticket, run_dir: Path, on_event) -> dict:
         run_dir=run_dir, test_dir=tdir, specs=specs, workspace=cfg.workspace,
         base_url=t.env.url if t.env and t.env.url.startswith("http") else "",
         storage_state=cfg.auth_dir / "storage-state.json", every_check=cfg.evidence_every_check,
-        extra_env={"QA_CLEANUP_FILE": str(cleanup_file)}, on_event=on_event)
+        extra_env={"QA_CLEANUP_FILE": str(cleanup_file)}, on_event=on_event, on_output=on_output)
     if out["report"] is None:
         raise RuntimeError("Playwright did not produce a report: " + (out["stderr"] or f"exit code {out['exit_code']}")[-400:])
     details: dict[int, str] = {}

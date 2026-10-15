@@ -65,3 +65,82 @@ def test_run_streams_events_and_maps_evidence_to_checks(tmp_path):
     assert out["exit_code"] == 1 and out["report"]["suites"]
     assert out["attachments"] == {2: [{"kind": "screenshot", "path": "artifacts/t2/test-failed-1.png", "name": "screenshot"}]}  # outside files dropped
     assert out["errors"][2].startswith("expect") and (run_dir / "yourqa-reporter.js").exists()
+
+
+# ---------------------------------------------------------------- never hang silently (SCRUM-8, 2026-10-15)
+SETUP_NPM = r'''#!PYTHON
+import os, sys, pathlib, stat
+print("npm", " ".join(sys.argv[1:]), flush=True)
+ws = pathlib.Path.cwd()
+if sys.argv[1:2] == ["install"]:
+    (ws / "node_modules" / "@playwright" / "test").mkdir(parents=True, exist_ok=True)
+    b = ws / "node_modules" / ".bin"; b.mkdir(parents=True, exist_ok=True)
+    pw = b / "playwright"
+    pw.write_text(open(os.environ["FAKE_PW"]).read()); pw.chmod(pw.stat().st_mode | stat.S_IEXEC)
+    print("added 3 packages", flush=True)
+'''
+
+PROMPTING_PW = r'''#!PYTHON
+import sys, time
+args = sys.argv[1:]
+if args[:1] == ["install"]:
+    print("Downloading Chromium 140.0 ... done", flush=True); sys.exit(0)
+print("Ok to proceed? (y)", flush=True)
+line = sys.stdin.readline()          # must get EOF at once, never wait for a person
+print("stdin gave:", repr(line), flush=True)
+time.sleep(float(__import__("os").environ.get("FAKE_SILENT", "0")))
+sys.exit(3)
+'''
+
+
+def _exe(path, body):
+    path.write_text(body.replace("#!PYTHON", "#!" + sys.executable))
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
+def test_missing_playwright_is_installed_with_visible_output_and_nothing_waits_for_input(tmp_path, monkeypatch):
+    fake_pw = _exe(tmp_path / "fake_pw", PROMPTING_PW)
+    monkeypatch.setenv("FAKE_PW", str(fake_pw))
+    npm = _exe(tmp_path / "npm", SETUP_NPM)
+    ws = tmp_path / "ws"
+    out = []
+
+    async def on_output(kind, text):
+        out.append((kind, text))
+
+    async def on_event(ev):
+        pass
+
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    res = loop.run_until_complete(asyncio.wait_for(pr.run(
+        run_dir=tmp_path / "run", test_dir=tmp_path, specs=["K.spec.ts"], workspace=ws, base_url="", storage_state=None,
+        every_check=False, extra_env={}, on_event=on_event, on_output=on_output, npm=str(npm), poll=0.05), timeout=20))
+    text = [t for _, t in out]
+    assert (ws / "package.json").exists() and json.loads((ws / "package.json").read_text())["devDependencies"]["@playwright/test"]
+    assert any("npm install" in t for t in text) and any("Downloading Chromium" in t for t in text)  # setup is visible
+    assert any("stdin gave: ''" in t for t in text)  # EOF, not a wait
+    assert res["exit_code"] == 3 and res["report"] is None
+
+
+def test_a_silent_run_is_reported_while_it_is_silent(tmp_path, monkeypatch):
+    fake_pw = _exe(tmp_path / "fake_pw", PROMPTING_PW)
+    ws = tmp_path / "ws"
+    (ws / "node_modules" / "@playwright" / "test").mkdir(parents=True)
+    (ws / "node_modules" / ".bin").mkdir(parents=True)
+    _exe(ws / "node_modules" / ".bin" / "playwright", PROMPTING_PW)
+    monkeypatch.setenv("FAKE_SILENT", "1.5")
+    out = []
+
+    async def on_output(kind, text):
+        out.append((kind, text))
+
+    async def on_event(ev):
+        pass
+
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    loop.run_until_complete(pr.run(run_dir=tmp_path / "run", test_dir=tmp_path, specs=["K.spec.ts"], workspace=ws, base_url="",
+                                   storage_state=None, every_check=False, extra_env={}, on_event=on_event, on_output=on_output,
+                                   poll=0.05, stall_after=0.5))
+    stalls = [t for k, t in out if k == "stall"]
+    assert stalls and "No output for" in stalls[0] and "stdin gave" in stalls[0]  # says what it last printed

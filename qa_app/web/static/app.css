@@ -479,3 +479,16 @@ html,body{background:#0B0C0E}
 .modal header{display:flex;align-items:center;gap:8px}.modal h2{margin:0;font-size:16px;font-weight:600;flex:1;min-width:0}
 .rprev{margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--raised);border:1px solid var(--border);font-size:12.5px;display:flex;flex-direction:column;gap:4px}
 .rprev pre{margin:6px 0 0;white-space:pre-wrap;font:12px/1.45 var(--mono,ui-monospace,monospace);color:var(--fg)}
+
+/* run terminal */
+.term{background:#0B0D10;color:#C9D1D9;border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:320px;overflow:auto;
+  font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.tl-sys{color:#7DD3FC}.tl-err{color:#FCA5A5}.tl-stall{color:#FBBF24;font-weight:600}
+.tl-cursor{color:#C9D1D9;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.term-live{font-size:11px;font-weight:500;color:#22C55E;display:inline-flex;align-items:center;gap:5px;text-transform:none;letter-spacing:0}
+.term-live::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;animation:blink 1.4s steps(1) infinite}
+.term-live.is-stall{color:#FBBF24}
+.term-tog{padding-left:0;font-weight:600}
+.rot-90{transform:rotate(-90deg)}
+.btn-danger{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,var(--border))}

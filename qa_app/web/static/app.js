@@ -139,11 +139,12 @@ const STEP_SKILL = ['gather', 'create-tests', 'run-tests', 'jira-comment', 'test
 
 /* ------------------------------------------------------------------ state */
 const S = {
+  term: {},  // ticket key -> live Playwright output lines (null while loading)
   theme: store.get('theme', 'dark'),
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
-    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), clFilter: {}, clOpen: {}, feedOpen: {}, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), clFilter: {}, clOpen: {}, feedOpen: {}, termOpen: {}, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   hist: { data: null, run: null, cmp: null, err: '', q: '', key: '', project: '', type: '', status: '', env: '', range: store.get('histRange', '30d') },
   reports: { trends: null, list: null, range: store.get('repRange', '30d'), project: '', type: '', busy: '', err: '', preview: null, period: { from: '', to: '' } },
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
@@ -187,6 +188,10 @@ function connect() {
       if (S.board.sel === ev.key) S.board.sel = null;
     } else if (ev.type === 'sync' && d) {
       d.lastSync = ev.lastSync; d.syncError = ev.error || '';
+    } else if (ev.type === 'term') {
+      if (ev.reset) S.term[ev.key] = [];
+      else if (S.term[ev.key]) { S.term[ev.key].push(ev.line); if (S.term[ev.key].length > 1500) S.term[ev.key].splice(0, 300); }
+      if (S.board.sel !== ev.key) return;
     } else if (ev.type === 'toast') {
       toast(ev.message);
       return;
@@ -688,6 +693,7 @@ function viewDrawer() {
   if (t.checklist.length && !(st === 0 && sub !== 'gate')) {
     body += `<div><div class="lbl">QA checklist</div>${qaChecklist({ key: t.key, sections: t.checklist, ran, running: t.running_item, runId: t.run_id, evidence: t.evidence || {}, live: st === 2 && sub === 'working' })}</div>`;
   }
+  body += viewTerminal(t);
   if ((t.runs || []).length) {
     body += `<div><div class="lbl" style="display:flex;align-items:center">Runs (${t.runs.length})<a class="btn btn-quiet btn-sm" style="margin-left:auto" href="#/history?key=${encodeURIComponent(t.key)}">All in History${svg(IC.arrow, 'ic ic-s')}</a></div><div class="box">${t.runs.slice().reverse().map((r) => `<a class="brow run-row" href="#/history/${encodeURIComponent(r.id)}"><span class="rstat rs-${esc(r.status)}">${esc(RUN_STATUS[r.status] || r.status)}</span><span>Run ${r.run_no}</span><span style="color:var(--muted)">${esc(TRIGGER[r.trigger] || '')}</span>${countBar(r.counts)}<span style="margin-left:auto;color:var(--faint);white-space:nowrap">${when(r.started)}</span></a>`).join('')}</div></div>`;
   }
@@ -747,6 +753,32 @@ ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="
 <button type="button" class="btn btn-quiet btn-icon" style="margin-left:auto" data-act="chatToggle" aria-label="Hide the chat" title="Hide the chat">${svg(IC.close)}</button></div>
 ${viewChat(t)}</section>` : ''}
 </div></aside>`;
+}
+
+/* The run's terminal: every line Playwright prints, live, as you'd see it in a VS Code terminal. */
+async function loadTerminal(key) {
+  S.term[key] = null;
+  try { const r = await api('GET', `/api/tickets/${encodeURIComponent(key)}/terminal`); S.term[key] = r.lines || []; }
+  catch (e) { S.term[key] = []; }
+  schedule();
+}
+
+function viewTerminal(t) {
+  const B = S.board, key = t.key;
+  const running = t.stage === 2 && t.sub === 'working' && !t.error;
+  if (S.term[key] === undefined) loadTerminal(key);
+  const lines = S.term[key] || [];
+  if (!running && !lines.length) return '';
+  const open = B.termOpen[key] != null ? B.termOpen[key] : running || !!t.error;
+  const last = lines.length ? lines[lines.length - 1] : null;
+  const stalled = running && last && last.kind === 'stall';
+  const rows = lines.map((l) => `<div class="tl tl-${esc(l.kind)}">${esc(l.text)}</div>`).join('');
+  const log = t.run_id && !running ? `<a class="btn btn-quiet btn-sm" href="/api/history/${encodeURIComponent(t.run_id)}/file/terminal.log" target="_blank" rel="noopener">terminal.log${svg(IC.ext, 'ic ic-s')}</a>` : '';
+  return `<div><div class="lbl" style="display:flex;align-items:center;gap:8px">
+<button type="button" class="btn btn-quiet btn-sm term-tog" data-act="termToggle" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}Terminal · Playwright</button>
+${running ? `<span class="term-live${stalled ? ' is-stall' : ''}">${stalled ? 'silent' : 'live'}</span>` : ''}<span style="color:var(--faint);font-weight:400">${lines.length} line${lines.length === 1 ? '' : 's'}</span>
+<span style="margin-left:auto;display:flex;gap:6px">${log}${running ? `<button type="button" class="btn btn-sm btn-danger" data-act="stopRun" data-key="${esc(key)}" title="End the Playwright run. Retry starts it again.">${svg(IC.close, 'ic ic-s')}Stop</button>` : ''}</span></div>
+${open ? `<div class="term" data-keep="term-${esc(key)}" data-stick="bottom" role="log" aria-live="off">${rows || '<div class="tl tl-sys">Starting Playwright…</div>'}${running && !stalled ? '<div class="tl tl-cursor">▍</div>' : ''}</div>` : ''}</div>`;
 }
 
 /* Chat with Claude about this ticket. Claude's suggested actions are buttons; nothing runs until you click one. */
@@ -1549,6 +1581,17 @@ const ACTS = {
     try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'retry', stage: t.stage, sub: t.sub }); } catch (e) { S.board.actErr = e.message; }
   },
   openTicket: (el) => { S.board.sel = el.dataset.key; },
+  termToggle: (el) => {
+    const B = S.board, k = el.dataset.key;
+    B.termOpen[k] = el.getAttribute('aria-expanded') !== 'true';
+  },
+  stopRun: async (el) => {
+    const t = S.board.data.tickets.find((x) => x.key === el.dataset.key);
+    if (!t) return;
+    S.board.actErr = '';
+    try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'stop', stage: t.stage, sub: t.sub }); } catch (e) { S.board.actErr = e.message; }
+    schedule();
+  },
   // run
   // reports
   makeReport: (el) => {

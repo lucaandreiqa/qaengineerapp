@@ -395,6 +395,19 @@ async def reports_send(rid: str, body: SendIn) -> dict:
         raise HTTPException(502, f"Sending failed: {str(e).splitlines()[0][:300]}")
 
 
+@app.get("/api/tickets/{key}/terminal")
+def ticket_terminal(key: str) -> dict:
+    """The ticket's run output: live while it runs; after an app restart, the last run's saved terminal.log."""
+    wf = S().workflow
+    lines = wf.terminal(key)
+    t = wf.tickets.get(key)
+    if not lines and t and t.run_id:
+        log_file = wf.history().dir(t.run_id) / "terminal.log"
+        if log_file.exists():
+            lines = [{"kind": "out", "text": l, "at": 0} for l in log_file.read_text(encoding="utf-8", errors="replace").splitlines()[-1500:]]
+    return {"lines": lines, "running": bool(t and t.stage == 2 and t.sub == "working" and not t.error)}
+
+
 class ChatIn(BaseModel):
     message: str
 
