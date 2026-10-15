@@ -492,3 +492,7 @@ html,body{background:#0B0C0E}
 .term-tog{padding-left:0;font-weight:600}
 .rot-90{transform:rotate(-90deg)}
 .btn-danger{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 40%,var(--border))}
+
+.cost-step{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}
+.cost-skill{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--muted);text-decoration:none;width:max-content;max-width:100%}
+.cost-skill:hover{color:var(--accent,var(--fg));text-decoration:underline}

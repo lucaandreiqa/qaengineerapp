@@ -103,14 +103,29 @@ function costChip(c) {
   if (!c || !c.calls) return '';
   return `<span class="cost" title="${esc(costTip(c))}">${svg(IC.bolt, 'ic ic-s')}${onPlan(c) ? '≈' : ''}${fmtUsd(c.cost)}${c.unpriced ? '+' : ''}</span>`;
 }
+/* Claude's work on the ticket: one row per step with the skill it followed and what it cost. */
+const STEP_ORDER = ['gather', 'create-tests', 'run-tests', 'jira-comment', 'testrail', 'chat'];
+const STEP_LABEL = { gather: 'Gather requirements', 'create-tests': 'Create tests', 'run-tests': 'Run tests', 'jira-comment': 'Jira comment', testrail: 'TestRail cases', chat: 'Chat with Claude' };
 function viewCost(t) {
-  const c = t.cost;
-  if (!c || !c.calls) return '';
-  const rows = Object.values(c.by_step).map((s) => `<div class="brow cost-row"><span class="ctx-k" style="flex-basis:150px">${esc(s.name)}</span>
-<span class="cost-n">${s.calls}×</span><span class="cost-n">${fmtTok(s.input)} in</span><span class="cost-n">${fmtTok(s.output)} out</span><span class="cost-v">${fmtUsd(s.cost)}</span></div>`).join('');
-  return `<div><div class="lbl">Claude cost for this ticket</div><div class="box">${rows}
-<div class="brow cost-row cost-total"><span class="ctx-k" style="flex-basis:150px">Total</span><span class="cost-n">${c.calls}×</span><span class="cost-n">${fmtTok(c.input)} in</span><span class="cost-n">${fmtTok(c.output)} out</span><span class="cost-v">${fmtUsd(c.cost)}</span></div></div>
-<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">${onPlan(c) ? 'Made through Claude Code on your Claude plan, so nothing is billed per call: the amounts are what the same tokens would cost at API prices.' : c.plan_calls ? `${c.plan_calls} of ${c.calls} calls went through your Claude plan (their amounts are API-price equivalents).` : "Exact token counts from each Claude reply, priced at Anthropic's list prices."} Redos add to the total.${c.unpriced ? ` ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} used a model without a known price and count as $0.` : ''}</p></div>`;
+  const c = t.cost && t.cost.calls ? t.cost : null;
+  const skills = t.skills || {};
+  const steps = STEP_ORDER.filter((k) => (c && c.by_step[k]) || skills[k])
+    .concat(Object.keys((c && c.by_step) || {}).filter((k) => !STEP_ORDER.includes(k)))
+    .concat(Object.keys(skills).filter((k) => !STEP_ORDER.includes(k) && !(c && c.by_step[k])));
+  if (!steps.length) return '';
+  const dash = '<span class="cost-n" style="color:var(--faint)">—</span>';
+  const rows = steps.map((k) => {
+    const st = c && c.by_step[k];
+    const name = (st && st.name) || STEP_LABEL[k] || k;
+    const skill = skills[k] ? `<a class="cost-skill" href="#/skills?step=${esc(k)}" title="Skill Claude followed for this step">${svg(IC.doc || IC.dotc, 'ic ic-s')}${esc(skills[k])}</a>` : '';
+    const nums = st ? `<span class="cost-n">${st.calls}×</span><span class="cost-n">${fmtTok(st.input)} in</span><span class="cost-n">${fmtTok(st.output)} out</span><span class="cost-v">${fmtUsd(st.cost)}</span>`
+      : `${dash}${dash}${dash}<span class="cost-v" style="color:var(--faint)">—</span>`;
+    return `<div class="brow cost-row"><span class="cost-step"><span>${esc(name)}</span>${skill}</span>${nums}</div>`;
+  }).join('');
+  const total = c ? `<div class="brow cost-row cost-total"><span class="cost-step"><span>Total</span></span><span class="cost-n">${c.calls}×</span><span class="cost-n">${fmtTok(c.input)} in</span><span class="cost-n">${fmtTok(c.output)} out</span><span class="cost-v">${fmtUsd(c.cost)}</span></div>` : '';
+  const note = c ? `${onPlan(c) ? 'Made through Claude Code on your Claude plan, so nothing is billed per call: amounts are what the same tokens would cost at API prices.' : c.plan_calls ? `${c.plan_calls} of ${c.calls} calls went through your Claude plan (their amounts are API-price equivalents).` : "Exact token counts from each Claude reply, priced at Anthropic's list prices."} Redos add to the total.${c.unpriced ? ` ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} used a model without a known price and count as $0.` : ''}` : '';
+  return `<div><div class="lbl">Claude's work · skills and cost</div><div class="box">${rows}${total}</div>
+${note ? `<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">${note}</p>` : ''}</div>`;
 }
 
 /* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
@@ -490,9 +505,6 @@ function viewTicketContext(t) {
   const rows = [];
   const row = (label, html) => rows.push(`<div class="brow ctx-row"><span class="ctx-k">${label}</span><span class="ctx-v">${html}</span></div>`);
   const ref = (r) => `<span class="mono">${esc(r.key)}</span> ${esc(r.title)}${r.status ? ` <span style="color:var(--faint)">· ${esc(r.status)}</span>` : ''}`;
-  row('Read', [`${c.comments} comment${c.comments === 1 ? '' : 's'}`, c.has_description ? 'description' : null, c.has_acceptance ? 'acceptance criteria' : null,
-    c.attachments.length ? `${c.attachments.length} attachment${c.attachments.length === 1 ? '' : 's'}` : null].filter(Boolean).map(esc).join(' · '));
-  if (c.reporter || c.assignee) row('People', esc([c.reporter && `Reported by ${c.reporter}`, c.assignee && `assigned to ${c.assignee}`].filter(Boolean).join(', ')));
   if (c.parent) row('Parent', ref(c.parent));
   if (c.links.length) row('Linked', c.links.map((l) => `${esc(l.relation)} ${ref(l)}`).join('<br>'));
   if (c.subtasks.length) row('Subtasks', c.subtasks.map(ref).join('<br>'));
@@ -500,8 +512,9 @@ function viewTicketContext(t) {
   if (c.web_links.length) row('Web links', c.web_links.map((w) => `<a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.title || w.url)}</a>`).join('<br>'));
   Object.entries(c.fields || {}).slice(0, 8).forEach(([k, v]) => row(esc(k), esc(String(v).slice(0, 160))));
   const warn = !c.has_description && !c.has_acceptance
-    ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<span>The ticket has no description or acceptance criteria, so the checklist can only go on the title and comments.</span></div>` : '';
-  return `<div><div class="lbl">From the ticket</div>${tags ? `<div class="ctx-tags">${tags}</div>` : ''}<div class="box">${rows.join('')}</div>${warn}</div>`;
+    ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<span>No description or acceptance criteria: the checklist is based on the title and comments.</span></div>` : '';
+  if (!tags && !rows.length && !warn) return '';
+  return `<div><div class="lbl">From the ticket</div>${tags ? `<div class="ctx-tags">${tags}</div>` : ''}${rows.length ? `<div class="box">${rows.join('')}</div>` : ''}${warn}</div>`;
 }
 
 /* ------------------------------------------------------------------ Skills: how Claude does each board step */
@@ -708,7 +721,7 @@ function viewDrawer() {
   body += viewTicketContext(t);
   body += `<div><div class="lbl" style="display:flex;align-items:center">Target environment${t.env && t.canRedo && sub !== 'blocked' ? `<button type="button" class="btn btn-quiet btn-sm" style="margin-left:auto" data-act="envEdit" data-key="${esc(t.key)}" aria-expanded="${!!B.envEdit[t.key]}">${B.envEdit[t.key] ? 'Cancel' : 'Change'}</button>` : ''}</div>`;
   if (t.env) {
-    body += `<div class="box"><div class="brow" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted)">${esc(t.env.kind)}${t.env.source ? ` · from ${esc(t.env.source)}` : ''}</span><span class="mono trunc" style="max-width:100%">${esc(t.env.url)}</span><span style="color:var(--faint);font-size:11.5px">${esc(t.env.api)}</span></div></div>`;
+    body += `<div class="box"><div class="brow"><a class="mono trunc" style="max-width:100%" href="${esc(t.env.url)}" target="_blank" rel="noopener" title="${esc(t.env.kind + (t.env.source ? ' · from ' + t.env.source : ''))}">${esc(t.env.url)}</a></div></div>`;
     if (B.envEdit[t.key] && t.canRedo) body += envPicker(t, 'change');
   } else {
     body += `<div class="callout c-warn">${svg(IC.warn)}<span>${esc(sub === 'blocked' && t.doing ? t.doing : 'No environment resolved yet.')}</span></div>`;
@@ -761,11 +774,6 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
 <p style="margin:6px 0 0;color:var(--muted);font-size:12px">${t.dups ? t.dups + ' existing case' + (t.dups > 1 ? 's' : '') + ' matched and ' + (t.dups > 1 ? 'were' : 'was') + ' left out. ' : 'No duplicates found. '}Only PASS items become cases.</p></div>`;
   }
   body += viewCost(t);
-  const used = Object.entries(t.skills || {});
-  if (used.length) {
-    const names = { gather: 'Gather requirements', 'create-tests': 'Create tests', 'run-tests': 'Run tests', 'jira-comment': 'Jira comment', testrail: 'TestRail cases' };
-    body += `<div><div class="lbl">Skills Claude followed</div><div class="box">${used.map(([k, v]) => `<div class="brow ctx-row"><span class="ctx-k">${esc(names[k] || k)}</span><span class="ctx-v"><a href="#/skills?step=${esc(k)}">${esc(v)}</a></span></div>`).join('')}</div></div>`;
-  }
   body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
 
   const canAct = d.primary && !t.error;
