@@ -12,6 +12,7 @@ const store = {
 /* ------------------------------------------------------------------ icons */
 const svg = (d, cls = 'ic', extra = '') => `<svg class="${cls}" ${extra} viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const IC = {
+  skip: '<path d="M5 6l7 6-7 6z"></path><path d="M13 6l7 6-7 6z"></path>',
   skill: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"></path><path d="M17 7.5h1.5A1.5 1.5 0 0 1 20 9v11h-3"></path><path d="M8.5 9h5M8.5 12.5h5M8.5 16h3"></path>',
   board: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
   run: '<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>',
@@ -730,7 +731,7 @@ function viewDrawer() {
   body += '</div>';
 
   if (t.error) {
-    body += `<div class="callout c-err">${svg(IC.err)}<div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span>${esc(t.error)}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${isWorking(t) ? `<button type="button" class="btn btn-sm" data-act="retry" data-key="${esc(t.key)}">Retry this step</button>` : ''}${skipButton(t)}</div></div></div>`;
+    body += `<div class="callout c-err">${svg(IC.err)}<div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span>${esc(t.error)}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${isWorking(t) ? `<button type="button" class="btn btn-sm" data-act="retry" data-key="${esc(t.key)}">Retry this step</button>` : ''}<span style="align-self:center;color:var(--muted);font-size:12px">or skip it with the button below</span></div></div></div>`;
   }
 
   if (st === 0 && sub !== 'gate') {
@@ -810,8 +811,8 @@ ${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet btn-sm" data-act
 <div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;background:var(--raised)">
 ${t.canRedo ? redoButton(t) : ''}
-<span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above, then retry.' : d.note || 'Working. Nothing needs you yet.'))}</span>
-${t.error ? '' : skipButton(t)}
+<span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above and retry, or skip this step.' : d.note || 'Working. Nothing needs you yet.'))}</span>
+${skipButton(t)}
 ${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
 </div>
@@ -826,7 +827,7 @@ ${viewChat(t)}</section>` : ''}
 function skipButton(t) {
   const sure = S.board.skipSure === t.key;
   const lane = t.stage === 3 ? (t.sub === 'transition' ? 'the move' : 'the comment') : ['gathering', 'the tests', 'the tests', '', 'TestRail'][t.stage];
-  return `<button type="button" class="btn btn-sm ${sure ? 'btn-danger' : 'btn-quiet'}" data-act="skipStep" data-key="${esc(t.key)}" title="Move on without this step. Nothing is posted, moved or pushed.">${sure ? `Skip ${lane}? Click again` : 'Skip this step'}</button>`;
+  return `<button type="button" class="btn ${sure ? 'btn-danger' : ''}" data-act="skipStep" data-key="${esc(t.key)}" title="Move on without this step. Nothing is posted, moved or pushed.">${svg(IC.skip, 'ic ic-s')}${sure ? `Skip ${lane}? Click again` : 'Skip this step'}</button>`;
 }
 
 /* The run's terminal: every line Playwright prints, live, as you'd see it in a VS Code terminal. */
