@@ -22,7 +22,7 @@ from .history import RunStore, counts, norm
 
 KINDS = {"run": "Run report", "ticket": "Ticket report", "period": "Period summary"}
 RES_WORD = {"pass": "Passed", "fail": "Failed", "partial": "Partial", "blocked": "Blocked", "nt": "Not tested"}
-STATUS_WORD = {"passed": "Passed", "failed": "Failed", "error": "Error", "stopped": "Stopped", "running": "Running"}
+STATUS_WORD = {"passed": "Passed", "failed": "Failed", "error": "Error", "stopped": "Stopped", "skipped": "Skipped", "running": "Running"}
 BAD = ("fail", "partial", "blocked")
 MAX_IMG = 900_000  # bytes per inlined screenshot
 

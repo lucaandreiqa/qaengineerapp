@@ -732,3 +732,80 @@ def test_the_cases_file_has_steps_and_expected_results():
 def test_demo_cases_have_steps():
     t = next(x for x in seed.seed_tickets() if x.key == "OPTR-48437")
     assert t.cases and all(c.steps and c.expected for c in t.cases)
+
+
+def _skip(wf, key):
+    t = wf.tickets.get(key)
+    return run(wf.act(key, "skip", t.stage, t.sub))
+
+
+def test_skipping_gather_moves_on_with_the_checklist_so_far(wf):
+    key = "OPTR-48512"  # still gathering
+    _skip(wf, key)
+    run(settle(wf))
+    t = wf.tickets.get(key)
+    assert t.stage >= 1 and any("Skipped" in m["text"] for m in t.chat)
+    if not t.items():
+        assert "No checks" in t.error  # lane 2 says what it lacks; you can skip it too
+
+
+def test_skipping_the_results_review_drafts_the_comment_without_touching_jira(wf):
+    key = "OPTR-48466"  # Gate 2
+    before = list(wf.mock_jira.comments.get(key, []))
+    _skip(wf, key)
+    t = wf.tickets.get(key)
+    assert (t.stage, t.sub) == (3, "comment") and t.comment
+    assert wf.mock_jira.comments.get(key, []) == before
+
+
+def test_skipping_the_comment_posts_nothing_and_offers_the_move(wf):
+    key = "OPTR-48455"  # Gate 3a
+    before = list(wf.mock_jira.comments.get(key, []))
+    _skip(wf, key)
+    t = wf.tickets.get(key)
+    assert (t.stage, t.sub) == (3, "transition") and "Docs" in t.transitions
+    assert wf.mock_jira.comments.get(key, []) == before
+    status = wf.mock_jira.issues[key]["status"]
+    _skip(wf, key)  # and skipping the move leaves the Jira status alone
+    run(settle(wf))
+    t = wf.tickets.get(key)
+    assert t.stage == 4 and wf.mock_jira.issues[key]["status"] == status
+
+
+def test_skipping_testrail_finishes_the_ticket_without_pushing(wf):
+    key = "OPTR-48437"  # Gate 4
+    cases_before = {k: list(v) for k, v in wf.mock_testrail.cases.items()}
+    done = wf.tickets.finished_today()
+    _skip(wf, key)
+    assert wf.tickets.get(key) is None and wf.tickets.finished_today() == done + 1
+    assert {k: list(v) for k, v in wf.mock_testrail.cases.items()} == cases_before
+
+
+def test_skipping_a_running_test_records_the_run_as_skipped(wf, monkeypatch):
+    started = asyncio.Event()
+
+    async def forever(cfg, t, run_dir, on_event, on_output=None):
+        started.set()
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(agent, "run_spec", forever)
+    key = "OPTR-48498"
+    t = _live(wf, key)
+    wf.live_store.tickets[key] = t.model_copy(update={"stage": 2, "sub": "working"})
+
+    async def go():
+        wf.spawn(key, wf._run(key))
+        await asyncio.wait_for(started.wait(), 2)
+        cur = wf.tickets.get(key)
+        await wf.act(key, "skip", cur.stage, cur.sub)
+        await asyncio.sleep(0.05)
+    run(go())
+    rec = wf.history().list(key=key)[0]
+    assert rec["status"] == "skipped" and "Create & run tests" in wf.history().get(rec["id"])["after"]["skipped"]
+    t = wf.tickets.get(key)
+    assert (t.stage, t.sub) == (3, "comment") and not t.error
+
+
+def test_skip_is_refused_when_the_ticket_moved_on(wf):
+    key = "OPTR-48466"
+    with pytest.raises(GateError):
+        run(wf.act(key, "skip", 0, "gate"))

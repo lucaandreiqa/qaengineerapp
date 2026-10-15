@@ -514,3 +514,5 @@ textarea.sk-text{height:max(62vh,420px);min-height:220px;padding:12px;line-heigh
 .tc-steps{margin:0;padding-left:18px}.tc-steps li{margin:2px 0}
 .tc-exp{margin:0;padding-left:18px}.tc-exp1{margin:0}
 .tc-empty{margin:0;color:var(--muted)}
+
+.rs-skipped{color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent)}

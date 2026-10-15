@@ -44,6 +44,11 @@ use, outside the board.
   Stale actions are refused.
 - Work between gates runs as background tasks (`Workflow.spawn`); one per ticket. **Stop** cancels it (and kills the
   Playwright process); **Retry** starts the step again.
+- **Skip** (`Workflow._skip`, action `skip`) moves on without the current lane, whether it is working, failed or at its
+  gate. It cancels the lane's work and never performs the lane's write: lane 1 → lane 2 with the checklist so far
+  (lane 2 reports "No checks" if it is empty); lane 2 → Jira comment drafted (unrun checks stay not tested; an active run
+  is recorded as `skipped`); 3a → move offered, nothing posted; 3b → TestRail drafting, status unchanged; lane 5 → ticket
+  finished, nothing pushed. Each skip is said in the feed and added to the run record (`after.skipped`).
 - Two stores: demo tickets and live tickets never mix (`TicketStore`, JSON on disk).
 - Every change is published on the event bus (`store.bus`) and streamed to the browser over `/api/events`:
   `ticket`, `term` (terminal lines), `toast`, `sync`, `removed`.
@@ -199,6 +204,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-15: Every lane can be skipped (working, failed or at its gate); skipping never writes to Jira or TestRail and is recorded in History.
 - 2026-10-15: Lane 5 shows the drafted TestRail cases in full (steps, expected) and folds the checklist away; `<KEY>-testrail-cases.md` includes steps and expected results.
 - 2026-10-15: A TestRail project missing from the settings is worked out on first use (suite, link or only project) and saved.
 - 2026-10-15: TestRail card takes the project (and suite) from a pasted page link; Project ID is no longer required.

@@ -176,6 +176,11 @@ skill (editable on the Skills screen). Next time the comment is posted, that sta
 "picked by the skill"; in Gated mode you still approve the move, and choosing another state asks again. A state Jira
 doesn't offer for the ticket is never pre-selected.
 
+**Skipping a step.** Every lane has **Skip this step** (click twice to confirm), also while it's working or after it
+failed. The ticket moves on to the next lane; skipping never posts a comment, moves the ticket or pushes cases.
+Skipping tests leaves checks not tested (the comment says so); skipping TestRail finishes the ticket. Skips show in
+the feed and in History.
+
 **TestRail cases.** In the last lane the drawer shows each drafted case in full: title, numbered steps and expected
 result (click a case to open or close it), with the target section and how many duplicates were left out. The QA
 checklist folds into one line there. `<KEY>-testrail-cases.md` has the same content. Nothing is pushed until you

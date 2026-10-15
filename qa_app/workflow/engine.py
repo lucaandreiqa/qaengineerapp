@@ -287,6 +287,8 @@ class Workflow:
             return self.tickets.get(key)  # type: ignore[return-value]
         if action == "stop":
             return await self._stop(t)
+        if action == "skip":
+            return await self._skip(t, stage)
         if (t.stage, t.sub) != (stage, sub):
             raise GateError(f"{key} has moved on (now lane {t.stage + 1} · {t.sub}). Review it again before acting.")
         if action == "redo_gather":
@@ -295,6 +297,67 @@ class Workflow:
         if expected != action:
             raise GateError(f"{key} is waiting for '{expected or 'nothing'}', not '{action}'")
         return await getattr(self, f"_a_{action}")(t, payload)
+
+    LANE_NAMES = ["Gather requirements", "Create & run tests", "Run tests", "Jira comment & move", "TestRail cases"]
+
+    async def _skip(self, t: Ticket, stage: int) -> Ticket:
+        """Move on without this lane: stop its work, never do its write (no comment, no move, no push), record the skip,
+        and start the next lane with what there is."""
+        if t.stage != stage:
+            raise GateError(f"{t.key} has moved on (now lane {t.stage + 1} · {t.sub}). Review it again before skipping.")
+        task = self.tasks.get(t.key)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), 5)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        t = self.tickets.get(t.key) or t
+        store = self.history()
+        if t.run_id:
+            try:
+                rec = store.get(t.run_id)
+                if rec.get("status") in ("running", "stopped") and t.stage in (1, 2):
+                    store.fail(t.run_id, "Skipped by you", status="skipped")
+            except KeyError:
+                pass
+        if t.stage == 3 and t.sub == "transition":
+            lane = "Move ticket"
+        elif t.stage == 3:
+            lane = "Jira comment"
+        else:
+            lane = self.LANE_NAMES[1] if t.stage in (1, 2) else self.LANE_NAMES[t.stage]
+        if t.run_id:
+            done = (store.get(t.run_id).get("after", {}).get("skipped") or []) if t.run_id else []
+            store.annotate(t.run_id, skipped=done + [lane])
+        key = t.key
+        self.patch(key, error="", running_item=-1, doing="")
+        if t.stage == 0:
+            self.say(key, f"Skipped {lane}. Lane 2 starts with the checklist as it is ({len(t.items())} checks).", "gather")
+            t = self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts")
+            self.spawn(key, self._build_and_run(key))
+        elif t.stage in (1, 2):
+            self.say(key, f"Skipped {lane}. Checks that didn't run stay not tested; the Jira comment says so.", "run")
+            t = await self._draft_comment(self.tickets.get(key) or t, "Skipped tests · comment drafted")
+        elif t.stage == 3 and t.sub == "comment":
+            try:
+                transitions = [tr["name"] for tr in await self._call(self.jira().get_transitions, key)]
+            except Exception:  # the move can still be chosen later
+                transitions = []
+            target = t.target if t.target in transitions else ""
+            t = self.patch(key, sub="transition", transitions=transitions, target=target)
+            self.say(key, "Skipped the Jira comment: nothing was posted. Choose where to move the ticket, or skip that too.", "jira")
+        elif t.stage == 3:
+            t = self.patch(key, stage=4, sub="drafting", section=t.section or self._section_for(t))
+            self.spawn(key, self._draft(key))
+            self.say(key, f"Skipped the move: {key} stays {t.status or 'where it is'} in the tracker. Drafting TestRail cases.", "jira")
+        else:
+            self.say(key, "Skipped TestRail cases: nothing was pushed. Ticket finished.", "testrail")
+            self.tickets.finish(key)
+            self.toast(f"{key} finished · TestRail skipped")
+            return t
+        self.toast(f"{key}: skipped {lane}")
+        return self.tickets.get(key) or t
 
     async def _stop(self, t: Ticket) -> Ticket:
         """Stop the ticket's running step (the Playwright process is ended with it). Retry starts it again."""
@@ -509,6 +572,10 @@ class Workflow:
         if not t.ran:
             raise GateError("These results did not come from a run")
         agent.CURRENT_TICKET.set(t.key)
+        self.say(t.key, "You approved the results (Gate 2). The Jira comment is drafted for your review.", "jira")
+        return await self._draft_comment(t, f"Gate 2 approved · comment drafted for {t.key}")
+
+    async def _draft_comment(self, t: Ticket, toast: str) -> Ticket:
         try:
             comment = await agent.write_comment(self.cfg, t)
             if self.cfg.claude_ready and not self.cfg.is_mock:
@@ -517,8 +584,7 @@ class Workflow:
             log.exception("Comment drafting failed for %s", t.key)
             comment = agent.comment_text(t, self.cfg)
         t = self.patch(t.key, stage=3, sub="comment", comment=comment)
-        self.say(t.key, "You approved the results (Gate 2). The Jira comment is drafted for your review.", "jira")
-        self.toast(f"Gate 2 approved · comment drafted for {t.key}")
+        self.toast(toast)
         return t
 
     async def _a_post_comment(self, t: Ticket, p: dict) -> Ticket:
@@ -791,6 +857,10 @@ class Workflow:
         agent.CURRENT_TICKET.set(key)
         t = self.tickets.get(key)
         assert t
+        if not t.items():
+            self.patch(key, stage=1, sub="working", doing="",
+                       error="No checks to build tests from. Add checks through the chat, redo step 1, or skip this step.")
+            return
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
         self.say(key, f"Building the Playwright spec for {len(t.items())} checks.", "build")
         async def more_for_spec(needs: list[str]) -> str:

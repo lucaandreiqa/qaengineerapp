@@ -642,7 +642,7 @@ ${mode === 'change' ? `<p style="margin:6px 0 0;font-size:12px;color:var(--muted
 
 /* The QA checklist, friendly: counts, progress, sections as cards, one row per check; failures open to show
    what went wrong and the evidence. Used in the ticket panel (live) and on a run's page in History. */
-const RUN_STATUS = { passed: 'Passed', failed: 'Failed', error: 'Error', stopped: 'Stopped', running: 'Running' };
+const RUN_STATUS = { passed: 'Passed', failed: 'Failed', error: 'Error', stopped: 'Stopped', skipped: 'Skipped', running: 'Running' };
 const TRIGGER = { first: 'First run', rerun_gate2: 'Rerun at Gate 2', rerun_chat: 'Rerun from the chat', after_env_change: 'After an environment change', redo: 'After redoing step 1' };
 const RES_WORD = { pass: 'Passed', fail: 'Failed', partial: 'Partial', blocked: 'Blocked', nt: 'Not tested' };
 const RES_GLYPH = { pass: '<path d="M5 12.5l4.5 4.5L19 7.5"></path>', fail: '<path d="M7 7l10 10M17 7L7 17"></path>', partial: '<path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"></path><circle cx="12" cy="12" r="8"></circle>', blocked: '<circle cx="12" cy="12" r="8"></circle><path d="M6.5 17.5l11-11"></path>', nt: '<circle cx="12" cy="12" r="7"></circle>' };
@@ -730,7 +730,7 @@ function viewDrawer() {
   body += '</div>';
 
   if (t.error) {
-    body += `<div class="callout c-err">${svg(IC.err)}<div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span>${esc(t.error)}</span>${isWorking(t) ? `<button type="button" class="btn btn-sm" style="align-self:flex-start" data-act="retry" data-key="${esc(t.key)}">Retry this step</button>` : ''}</div></div>`;
+    body += `<div class="callout c-err">${svg(IC.err)}<div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span>${esc(t.error)}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${isWorking(t) ? `<button type="button" class="btn btn-sm" data-act="retry" data-key="${esc(t.key)}">Retry this step</button>` : ''}${skipButton(t)}</div></div></div>`;
   }
 
   if (st === 0 && sub !== 'gate') {
@@ -811,6 +811,7 @@ ${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet btn-sm" data-act
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;background:var(--raised)">
 ${t.canRedo ? redoButton(t) : ''}
 <span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above, then retry.' : d.note || 'Working. Nothing needs you yet.'))}</span>
+${t.error ? '' : skipButton(t)}
 ${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
 </div>
@@ -819,6 +820,13 @@ ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="
 <button type="button" class="btn btn-quiet btn-icon" style="margin-left:auto" data-act="chatToggle" aria-label="Hide the chat" title="Hide the chat">${svg(IC.close)}</button></div>
 ${viewChat(t)}</section>` : ''}
 </div></aside>`;
+}
+
+/* Skip: move on without this lane. Never posts, moves or pushes; asks for a second click. */
+function skipButton(t) {
+  const sure = S.board.skipSure === t.key;
+  const lane = t.stage === 3 ? (t.sub === 'transition' ? 'the move' : 'the comment') : ['gathering', 'the tests', 'the tests', '', 'TestRail'][t.stage];
+  return `<button type="button" class="btn btn-sm ${sure ? 'btn-danger' : 'btn-quiet'}" data-act="skipStep" data-key="${esc(t.key)}" title="Move on without this step. Nothing is posted, moved or pushed.">${sure ? `Skip ${lane}? Click again` : 'Skip this step'}</button>`;
 }
 
 /* The run's terminal: every line Playwright prints, live, as you'd see it in a VS Code terminal. */
@@ -1105,7 +1113,7 @@ function viewHistory() {
   const sel = (k, label, opts) => `<label class="hsel"><span class="sr-only">${label}</span><select class="inp" data-in="histF" data-v="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${H[k] === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   const filters = `<div class="hfilters"><label class="search" style="flex:1 1 220px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search runs</span><input type="search" placeholder="Search key or title" value="${esc(H.q)}" data-in="histQ"></label>
 ${sel('range', 'Date', [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']])}
-${sel('status', 'Status', [['', 'Any status'], ['passed', 'Passed'], ['failed', 'Failed'], ['error', 'Error'], ['stopped', 'Stopped']])}
+${sel('status', 'Status', [['', 'Any status'], ['passed', 'Passed'], ['failed', 'Failed'], ['error', 'Error'], ['stopped', 'Stopped'], ['skipped', 'Skipped']])}
 ${sel('type', 'FE / BE', [['', 'FE and BE'], ['FE', 'FE'], ['BE', 'BE'], ['FE+BE', 'FE+BE']])}
 ${d.projects.length > 1 ? sel('project', 'Project', [['', 'All projects'], ...d.projects.map((x) => [x, x])]) : ''}
 ${d.envs.length > 1 ? sel('env', 'Environment', [['', 'All environments'], ...d.envs.map((x) => [x, hostOf(x)])]) : ''}
@@ -1654,6 +1662,17 @@ const ACTS = {
   termToggle: (el) => {
     const B = S.board, k = el.dataset.key;
     B.termOpen[k] = el.getAttribute('aria-expanded') !== 'true';
+  },
+  skipStep: async (el) => {
+    const B = S.board, t = B.data.tickets.find((x) => x.key === el.dataset.key);
+    if (!t) return;
+    if (B.skipSure !== t.key) {  // first click arms it for a few seconds
+      B.skipSure = t.key; clearTimeout(B.skipT); B.skipT = setTimeout(() => { B.skipSure = null; schedule(); }, 4000);
+      return;
+    }
+    B.skipSure = null; B.actErr = '';
+    try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'skip', stage: t.stage, sub: t.sub }); } catch (e) { B.actErr = e.message; }
+    schedule();
   },
   stopRun: async (el) => {
     const t = S.board.data.tickets.find((x) => x.key === el.dataset.key);
