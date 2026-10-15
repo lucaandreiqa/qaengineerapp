@@ -68,3 +68,23 @@ def test_with_one_project_it_is_used_and_with_several_you_are_told_which_exist(f
 def test_connection_says_which_project_and_returns_the_filled_in_fields(fake):
     text, values = testrail.check({"username": "qa@acme.com", "api_key": "k", "base_url": "https://acme.testrail.io/index.php?/suites/view/12"})
     assert "Admin Suite" in text and values == {"base_url": "https://acme.testrail.io", "project_id": "7", "suite_id": "12"}
+
+
+def test_the_board_works_out_a_missing_project_and_remembers_it(fake, monkeypatch):
+    """Saved from a suite link: suite_id set, project_id empty (as on the Mac, 2026-10-15)."""
+    from qa_app.workflow import clients
+    saved = {}
+    monkeypatch.setattr(clients, "_remember_testrail", lambda fields: saved.update(fields))
+    cfg = {"base_url": "https://acme.testrail.io", "username": "qa@acme.com", "api_key": "k", "project_id": "", "suite_id": "12", "enabled": True}
+    tr = clients.RealTestRail(cfg)
+    assert tr.cfg["project_id"] == "7" and saved == {"project_id": "7"}   # found through the suite, and saved for next time
+    with pytest.raises(clients.WorkflowError) as e:
+        clients.RealTestRail({**cfg, "username": ""})
+    assert "username" in str(e.value)
+
+
+def test_case_search_works_without_a_saved_project(fake):
+    seen = []
+    fake.get = (lambda orig: (lambda path: (seen.append(path), {"cases": [{"id": 1, "title": "x", "section_id": 2}]} if path.startswith("get_cases") else orig(path))[1]))(fake.get)
+    out = testrail.search_cases({"base_url": "https://acme.testrail.io", "username": "u", "api_key": "k", "project_id": "", "suite_id": "12"}, "OPTR-1")
+    assert out[0]["id"] == 1 and any(p.startswith("get_cases/7") for p in seen)

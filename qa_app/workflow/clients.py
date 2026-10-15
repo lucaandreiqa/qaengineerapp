@@ -52,9 +52,21 @@ class RealJira:
         return jira_api.do_transition(self.cfg, key, transition_id)
 
 
+def _remember_testrail(fields: dict) -> None:
+    """Save what was worked out (the project) so the card shows it and it isn't looked up again."""
+    from ..config import load_settings, save_section
+    save_section("testrail", {**load_settings().get("testrail", {}), **fields})
+
+
 class RealTestRail:
     def __init__(self, cfg: dict) -> None:
-        _need(cfg, ["base_url", "username", "api_key", "project_id"], "TestRail")
+        _need(cfg, ["base_url", "username", "api_key"], "TestRail")
+        if not str(cfg.get("project_id") or "").strip():  # saved from a suite / case link, or just the site
+            try:
+                cfg = testrail_api.resolve(cfg)
+            except Exception as e:
+                raise WorkflowError(f"TestRail: couldn't tell which project to use: {str(e).splitlines()[0][:240]}") from e
+            _remember_testrail({"project_id": cfg["project_id"]})
         self.cfg = cfg
 
     def find_section(self, path: str) -> Optional[int]:

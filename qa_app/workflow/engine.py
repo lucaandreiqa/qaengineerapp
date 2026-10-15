@@ -622,7 +622,7 @@ class Workflow:
         except Exception:  # Jira not connected yet, or Azure Boards
             out["confluence"] = None
         tr = st.get("testrail", {})
-        if tr.get("enabled") and tr.get("base_url") and tr.get("api_key") and tr.get("project_id"):
+        if tr.get("enabled") and tr.get("base_url") and tr.get("api_key"):  # the project can come from the suite or link
             from ..integrations import testrail
             out["testrail_search"] = lambda text: testrail.search_cases(tr, text)
         return out

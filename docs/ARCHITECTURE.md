@@ -182,7 +182,9 @@ Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-
 - TestRail: paste any page of the project. `testrail.parse_link` reads the site and whatever the page names (project,
   suite, case, run); `testrail.resolve` fills the project and suite: typed values first, then the link, then TestRail
   (a suite, case or run's project, or the only project there is; with several it lists them). The connection test
-  returns the filled-in fields so the card shows them; saving stores the clean site address.
+  returns the filled-in fields so the card shows them; saving stores the clean site address and, when the link
+  names only a suite, case or run, asks TestRail for its project. If the project is still missing when the board needs
+  TestRail (`clients.RealTestRail`, case search), it is worked out the same way and saved to the settings.
 
 
 ## 10. Testing
@@ -197,6 +199,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-15: A TestRail project missing from the settings is worked out on first use (suite, link or only project) and saved.
 - 2026-10-15: TestRail card takes the project (and suite) from a pasted page link; Project ID is no longer required.
 - 2026-10-15: Claude fetches missing data with read-only tools enforced by Claude Code (`dontAsk` + allowlist), on gaps
   and when a step asks; streamed to the terminal.

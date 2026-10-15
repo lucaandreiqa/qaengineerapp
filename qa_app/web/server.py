@@ -613,6 +613,11 @@ def save_integration(key: str, body: IntegrationIn) -> dict:
         for f in ("project_id", "suite_id"):
             if not str(values.get(f) or "").strip() and link.get(f):
                 values[f] = link[f]
+        if not str(values.get("project_id") or "").strip() and values.get("api_key"):
+            try:  # a suite / case / run link names its project only through TestRail itself
+                values = {**values, **{k: v for k, v in testrail.resolve(values).items() if k in ("project_id", "suite_id")}}
+            except Exception:
+                pass  # the board works it out on first use instead
     save_section(key, {**values, "enabled": body.enabled})
     return {"ok": True}
 

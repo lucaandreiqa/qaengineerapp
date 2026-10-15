@@ -201,8 +201,8 @@ def add_case(cfg: dict, section_id: int, title: str, steps: str, expected: str) 
 
 def search_cases(cfg: dict, text: str, limit: int = 30) -> list[dict]:
     """Read-only: cases whose title contains the text, across the project (and suite, when one is set)."""
-    tr = TestRail(cfg)
-    path = f"get_cases/{tr.project}{tr.suite_q()}&filter={requests.utils.quote(text)}&limit={limit}"
-    data = tr.get(path)
+    r = resolve(cfg)  # the project may only be known through the suite or the link
+    suite = f"&suite_id={r['suite_id']}" if str(r.get("suite_id") or "").strip() else ""
+    data = _client(r).get(f"get_cases/{r['project_id']}{suite}&filter={requests.utils.quote(text)}&limit={limit}")
     cases = data.get("cases", []) if isinstance(data, dict) else data
     return [{"id": c.get("id"), "title": c.get("title", ""), "section_id": c.get("section_id")} for c in cases[:limit]]
