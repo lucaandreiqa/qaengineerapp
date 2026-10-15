@@ -21,11 +21,19 @@ from typing import Optional
 from urllib.parse import urlparse
 
 URL = re.compile(r"""https?://[^\s<>()\[\]{}"'`|\\^]+""", re.I)
+# An address typed without http(s)://, e.g. "www.google.com" or "staging.myapp.io/login" (not part of an e-mail or a longer word).
+BARE = re.compile(r"""(?<![\w@/.:-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|dev|app|co|ai|cloud|tech|site|online|"""
+                  r"""shop|store|eu|uk|de|ro|fr|nl|es|it|pl|se|ch|at|be|us|ca|au|in|jp|test|local)(?::\d+)?"""
+                  r"""(?:/[^\s<>()\[\]{}"'`|\\^]*)?)(?![\w-])""", re.I)
 NOT_ENV_HOSTS = ("atlassian.net", "atlassian.com", "jira.com", "github.com", "githubusercontent.com", "gitlab.com", "bitbucket.org",
                  "figma.com", "docs.google.com", "drive.google.com", "sheets.google.com", "slack.com", "loom.com", "miro.com",
                  "notion.so", "notion.site", "sentry.io", "zoom.us", "teams.microsoft.com", "sharepoint.com", "dropbox.com",
                  "youtube.com", "youtu.be", "stackoverflow.com", "trello.com", "linear.app", "lucid.app",
-                 "postman.com", "npmjs.com", "pypi.org", "wikipedia.org", "google.com", "apple.com", "microsoft.com")
+                 "postman.com", "npmjs.com", "pypi.org", "wikipedia.org",
+                 # tools and help pages on big sites, not the sites themselves (www.google.com can be what you test)
+                 "meet.google.com", "calendar.google.com", "mail.google.com", "forms.google.com", "photos.google.com",
+                 "support.google.com", "accounts.google.com", "support.apple.com", "developer.apple.com",
+                 "learn.microsoft.com", "support.microsoft.com", "outlook.office.com", "office.com")
 FILE_EXT = re.compile(r"\.(png|jpe?g|gif|svg|webp|pdf|zip|gz|mp4|mov|webm|csv|xlsx?|docx?|pptx?|txt|log|har|json)$", re.I)
 ENV_WORDS = re.compile(r"\b(preview|staging|stage|stg|uat|qa\b|test(ing)? (env|on|here|at)|environment|env\b|(re)?deploy(ed|ment)?|"
                        r"review app|sandbox|available (at|on)|live (at|on)|try (it )?(at|on|here)|ready (for|to) (qa|test)|pr env)", re.I)
@@ -59,12 +67,24 @@ def _clean(u: str) -> str:
 
 
 def _links(text: str) -> list[tuple[str, str]]:
-    """(url, the line around it) for every link in a block of text."""
+    """(url, the line around it) for every link in a block of text, including addresses typed without https://."""
     out = []
     for line in (text or "").splitlines():
         for m in URL.finditer(line):
             out.append((_clean(m.group(0)), line))
+        rest = URL.sub(" ", line)
+        for m in BARE.finditer(rest):
+            out.append(("https://" + _clean(m.group(1)), line))
     return out
+
+
+def _only_link(text: str, url: str) -> bool:
+    """The whole text is this one link (how people often post 'test here')."""
+    left = URL.sub(" ", text or "")
+    left = BARE.sub(" ", left)
+    left = re.sub(r"[\[\]()<>|*_~`:.,;!?\-\s]", "", left)
+    bare = re.sub(r"^https?://", "", url).rstrip("/").lower()
+    return not left or left.lower() == bare.replace("/", "")
 
 
 def _is_api(u: str) -> bool:
@@ -105,10 +125,13 @@ def find(ctx: dict, hints: Optional[list[str]] = None, jira_host: str = "") -> l
     hints = [h.strip().lower() for h in hints or [] if h.strip()]
     found: list[Candidate] = []
 
-    def add(text: str, base: int, source: str) -> None:
-        for url, line in _links(text):
+    def add(text: str, base: int, source: str, lone_bonus: bool = False) -> None:
+        links = _links(text)
+        for url, line in links:
             c = _score(url, line, base, source, hints, jira_host)
             if c:
+                if lone_bonus and len({re.sub(r"^https?://", "", u).rstrip("/").lower() for u, _ in links}) == 1 and _only_link(text, url):
+                    c.score += 15; c.why.append("the comment is just this link")
                 found.append(c)
 
     add(ctx.get("environment", ""), 60, "Environment field")
@@ -121,13 +144,14 @@ def find(ctx: dict, hints: Optional[list[str]] = None, jira_host: str = "") -> l
     comments = ctx.get("comments") or []
     for i, cm in enumerate(reversed(comments)):  # newest first: a later deploy replaces an earlier one
         who = cm.get("author") or "someone"
-        add(cm.get("body", ""), 30 + max(0, 12 - 3 * i), f"comment by {who}" + (f" · {cm['created']}" if cm.get("created") else ""))
+        add(cm.get("body", ""), 30 + max(0, 12 - 3 * i), f"comment by {who}" + (f" · {cm['created']}" if cm.get("created") else ""),
+            lone_bonus=True)
     add(ctx.get("description", ""), 25, "description")
     add(ctx.get("acceptance_criteria", ""), 25, "acceptance criteria")
 
     best: dict[str, Candidate] = {}
     for c in found:  # keep the strongest sighting of each URL
-        key = c.url.rstrip("/").lower()
+        key = re.sub(r"^https?://", "", c.url).rstrip("/").lower()  # http and https are the same address here
         if key not in best or c.score > best[key].score:
             best[key] = c
     return sorted(best.values(), key=lambda c: -c.score)

@@ -56,7 +56,7 @@ def test_environment_field_custom_fields_web_links_and_hints():
     assert best(ctx(environment="https://test7.acme.io"))[0] == "https://test7.acme.io/"
     assert best(ctx(fields={"Preview URL": "https://abc.acme.io"}))[0] == "https://abc.acme.io/"
     assert best(ctx(web_links=[{"title": "Staging", "url": "https://acme-stg.io/"}]))[0] == "https://acme-stg.io/"
-    plain = ctx(comments=["https://box-17.acme-internal.net"])  # nothing says it's an env…
+    plain = ctx(comments=["Logs: https://box-17.acme-internal.net"])  # nothing says it's an env…
     assert best(plain)[0] is None
     assert best(plain, hints=["acme-internal.net"])[0] == "https://box-17.acme-internal.net/"  # …unless the team says so
 
@@ -81,3 +81,31 @@ def test_resolve_uses_default_only_for_merged_or_done_and_lists_candidates():
     issue = {"merged": False, "type": "FE", "context": ctx(comments=[{"body": "Deployed https://pr-5.preview.acme.dev", "author": "Ana"}])}
     env, _ = agent.resolve_environment(issue, cfg)
     assert env.url == "https://pr-5.preview.acme.dev/" and env.source == "comment by Ana" and not env.shared
+
+
+def test_a_comment_that_is_just_a_link_is_used_even_typed_without_https():
+    # Jira returns a typed "www.google.com" as a link; whichever form it arrives in, it's the environment.
+    for body in ("www.google.com", "[www.google.com](http://www.google.com) ", "[www.google.com|http://www.google.com]",
+                 "https://box-17.acme-internal.net"):
+        app = best(ctx(comments=[body]))[0]
+        assert app and app.rstrip("/").split("://")[1] in ("www.google.com", "box-17.acme-internal.net"), body
+    # one bare link among other text is offered, not used; two links in one comment are not "just a link"
+    assert best(ctx(comments=["thanks, saw www.google.com earlier"]))[0] is None
+    assert best(ctx(comments=["www.google.com www.bing.com"]))[0] is None
+    # an older lone-link comment loses to a newer env note
+    c = ctx(comments=["www.old-site.com", "Deployed to https://pr-9.preview.acme.dev"])
+    assert best(c)[0] == "https://pr-9.preview.acme.dev/"
+
+
+def test_addresses_without_https_are_found_but_emails_and_files_are_not():
+    found = envs.find(ctx(comments=["test on staging.myapp.io/login please, ping a@b.com, notes in report.md and Node.js"]))
+    assert [c.url for c in found] == ["https://staging.myapp.io/login"]
+    assert envs.find(ctx(comments=["see meet.google.com/abc and docs.google.com/x"])) == []  # Google tools still skipped
+
+
+def test_jira_link_text_without_the_address_keeps_the_address():
+    from qa_app.workflow.ticket_context import adf_text
+    link = lambda text, href: {"type": "text", "text": text, "marks": [{"type": "link", "attrs": {"href": href}}]}  # noqa: E731
+    doc = {"type": "doc", "content": [{"type": "paragraph", "content": [link("www.google.com", "http://www.google.com")]},
+                                      {"type": "paragraph", "content": [link("the preview", "https://pr-3.vercel.app")]}]}
+    assert adf_text(doc).splitlines() == ["http://www.google.com", "the preview (https://pr-3.vercel.app)"]

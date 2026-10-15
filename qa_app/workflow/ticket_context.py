@@ -35,7 +35,11 @@ def adf_text(node: Any) -> str:
         return ""
     t = node.get("type")
     if t == "text":
-        return node.get("text", "")
+        s = node.get("text", "")
+        href = next(((m.get("attrs") or {}).get("href", "") for m in node.get("marks") or [] if m.get("type") == "link"), "")
+        if href and href not in s:  # a link whose text hides the address, e.g. "www.google.com" → http://www.google.com
+            return href if re.sub(r"^https?://", "", href).rstrip("/") == s.strip().rstrip("/") else f"{s} ({href})"
+        return s
     if t == "hardBreak":
         return "\n"
     if t in ("mention", "emoji", "status", "date", "inlineCard"):
