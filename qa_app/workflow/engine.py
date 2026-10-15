@@ -24,7 +24,7 @@ from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
 from . import chat as chat_mod
-from . import costs, history, terminal as term_mod, ticket_context
+from . import costs, history, move_rules, skills, terminal as term_mod, ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
@@ -325,6 +325,7 @@ class Workflow:
             if target and t.transitions and target not in t.transitions:
                 raise GateError(f"'{target}' is not a transition Jira returned", extra={"transitions": t.transitions})
             upd["target"] = target
+            upd["target_from"] = ""  # your choice now, not the skill's
         return self.patch(key, **upd) if upd else t
 
     # ---------------------------------------------------------------- chat with Claude about a ticket
@@ -380,8 +381,10 @@ class Workflow:
             a = t.chat[msg_i]["actions"][act_i]
         except (IndexError, KeyError, TypeError):
             raise GateError("That suggestion is gone", 404)
-        if a.get("state") == "applied":
+        if a.get("state") in ("applied", "dismissed"):
             raise GateError("Already done")
+        if a.get("kind") in ("learn_move", "skip_learn"):  # YourQA's own question: about the skill, not the ticket's state
+            return self._answer_learn(t, msg_i, act_i, a)
         if (t.stage, t.sub) != (stage, sub):
             raise GateError(f"{key} has moved on (now lane {t.stage + 1} · {t.sub}). Ask Claude again.")
         why = chat_mod.check(a, t, self.can_redo_gather(t))
@@ -416,6 +419,22 @@ class Workflow:
         self.toast(f"{key}: {a['label']}")
         return self.patch(key, chat=chat[-chat_mod.MAX_MESSAGES:])
 
+    def _answer_learn(self, t: Ticket, msg_i: int, act_i: int, a: dict) -> Ticket:
+        if a["kind"] == "learn_move":
+            if a.get("outcome") not in move_rules.OUTCOMES or not str(a.get("state") or "").strip():
+                raise GateError("That suggestion is incomplete")
+            text, _ = skills.general("jira-comment")
+            skills.save_general("jira-comment", move_rules.with_rule(text, a["outcome"], str(a["state"])))
+            note = f"Skill updated: when {move_rules.OUTCOMES[a['outcome']]}, I'll pick \"{a['state']}\". You can edit it on the Skills screen."
+        else:
+            note = "OK, the skill stays as it is."
+        chat = [dict(m) for m in t.chat]
+        chat[msg_i]["actions"] = [dict(x, state="applied" if j == act_i else "dismissed") for j, x in enumerate(chat[msg_i]["actions"])]
+        chat.append(chat_mod.message("event", note))
+        if a["kind"] == "learn_move":
+            self.toast("Skill updated: Jira comment & move")
+        return self.patch(t.key, chat=chat[-chat_mod.MAX_MESSAGES:])
+
     def chat_clear(self, key: str) -> Ticket:
         t = self.tickets.get(key)
         if not t:
@@ -445,7 +464,7 @@ class Workflow:
             checklist = [Section(name=s.name, items=[CheckItem(text=i.text) for i in s.items]) for s in t.checklist]
         t = self.patch(t.key, stage=0, sub="working", p1=0, error="", doing="Reading the ticket again",
                        env=keep_env, env_candidates=[], checklist=checklist, ran=False, cleanup=[], left="",
-                       comment=None, comment_at="", target="", transitions=[], cases=[], dups=0)
+                       comment=None, comment_at="", target="", target_from="", transitions=[], cases=[], dups=0)
         self.spawn(t.key, self._gather(t.key))
         self.toast(f"{t.key}: reading the ticket again" + (" (keeping the environment you chose)" if keep_env else ""))
         return t
@@ -509,8 +528,12 @@ class Workflow:
         jira = self.jira()
         await self._call(jira.add_comment, t.key, text)
         transitions = [tr["name"] for tr in await self._call(jira.get_transitions, t.key)]
-        target = t.target if t.target in transitions else ""
-        t = self.patch(t.key, sub="transition", comment=text, comment_at=now_hhmm(), transitions=transitions, target=target)
+        target, target_from = (t.target, "") if t.target in transitions else ("", "")
+        if not target:  # nothing planned: the state the skill learned for this kind of result
+            target = move_rules.pick(skills.general("jira-comment")[0], move_rules.outcome(t.items()), transitions)
+            target_from = "skill" if target else ""
+        t = self.patch(t.key, sub="transition", comment=text, comment_at=now_hhmm(), transitions=transitions, target=target,
+                       target_from=target_from)
         self.history().annotate(t.run_id, comment=text, comment_at=time.time())
         self.say(t.key, "Comment posted on the ticket. Moving it needs its own approval (Gate 3b).", "jira")
         self.toast(f"Comment posted on {t.key} · the move needs its own approval")
@@ -535,7 +558,22 @@ class Workflow:
         self.say(t.key, f"Ticket moved to {target}. Drafting TestRail cases.", "jira")
         self.history().annotate(t.run_id, moved_to=target)
         self.toast(f"{t.key} moved to {target} · drafting TestRail cases")
-        return t
+        self._offer_to_learn(t, target)
+        return self.tickets.get(t.key) or t
+
+    def _offer_to_learn(self, t: Ticket, target: str) -> None:
+        """After a move: if the skill wouldn't have picked this state, ask whether to learn it for next time."""
+        result = move_rules.outcome(t.items())
+        if move_rules.rules(skills.general("jira-comment")[0]).get(result) == target:
+            return
+        line = move_rules.rule_line(result, target)
+        text = (f"You moved {t.key} to **{target}** after {move_rules.DESCRIBE[result]}. Should I update the "
+                f"**Jira comment & move** skill so I pick this state myself next time, on every board?\n\nRule: `{line[2:]}`")
+        acts = [{"kind": "learn_move", "label": "Update the skill", "outcome": result, "state": target},
+                {"kind": "skip_learn", "label": "No thanks"}]
+        cur = self.tickets.get(t.key)
+        if cur:
+            self.patch(t.key, chat=(cur.chat + [chat_mod.message("assistant", text, actions=acts, step="jira")])[-chat_mod.MAX_MESSAGES:])
 
     async def _a_approve_draft(self, t: Ticket, p: dict) -> Ticket:
         t = self.patch(t.key, sub="approved")

@@ -135,6 +135,7 @@ class Ticket(BaseModel):
     comment: Optional[str] = None
     comment_at: str = ""
     target: str = ""
+    target_from: str = ""  # "skill" when the state was picked by a learned rule
     transitions: list[str] = Field(default_factory=list)
     section: str = ""
     dups: int = 0

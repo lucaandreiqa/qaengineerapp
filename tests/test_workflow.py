@@ -538,3 +538,66 @@ def test_stop_needs_something_running(wf):
     t = wf.tickets.get(key)
     with pytest.raises(GateError):
         run(wf.act(key, "stop", t.stage, t.sub))
+
+
+def _skills_in(tmp_path, monkeypatch):
+    from qa_app.workflow import skills
+    monkeypatch.setattr(skills, "root", lambda: tmp_path / "skills")
+    return skills
+
+
+def test_after_a_move_claude_offers_to_learn_the_state_and_picks_it_next_time(wf, tmp_path, monkeypatch):
+    from qa_app.workflow import move_rules
+    skills = _skills_in(tmp_path, monkeypatch)
+    key = "OPTR-48455"
+    wf.tickets.tickets[key] = wf.tickets.get(key).model_copy(update={"target": ""})  # no state planned at 3a
+    result = move_rules.outcome(wf.tickets.get(key).items())
+
+    async def go():
+        await wf.act(key, "post_comment", 3, "comment", {"comment": "QA result: ok"})
+        assert wf.tickets.get(key).target == ""  # nothing learned yet: you choose
+        await wf.act(key, "transition", 3, "transition", {"target": "Docs"})
+        await settle(wf)
+        t = wf.tickets.get(key)
+        mi, ask = [(i, m) for i, m in enumerate(t.chat) if m.get("actions") and m["actions"][0]["kind"] == "learn_move"][-1]
+        assert "Docs" in ask["text"] and [a["kind"] for a in ask["actions"]] == ["learn_move", "skip_learn"]
+        assert ask["actions"][0]["state"] == "Docs" and ask["actions"][0]["outcome"] == result
+        # clicked later, after the ticket moved on to TestRail: still works
+        await wf.chat_apply(key, mi, 0, t.stage, t.sub)
+        t = wf.tickets.get(key)
+        assert [a.get("state") for a in t.chat[mi]["actions"]] == ["applied", "dismissed"]
+        text, _ = skills.general("jira-comment")
+        assert move_rules.rules(text) == {result: "Docs"}
+
+    run(go())
+    # the next ticket with the same kind of result gets the state picked by the skill
+    nxt = wf.tickets.get(key).model_copy(update={"key": "OPTR-90001", "stage": 3, "sub": "comment", "target": "", "chat": []})
+    wf.tickets.tickets["OPTR-90001"] = nxt
+    wf.mock_jira.issues["OPTR-90001"] = dict(wf.mock_jira.issues[key], status="Open")
+
+    async def again():
+        await wf.act("OPTR-90001", "post_comment", 3, "comment", {"comment": "QA result: ok"})
+        t = wf.tickets.get("OPTR-90001")
+        assert t.target == "Docs" and t.target_from == "skill"
+        await wf.act("OPTR-90001", "transition", 3, "transition", {"target": "Docs"})
+        await settle(wf)
+        t = wf.tickets.get("OPTR-90001")
+        assert not [m for m in t.chat if m.get("actions") and m["actions"][0]["kind"] == "learn_move"]  # already knows
+    run(again())
+
+
+def test_no_thanks_leaves_the_skill_alone(wf, tmp_path, monkeypatch):
+    skills = _skills_in(tmp_path, monkeypatch)
+    key = "OPTR-48455"
+
+    async def go():
+        await wf.act(key, "post_comment", 3, "comment", {"comment": "QA result: ok"})
+        await wf.act(key, "transition", 3, "transition", {"target": "Docs"})
+        await settle(wf)
+        t = wf.tickets.get(key)
+        mi = [i for i, m in enumerate(t.chat) if m.get("actions") and m["actions"][0]["kind"] == "learn_move"][-1]
+        await wf.chat_apply(key, mi, 1, t.stage, t.sub)
+        t = wf.tickets.get(key)
+        assert [a.get("state") for a in t.chat[mi]["actions"]] == ["dismissed", "applied"]
+    run(go())
+    assert skills.general("jira-comment")[1] is False  # still the shipped skill, unchanged

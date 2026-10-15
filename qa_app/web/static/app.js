@@ -765,6 +765,7 @@ ${t.left ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<s
     body += `<div class="callout c-ok">${svg(IC.check)}<span>QA summary comment posted at ${esc(t.comment_at)}.</span></div>
 <div><label class="lbl" for="jira-move">Move from <span class="mono" style="color:var(--fg)">${esc(t.status)}</span> to</label>
 <select id="jira-move" class="inp" data-in="targetSel" data-key="${esc(t.key)}"><option value="">Choose a target state…</option>${t.transitions.map((o) => `<option value="${esc(o)}" ${o === t.target ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>
+${t.target_from === 'skill' && t.target ? `<p class="skill-pick">${svg(IC.doc, 'ic ic-s')}<span><b>${esc(t.target)}</b> was picked by the <a href="#/skills?step=jira-comment">Jira comment &amp; move</a> skill from what you chose before. Choose another state if this one is wrong.</span></p>` : ''}
 <p style="margin:6px 0 0;color:var(--muted);font-size:12px">Only transitions Jira returns for this ticket are listed. Names are matched exactly.</p></div>`;
   }
   if (st === 4 && sub !== 'drafting') {
@@ -871,7 +872,7 @@ function viewChat(t) {
   const progRow = (m) => `<div class="feed-line">${svg(IC.dotc, 'ic ic-s')}<span>${esc(m.text)}</span><time>${when(m.at)}</time></div>`;
   const msgRow = (m, mi) => {
     if (m.role === 'event') return `<div class="chat-ev">${svg(IC.check, 'ic ic-s')}${esc(m.text)}</div>`;
-    const acts = (m.actions || []).map((a, ai) => `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
+    const acts = (m.actions || []).map((a, ai) => `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || a.state === 'dismissed' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
     return `<div class="chat-msg chat-${m.role}${m.error ? ' chat-err' : ''}">${m.role === 'assistant' ? `<span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span>` : ''}
 <div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.text) : esc(m.text).replace(/\n/g, '<br>')}</div>
 ${acts ? `<div class="chat-acts">${acts}</div>` : ''}</div>`;

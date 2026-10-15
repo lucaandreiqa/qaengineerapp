@@ -147,6 +147,13 @@ QA checklist shows counts, progress and one row per check with clear pass / fail
 running check spins live, and a failed check opens to its note, error, screenshot, video and trace, with **Ask Claude
 about this**.
 
+**Learning where tickets move.** After you move a ticket, Claude asks in the ticket chat whether to update the
+**Jira comment & move** skill so it picks that state itself next time (for every board). Runs are grouped as all
+passed, any failed, or blocked / partial; each has one rule, saved as a plain line under "Moving the ticket" in the
+skill (editable on the Skills screen). Next time the comment is posted, that state is pre-selected and marked
+"picked by the skill"; in Gated mode you still approve the move, and choosing another state asks again. A state Jira
+doesn't offer for the ticket is never pre-selected.
+
 **Terminal.** While a ticket runs, the drawer shows a **Terminal · Playwright** panel with every line Playwright
 prints, live (saved as `terminal.log` in the run folder). The first run installs Playwright and Chromium in the test
 workspace by itself, with the install output shown, and nothing ever waits for keyboard input. Claude turns key lines
