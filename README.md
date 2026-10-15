@@ -75,7 +75,7 @@ Each ticket in the Jira column goes through five lanes. Nothing reaches Jira or 
 | 4 Draft | Cases from PASS items only, duplicates removed | pushes only when you press **Push**, then verifies with `get_cases` |
 
 The server enforces these rules, not just the UI:
-- Each approval carries the state you saw, so it can't carry over to the next gate. Auto mode never skips a gate.
+- Each approval carries the state you saw, so it can't carry over to the next gate. The board runs in gated mode: it never skips a gate.
 - Posting the comment does not move the ticket; the move is its own approval.
 - Checklist results change only through a run.
 - Jira transitions must match by exact name; a near miss returns the available list.
