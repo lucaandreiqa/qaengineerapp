@@ -137,7 +137,7 @@ def _ask_claude_sync(cfg: Config, system: str, prompt: str, max_tokens: int) -> 
     return text, data.get("model") or cfg.anthropic_model, data.get("usage") or {}
 
 
-async def ask_claude(cfg: Config, system: str, prompt: str, max_tokens: int = 4000) -> str:
+async def ask_claude(cfg: Config, system: str, prompt: str, max_tokens: int = 4000, step: Optional[str] = None) -> str:
     if cfg.claude_mode == "claude_code":  # the Claude Code CLI on this computer, on the user's own Claude plan
         from . import claude_code
         text, model, usage = await asyncio.to_thread(claude_code.ask, cfg.anthropic_model, system, prompt)
@@ -145,10 +145,11 @@ async def ask_claude(cfg: Config, system: str, prompt: str, max_tokens: int = 40
     else:
         text, model, usage = await asyncio.to_thread(_ask_claude_sync, cfg, system, prompt, max_tokens)
         billing = "api"
-    step = re.search(r'<skill step="([^"]+)"', system)
+    found = re.search(r'<skill step="([^"]+)"', system)
+    step = step or (found.group(1) if found else "other")
     for listener in list(usage_listeners):
         try:
-            listener(CURRENT_TICKET.get(), step.group(1) if step else "other", model, usage, billing)
+            listener(CURRENT_TICKET.get(), step, model, usage, billing)
         except Exception:  # cost tracking never breaks a step
             pass
     return text

@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
+from . import chat as chat_mod
 from . import costs, ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
@@ -65,6 +66,7 @@ class Workflow:
         self.mock_jira = mock_jira
         self.mock_testrail = mock_testrail or MockTestRail()
         self.tasks: dict[str, asyncio.Task] = {}
+        self.chat_tasks: dict[str, asyncio.Task] = {}  # Claude's chat replies, apart from the steps
         self.toast: Callable[[str], None] = lambda msg: bus.publish({"type": "toast", "message": msg})
         self.sync_error = ""          # the last automatic sync's error, shown on the board until one works
         self._sync_failed_at = 0.0
@@ -115,6 +117,8 @@ class Workflow:
     def resume(self) -> None:
         """Restart background work for tickets that were mid-step when the app stopped."""
         for t in self.tickets.all():
+            if t.chat_busy:  # a chat reply that was cut off by the restart
+                self.patch(t.key, chat_busy=False, chat=t.chat + [chat_mod.message("assistant", "The app restarted before I answered. Ask again.", error=True)])
             if t.sub in WORKING_SUBS and not t.error:
                 self._spawn_for(t)
 
@@ -272,6 +276,100 @@ class Workflow:
                 raise GateError(f"'{target}' is not a transition Jira returned", extra={"transitions": t.transitions})
             upd["target"] = target
         return self.patch(key, **upd) if upd else t
+
+    # ---------------------------------------------------------------- chat with Claude about a ticket
+    STEP_SKILL = ["gather", "create-tests", "run-tests", "jira-comment", "testrail"]
+
+    async def chat_send(self, key: str, text: str) -> Ticket:
+        """Add the user's message and start Claude's reply (it arrives on the board's live events)."""
+        t = self.tickets.get(key)
+        if not t:
+            raise GateError(f"{key} is not on the board", 404)
+        text = (text or "").strip()[:4000]
+        if not text:
+            raise GateError("Write a message first", 422)
+        if t.chat_busy:
+            raise GateError("Claude is still answering the last message")
+        if not self.cfg.claude_ready:
+            raise GateError("Connect Claude on the Integrations screen to chat about tickets", 409)
+        t = self.patch(key, chat=(t.chat + [chat_mod.message("user", text)])[-chat_mod.MAX_MESSAGES:], chat_busy=True)
+        old = self.chat_tasks.get(key)
+        if old and not old.done():
+            old.cancel()
+        self.chat_tasks[key] = asyncio.create_task(self._chat_reply(key))
+        return t
+
+    async def _chat_reply(self, key: str) -> None:
+        agent.CURRENT_TICKET.set(key)
+        t = self.tickets.get(key)
+        if not t:
+            return
+        try:
+            d = self.cfg.ticket_dir(key)
+            read = lambda n: (d / n).read_text(encoding="utf-8") if (d / n).exists() else ""  # noqa: E731
+            from . import skills
+            system, prompt = chat_mod.build(t, self.can_redo_gather(t), read(f"{key}-context.md"), read(f"{key}-report.md"),
+                                            skills.for_prompt(self.STEP_SKILL[t.stage], self.cfg.jira_project))
+            raw = await agent.ask_claude(self.cfg, system, prompt, max_tokens=2500, step="chat")
+            reply, actions = chat_mod.parse(raw)
+            msg = chat_mod.message("assistant", reply or "(no answer)", actions)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            msg = chat_mod.message("assistant", f"Couldn't reach Claude: {(str(e).splitlines() or ['error'])[0][:300]}", error=True)
+        t = self.tickets.get(key)
+        if t:
+            self.patch(key, chat=(t.chat + [msg])[-chat_mod.MAX_MESSAGES:], chat_busy=False)
+
+    async def chat_apply(self, key: str, msg_i: int, act_i: int, stage: int, sub: str) -> Ticket:
+        """Run one action Claude suggested, after checking it against where the ticket is now."""
+        t = self.tickets.get(key)
+        if not t:
+            raise GateError(f"{key} is not on the board", 404)
+        try:
+            a = t.chat[msg_i]["actions"][act_i]
+        except (IndexError, KeyError, TypeError):
+            raise GateError("That suggestion is gone", 404)
+        if a.get("state") == "applied":
+            raise GateError("Already done")
+        if (t.stage, t.sub) != (stage, sub):
+            raise GateError(f"{key} has moved on (now lane {t.stage + 1} · {t.sub}). Ask Claude again.")
+        why = chat_mod.check(a, t, self.can_redo_gather(t))
+        if why:
+            raise GateError(why)
+        kind = a["kind"]
+        if kind == "redo_gather":
+            await self.act(key, "redo_gather", stage, sub)
+        elif kind == "change_env":
+            await self.act(key, "redo_gather", stage, sub, {"env_url": str(a["url"])})
+        elif kind == "retry":
+            await self.act(key, "retry", stage, sub)
+        elif kind == "rerun_tests":
+            self.patch(key, stage=2, sub="working", doing=f"Running {key}.spec.ts again", error="")
+            self.spawn(key, self._run(key))
+        elif kind == "set_checklist":
+            from .models import CheckItem, Section
+            sections = [Section(name=str(s.get("name") or "Checks")[:80], items=[CheckItem(text=str(i)[:300]) for i in s.get("items", []) if str(i).strip()])
+                        for s in a["sections"] if isinstance(s, dict)]
+            self.patch(key, checklist=[s for s in sections if s.items], ran=False)
+            agent.write_file(self.cfg, key, f"{key}-qa-checklist.md", agent.checklist_md(self.tickets.get(key)))  # type: ignore[arg-type]
+        elif kind == "set_comment":
+            self.save_draft(key, comment=str(a["text"]))
+        elif kind == "set_target":
+            self.save_draft(key, target=str(a["target"]))
+        t = self.tickets.get(key)
+        assert t
+        chat = [dict(m) for m in t.chat]
+        chat[msg_i]["actions"] = [dict(x, state="applied") if j == act_i else x for j, x in enumerate(chat[msg_i]["actions"])]
+        chat.append(chat_mod.message("event", f"Done: {a['label']}"))
+        self.toast(f"{key}: {a['label']}")
+        return self.patch(key, chat=chat[-chat_mod.MAX_MESSAGES:])
+
+    def chat_clear(self, key: str) -> Ticket:
+        t = self.tickets.get(key)
+        if not t:
+            raise GateError(f"{key} is not on the board", 404)
+        return self.patch(key, chat=[], chat_busy=False)
 
     # States where step 1 can be done again: before anything about this pass reached Jira.
     REDO_GATHER_FROM = {(0, "gate"), (0, "blocked"), (2, "gate")}

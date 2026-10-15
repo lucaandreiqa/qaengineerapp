@@ -144,6 +144,8 @@ class Ticket(BaseModel):
     error: str = ""
     pr_url: str = ""
     updated: float = 0.0
+    chat: list[dict] = Field(default_factory=list)  # the ticket's chat with Claude (chat.message), suggested actions included
+    chat_busy: bool = False                          # Claude is writing a reply
     # Demo mode only: what the simulated run reports. Never shown before a run.
     mock_results: list[list[str]] = Field(default_factory=list)
     mock_cleanup: list[CleanupItem] = Field(default_factory=list)

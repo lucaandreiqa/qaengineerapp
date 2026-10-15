@@ -142,7 +142,7 @@ const S = {
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
-    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatTab: false, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -683,15 +683,75 @@ ${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${es
 <h2 style="margin:0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em">${esc(t.title)}</h2>
 <div class="gates" aria-label="Review gates">${gateTracker(t)}</div>
 <div style="font-size:12px;color:var(--muted)">${LANES[st].name} · <strong style="color:var(--fg);font-weight:500">${esc(d.stateLabel)}</strong></div>
+<div class="dtabs" role="tablist" aria-label="Ticket views"><button type="button" role="tab" aria-selected="${!B.chatTab}" data-act="dtab" data-v="0">Details</button><button type="button" role="tab" aria-selected="${!!B.chatTab}" data-act="dtab" data-v="1">${svg(INTEG_ICON.claude, 'ic ic-s')}Chat with Claude${(t.chat || []).filter((m) => m.role !== 'event').length ? `<span class="seg-n">${(t.chat || []).filter((m) => m.role !== 'event').length}</span>` : ''}${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}</button></div>
 </div>
-<div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
+${B.chatTab ? viewChat(t) : `<div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;background:var(--raised)">
 ${t.canRedo ? redoButton(t) : ''}
 <span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above, then retry.' : d.note || 'Working. Nothing needs you yet.'))}</span>
 ${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
-</div>
+</div>`}
 </div></aside>`;
+}
+
+/* Chat with Claude about this ticket. Claude's suggested actions are buttons; nothing runs until you click one. */
+function mdLite(text) {
+  const lines = esc(text || '').split('\n');
+  let html = '', list = false;
+  for (const raw of lines) {
+    const l = raw.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>')
+      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    const li = l.match(/^\s*[-*•]\s+(.*)$/) || l.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (li) { if (!list) { html += '<ul>'; list = true; } html += `<li>${li[1]}</li>`; continue; }
+    if (list) { html += '</ul>'; list = false; }
+    html += l.trim() ? `<p>${l}</p>` : '';
+  }
+  return html + (list ? '</ul>' : '');
+}
+
+const CHAT_STARTERS = (t) => {
+  const st = t.stage, sub = t.sub;
+  if (t.error) return ['Why did this fail?', 'What should I do to fix it?'];
+  if (st === 0 && sub === 'blocked') return ['Why did this stop?', 'Which link should I test on?'];
+  if (st === 0 && sub === 'gate') return ["What's missing from the checklist?", 'Add edge cases to the checklist'];
+  if (st === 2 && sub === 'gate') return ['Explain the failures', 'Are these real bugs or test problems?'];
+  if (st === 3 && sub === 'comment') return ['Make the comment shorter', 'Put the failing items first'];
+  if (st === 3) return ['Which status should this move to?'];
+  return ['What is this ticket about?', 'What could break with this change?'];
+};
+
+function viewChat(t) {
+  const B = S.board, key = t.key, ready = B.data && B.data.config.claude;
+  const msgs = t.chat || [];
+  const rows = msgs.map((m, mi) => {
+    if (m.role === 'event') return `<div class="chat-ev">${svg(IC.check, 'ic ic-s')}${esc(m.text)}</div>`;
+    const acts = (m.actions || []).map((a, ai) => `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
+    return `<div class="chat-msg chat-${m.role}${m.error ? ' chat-err' : ''}">${m.role === 'assistant' ? `<span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span>` : ''}
+<div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.text) : esc(m.text).replace(/\n/g, '<br>')}</div>
+${acts ? `<div class="chat-acts">${acts}</div>` : ''}</div>`;
+  }).join('');
+  const empty = !msgs.length ? `<div class="chat-empty"><p>Ask Claude about <b>${esc(key)}</b>: why it stopped, what to test, or to change something. Claude sees the ticket, environment, checklist and results. Suggestions show as buttons and only run when you click them; the review gates stay yours.</p>
+${ready ? `<div class="chat-starters">${CHAT_STARTERS(t).map((q) => `<button type="button" class="fchip" data-act="chatStarter" data-key="${esc(key)}" data-v="${esc(q)}">${esc(q)}</button>`).join('')}</div>` : ''}</div>` : '';
+  const err = B.chatErr[key] ? `<div class="callout c-err" style="margin:0 18px 10px">${svg(IC.err, 'ic')}<span>${esc(B.chatErr[key])}</span></div>` : '';
+  const draft = B.chatDraft[key] || '';
+  return `<div class="drawer-body chat-body" data-keep="chat-${esc(key)}" data-stick="bottom" aria-live="polite">${empty}${rows}
+${t.chat_busy ? `<div class="chat-msg chat-assistant"><span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span><div class="chat-bubble chat-typing">${svg(IC.spin, 'ic ic-s spin')}Thinking…</div></div>` : ''}</div>
+${err}<div class="chat-compose">${ready ? `<textarea id="chat-input" class="inp" rows="2" placeholder="Ask Claude about this ticket… (Enter to send, Shift+Enter for a new line)" data-in="chatDraft" data-key="${esc(key)}">${esc(draft)}</textarea>
+<div class="chat-row">${msgs.length ? `<button type="button" class="btn btn-quiet btn-sm" data-act="chatClear" data-key="${esc(key)}">Clear chat</button>` : ''}<button type="button" class="btn btn-primary" style="margin-left:auto" data-act="chatSend" data-key="${esc(key)}" ${draft.trim() && !t.chat_busy ? '' : 'disabled'}>Send${svg(IC.arrow, 'ic ic-s')}</button></div>`
+    : `<div class="notice" style="margin:0">${svg(IC.info)}<span>Connect Claude to chat about tickets.</span><a class="btn btn-sm" href="#/integrations" style="margin-left:auto">Integrations${svg(IC.arrow, 'ic ic-s')}</a></div>`}</div>`;
+}
+
+async function chatSend(key, text) {
+  const B = S.board, msg = (text != null ? text : B.chatDraft[key] || '').trim();
+  if (!msg) return;
+  B.chatErr[key] = ''; B.chatDraft[key] = ''; schedule();
+  try {
+    const r = await api('POST', `/api/tickets/${encodeURIComponent(key)}/chat`, { message: msg });
+    const i = B.data.tickets.findIndex((x) => x.key === key); if (i > -1 && r.ticket) B.data.tickets[i] = r.ticket;
+  } catch (e) { B.chatErr[key] = e.message; B.chatDraft[key] = msg; }
+  schedule();
 }
 
 /* A test environment address as typed: https:// is added when missing. '' when it isn't an address. */
@@ -1454,6 +1514,23 @@ const ACTS = {
     catch (e) { B.actErr = e.message; }
     B.busy = false;
   },
+  dtab: (el) => { S.board.chatTab = el.dataset.v === '1'; if (S.board.chatTab) setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 0); },
+  chatSend: (el) => chatSend(el.dataset.key),
+  chatStarter: (el) => chatSend(el.dataset.key, el.dataset.v),
+  chatClear: async (el) => {
+    const B = S.board, key = el.dataset.key;
+    try { const r = await api('DELETE', `/api/tickets/${encodeURIComponent(key)}/chat`); const i = B.data.tickets.findIndex((x) => x.key === key); if (i > -1) B.data.tickets[i] = r.ticket; } catch (e) { B.chatErr[key] = e.message; }
+  },
+  chatApply: async (el) => {
+    const B = S.board, key = el.dataset.key, t = B.data.tickets.find((x) => x.key === key);
+    if (!t || B.busy) return;
+    B.busy = true; B.chatErr[key] = ''; schedule();
+    try {
+      const r = await api('POST', `/api/tickets/${encodeURIComponent(key)}/chat/apply`, { msg: +el.dataset.m, action: +el.dataset.a, stage: t.stage, sub: t.sub });
+      const i = B.data.tickets.findIndex((x) => x.key === key); if (i > -1 && r.ticket) B.data.tickets[i] = r.ticket;
+    } catch (e) { B.chatErr[key] = e.message; }
+    B.busy = false;
+  },
   envEdit: (el) => { const k = el.dataset.key; S.board.envEdit[k] = !S.board.envEdit[k]; delete S.board.env[k]; },
   envOther: (el) => { const k = el.dataset.key; S.board.envOther[k] = !S.board.envOther[k]; },
   envChange: async (el) => {
@@ -1630,6 +1707,7 @@ const INPUTS = {
     schedule();
   },
   azLink: (el) => { S.azure.link = el.value; S.azure.err = ''; },
+  chatDraft: (el) => { S.board.chatDraft[el.dataset.key] = el.value; const b = document.querySelector('button[data-act=chatSend]'); if (b) b.disabled = !el.value.trim(); },
   azPat: (el) => { S.azure.pat = el.value; S.azure.err = ''; },
   skText: (el) => { S.skills.draft[skillKey(S.skills)] = el.value; S.skills.saved = ''; },
   skMode: (el) => { S.skills.mode[S.skills.sel + '|' + S.skills.data.project] = el.value; },
@@ -1685,6 +1763,10 @@ document.addEventListener('keydown', (ev) => {
     const key = ev.target.dataset.key;
     if (envUrl(S.board.env[key]) && !S.board.busy) primaryAction(key);
     return;
+  }
+  if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing && ev.target && ev.target.id === 'chat-input') {
+    ev.preventDefault(); const k = ev.target.dataset.key, t = S.board.data && S.board.data.tickets.find((x) => x.key === k);
+    if (t && !t.chat_busy) chatSend(k); return;
   }
   if (ev.key === 'Enter' && ev.target && (ev.target.id === 'az-link' || ev.target.id === 'az-pat')) {
     ev.preventDefault(); const p = parseAzureLink(S.azure.link);

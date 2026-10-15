@@ -236,6 +236,39 @@ async def ticket_action(key: str, body: ActionIn) -> dict:
     return {"ticket": S().ticket_view(live) if live else None, "done": live is None}
 
 
+class ChatIn(BaseModel):
+    message: str
+
+
+@app.post("/api/tickets/{key}/chat")
+async def ticket_chat(key: str, body: ChatIn) -> dict:
+    t = await S().workflow.chat_send(key, body.message)
+    return {"ticket": S().ticket_view(t)}
+
+
+class ChatApplyIn(BaseModel):
+    msg: int
+    action: int
+    stage: int
+    sub: str
+
+
+@app.post("/api/tickets/{key}/chat/apply")
+async def ticket_chat_apply(key: str, body: ChatApplyIn) -> dict:
+    try:
+        t = await S().workflow.chat_apply(key, body.msg, body.action, body.stage, body.sub)
+    except GateError:
+        raise
+    except Exception as e:
+        raise HTTPException(502, str(e)[:400])
+    return {"ticket": S().ticket_view(t)}
+
+
+@app.delete("/api/tickets/{key}/chat")
+def ticket_chat_clear(key: str) -> dict:
+    return {"ticket": S().ticket_view(S().workflow.chat_clear(key))}
+
+
 class DraftIn(BaseModel):
     comment: Optional[str] = None
     target: Optional[str] = None

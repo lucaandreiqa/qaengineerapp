@@ -32,7 +32,8 @@ PRICES: list[tuple[str, float, float, float, float, float]] = [
 # Haiku 5.5 costs more when one request's prompt (input + cache reads + writes) is over 100,000 tokens.
 HAIKU_55_LONG = (0.5, 2.5, 0.625, 1, 0.05)
 STEP_NAMES = {"gather": "Gather requirements", "create-tests": "Create tests", "run-tests": "Run tests",
-              "jira-comment": "Jira comment", "testrail": "TestRail cases"}
+              "jira-comment": "Jira comment", "testrail": "TestRail cases",
+              "chat": "Chat with Claude"}
 
 
 def _prices(model: str) -> Optional[tuple[float, float, float, float, float]]:

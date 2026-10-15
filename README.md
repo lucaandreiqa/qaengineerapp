@@ -133,11 +133,18 @@ Sonnet 5.5 $2 / $10 per million input / output tokens). Cards show the ticket's 
 step, and the board header shows the total. Redos add to it. A model without a known price is counted in tokens
 and shown as unpriced, never guessed.
 
+**Chat with Claude on a ticket.** In the ticket panel, switch to **Chat with Claude** to ask why it stopped, what to
+test, or to change something. Claude sees the ticket, the environment and every link found, the checklist and results,
+and the draft comment. It can suggest actions as buttons: redo step 1, test on another environment, retry, run the
+tests again (Gate 2), replace the checklist (Gate 1), rewrite the Jira comment or pick the target status (Gate 3).
+Nothing runs until you click, each suggestion is checked against where the ticket is at that moment, and Claude can
+never approve a gate or post to Jira. Chat calls count in the ticket's Claude cost.
+
 **Where to test.** Step 1 looks for the test environment in what the ticket says: the Environment field, custom
 fields (e.g. "Preview URL"), web links, every comment (newest first) and the description. Each link is scored by
 where it is, the words around it ("deployed to", "preview", "staging", "test on"…), and its address (preview / staging
 / qa / pr-123 style hosts, hosting platforms such as vercel.app, netlify.app, pages.dev). Code, design and docs links
-and the Jira site are ignored; production-looking links are never picked on their own. A link is used only when it
+and the Jira site are listed apart as *Other links*; production-looking links are never picked on their own. A link is used only when it
 is clearly the environment and is the only such link; otherwise the drawer lists every link (best one marked *Suggested* and
 pre-filled; tool, docs and file links under *Other links*) with a **Use** button each, or you type one. Addresses
 typed without https:// count too. Once set, **Change** next to the environment lets you test on another link or address

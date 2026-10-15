@@ -356,3 +356,57 @@ def test_auto_sync_runs_on_its_interval_and_backs_off_after_a_failure(tmp_path):
     run(go())
     syncs = [e for e in seen if e["type"] == "sync"]
     assert [bool(e["error"]) for e in syncs] == [False, True, False]
+
+
+def test_chat_with_claude_suggests_actions_that_run_only_when_clicked(wf, monkeypatch):
+    replies = []
+
+    async def fake_ask(cfg, system, prompt, max_tokens=4000, step=None):
+        replies.append((system, prompt, step))
+        return ("It stopped because the ticket has two preview links. The newer one is from Ben.\n\n"
+                '```actions\n[{"kind": "change_env", "url": "https://pr-2.preview.acme.dev/", "label": "Test on pr-2"},'
+                ' {"kind": "set_comment", "text": "nope", "label": "Rewrite comment"}, {"kind": "rm_rf", "label": "bad"}]\n```')
+
+    monkeypatch.setattr(agent, "ask_claude", fake_ask)
+    wf._cfg.anthropic_api_key, wf._cfg.claude_mode = "k", "api"
+
+    async def go():
+        key = "OPTR-48507"  # waiting for an environment
+        t = wf.tickets.get(key)
+        assert (t.stage, t.sub) == (0, "blocked")
+        await wf.chat_send(key, "why did this stop?")
+        assert wf.tickets.get(key).chat_busy
+        await asyncio.gather(*wf.chat_tasks.values())
+        t = wf.tickets.get(key)
+        assert not t.chat_busy and [m["role"] for m in t.chat] == ["user", "assistant"]
+        msg = t.chat[1]
+        assert msg["text"].startswith("It stopped because") and "```" not in msg["text"]
+        assert [a["kind"] for a in msg["actions"]] == ["change_env", "set_comment"]  # unknown kinds dropped
+        system, prompt, step = replies[0]
+        assert step == "chat" and key in prompt and "why did this stop?" in prompt and "set_checklist" in system
+        assert "Actions allowed right now: redo_gather, change_env" in prompt
+
+        # nothing ran yet; a suggestion that doesn't fit the ticket now is refused with a reason
+        assert wf.tickets.get(key).env is None
+        with pytest.raises(GateError, match="Only before the comment is posted"):
+            await wf.chat_apply(key, 1, 1, 0, "blocked")
+        with pytest.raises(GateError, match="moved on"):
+            await wf.chat_apply(key, 1, 0, 0, "gate")
+        # clicking it runs it, once
+        await wf.chat_apply(key, 1, 0, 0, "blocked")
+        await settle(wf)
+        t = wf.tickets.get(key)
+        assert t.env.url == "https://pr-2.preview.acme.dev/" and t.chat[1]["actions"][0]["state"] == "applied"
+        assert t.chat[-1]["role"] == "event" and "Test on pr-2" in t.chat[-1]["text"]
+        with pytest.raises(GateError, match="Already done"):
+            await wf.chat_apply(key, 1, 0, t.stage, t.sub)
+        with pytest.raises(GateError, match="still answering|Write a message"):
+            await wf.chat_send(key, "   ")
+        assert wf.chat_clear(key).chat == []
+    run(go())
+
+
+def test_chat_needs_claude_connected(wf):
+    wf._cfg.claude_mode = "off"
+    with pytest.raises(GateError, match="Connect Claude"):
+        run(wf.chat_send("OPTR-48507", "hi"))
