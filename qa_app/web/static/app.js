@@ -400,12 +400,18 @@ ${c.mode !== 'live' ? `<div class="notice jc-banner">${svg(IC.info)}<span>These 
 </main>`;
 }
 
+/* Every ticket comes from the board's column, so its status is only shown when it says something else. */
+function statusTag(t) {
+  const col = ((S.board.data && S.board.data.config.column) || '').trim().toLowerCase();
+  return (t.status || '').trim().toLowerCase() === col ? '' : lozenge(t.status, statusCat(t));
+}
+
 function viewCard(t) {
   const d = deco(t);
   const cls = 'tk' + (d.you ? ' is-you' : '') + (S.board.sel === t.key ? ' is-sel' : '');
   return `<article class="${cls}">
 <button type="button" class="tk-open" data-act="open" data-key="${esc(t.key)}" aria-label="${esc(t.key + ', ' + (t.type || 'no type') + ', ' + t.title + ', ' + d.stateLabel)}">
-<span class="tk-meta">${issueTypeIcon(t.issue_type)}<span class="mono">${esc(t.key)}</span>${typeBadge(t)}<span class="tk-jira">${priorityIcon(t.priority)}${lozenge(t.status, statusCat(t))}</span></span>
+<span class="tk-meta">${issueTypeIcon(t.issue_type)}<span class="mono">${esc(t.key)}</span>${typeBadge(t)}<span class="tk-jira">${priorityIcon(t.priority)}${statusTag(t)}</span></span>
 <span class="tk-title">${esc(t.title)}</span>
 </button>
 <div class="tk-stage">
@@ -644,7 +650,7 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
   return `<aside class="drawer${B.full ? ' is-full' : ''}" aria-label="Ticket details"><div class="drawer-in">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
-${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${lozenge(t.status, statusCat(t))}
+${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${statusTag(t)}
 <a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="${B.full ? 'Exit full screen' : 'Full screen'}" title="${B.full ? 'Exit full screen' : 'Full screen'}" aria-pressed="${!!B.full}" data-act="drawerFull">${svg(B.full ? IC.shrink : IC.expand)}</button>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" title="Close (Esc)" data-act="close">${svg(IC.close)}</button>
