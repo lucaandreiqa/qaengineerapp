@@ -158,6 +158,17 @@ class Services:
             d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
             d["tracker"] = "Jira"
         d["envShort"] = agent.env_name(t, cfg) if t.env else ""
+        # The latest run's evidence per check, and every run of this ticket (History)
+        store = self.workflow.history()
+        d["evidence"] = {}
+        if t.run_id:
+            try:
+                rec = store.get(t.run_id)
+                d["evidence"] = {str(i["n"]): {"error": i.get("error", ""), "attachments": i.get("attachments", [])}
+                                 for i in rec["items"] if i.get("error") or i.get("attachments")}
+            except (KeyError, ValueError, OSError):
+                pass
+        d["runs"] = [{k: r.get(k) for k in ("id", "run_no", "status", "started", "counts", "trigger")} for r in store.runs_for(t.key)][-10:]
         return d
 
 
@@ -236,6 +247,35 @@ async def ticket_action(key: str, body: ActionIn) -> dict:
         raise HTTPException(502, str(e)[:400])
     live = S().workflow.tickets.get(key)
     return {"ticket": S().ticket_view(live) if live else None, "done": live is None}
+
+
+# ------------------------------------------------------------------ History: run records and their evidence
+@app.get("/api/history/{run_id}/file/{rel:path}")
+def history_file(run_id: str, rel: str):
+    try:
+        return FileResponse(S().workflow.history().file(run_id, rel))
+    except KeyError:
+        raise HTTPException(404, "That evidence file isn't there any more")
+
+
+class TraceIn(BaseModel):
+    path: str
+
+
+@app.post("/api/history/{run_id}/trace")
+async def history_trace(run_id: str, body: TraceIn) -> dict:
+    """Open a trace in Playwright's Trace Viewer on this computer."""
+    import shutil as _sh
+    try:
+        f = S().workflow.history().file(run_id, body.path)
+    except KeyError:
+        raise HTTPException(404, "That trace isn't there any more")
+    npx = _sh.which("npx")
+    if not npx:
+        raise HTTPException(409, "Node.js (npx) is needed to open the Trace Viewer. Download the trace instead.")
+    await asyncio.create_subprocess_exec(npx, "playwright", "show-trace", str(f), cwd=str(S().workflow.cfg.workspace),
+                                         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    return {"ok": True}
 
 
 class ChatIn(BaseModel):

@@ -142,7 +142,7 @@ const S = {
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
-    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), clFilter: {}, clOpen: {}, feedOpen: {}, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -587,6 +587,75 @@ ${mode === 'change' ? `<p style="margin:6px 0 0;font-size:12px;color:var(--muted
   return h;
 }
 
+/* The QA checklist, friendly: counts, progress, sections as cards, one row per check; failures open to show
+   what went wrong and the evidence. Used in the ticket panel (live) and on a run's page in History. */
+const RUN_STATUS = { passed: 'Passed', failed: 'Failed', error: 'Error', stopped: 'Stopped', running: 'Running' };
+const TRIGGER = { first: 'First run', rerun_gate2: 'Rerun at Gate 2', rerun_chat: 'Rerun from the chat', after_env_change: 'After an environment change', redo: 'After redoing step 1' };
+const RES_WORD = { pass: 'Passed', fail: 'Failed', partial: 'Partial', blocked: 'Blocked', nt: 'Not tested' };
+const RES_GLYPH = { pass: '<path d="M5 12.5l4.5 4.5L19 7.5"></path>', fail: '<path d="M7 7l10 10M17 7L7 17"></path>', partial: '<path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"></path><circle cx="12" cy="12" r="8"></circle>', blocked: '<circle cx="12" cy="12" r="8"></circle><path d="M6.5 17.5l11-11"></path>', nt: '<circle cx="12" cy="12" r="7"></circle>' };
+function when(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000), now = new Date();
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === now.toDateString() ? time : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+}
+function countBar(c) {
+  c = c || {}; const tot = (c.pass || 0) + (c.fail || 0) + (c.partial || 0) + (c.blocked || 0) + (c.nt || 0);
+  if (!tot) return '<span class="cbar"></span>';
+  const seg = (k) => (c[k] ? `<i class="cb-${k}" style="flex:${c[k]}"></i>` : '');
+  return `<span class="cbar" role="img" aria-label="${c.pass || 0} passed, ${c.fail || 0} failed, ${c.partial || 0} partial, ${c.blocked || 0} blocked, ${c.nt || 0} not tested">${seg('pass')}${seg('fail')}${seg('partial')}${seg('blocked')}${seg('nt')}</span>`;
+}
+function evidenceUrl(runId, path) { return `/api/history/${encodeURIComponent(runId)}/file/${path.split('/').map(encodeURIComponent).join('/')}`; }
+function evidenceView(runId, ev) {
+  if (!ev) return '';
+  const atts = ev.attachments || [];
+  const shots = atts.filter((a) => a.kind === 'screenshot'), vids = atts.filter((a) => a.kind === 'video'), traces = atts.filter((a) => a.kind === 'trace');
+  return `${ev.error ? `<pre class="cl-err">${esc(ev.error)}</pre>` : ''}
+${shots.length ? `<div class="cl-shots">${shots.map((a) => `<a href="${evidenceUrl(runId, a.path)}" target="_blank" rel="noopener" class="cl-shot"><img src="${evidenceUrl(runId, a.path)}" alt="Screenshot of this check" loading="lazy"></a>`).join('')}</div>` : ''}
+${vids.map((a) => `<video class="cl-vid" controls preload="none" src="${evidenceUrl(runId, a.path)}"></video>`).join('')}
+${traces.length ? `<div class="cl-acts">${traces.map((a) => `<button type="button" class="btn btn-sm" data-act="openTrace" data-run="${esc(runId)}" data-v="${esc(a.path)}">Open in Trace Viewer</button><a class="btn btn-quiet btn-sm" href="${evidenceUrl(runId, a.path)}" download>Download trace</a>`).join('')}</div>` : ''}`;
+}
+function qaChecklist(o) {
+  const B = S.board, fkey = o.key + '|' + (o.runId || '');
+  const filt = B.clFilter[fkey] || 'all';
+  const flat = o.sections.flatMap((s) => s.items);
+  const res = (it) => (o.ran ? it.result : (o.live ? it.result : 'nt'));
+  const c = { pass: 0, fail: 0, partial: 0, blocked: 0, nt: 0 };
+  flat.forEach((it) => { c[res(it)] = (c[res(it)] || 0) + 1; });
+  const done = flat.length - c.nt;
+  const chip = (k) => `<span class="clc clc-${k}">${svg(RES_GLYPH[k], 'ic ic-s')}<b>${c[k]}</b> ${RES_WORD[k].toLowerCase()}</span>`;
+  const fbtn = (v, l) => `<button type="button" aria-pressed="${filt === v}" data-act="clFilter" data-key="${esc(fkey)}" data-v="${v}">${l}</button>`;
+  let n = 0;
+  const sections = o.sections.map((sec) => {
+    const rows = sec.items.map((it) => {
+      n += 1;
+      const r = res(it), idx = n - 1, running = o.running === idx;
+      const bad = ['fail', 'partial', 'blocked'].includes(r);
+      if (filt === 'failed' && !bad) return '';
+      if (filt === 'passed' && r !== 'pass') return '';
+      const ev = (o.evidence || {})[String(n)];
+      const open = B.clOpen[fkey + '#' + n] != null ? B.clOpen[fkey + '#' + n] : false;
+      const canOpen = bad && (it.bug || ev);
+      return `<li class="clr clr-${running ? 'run' : r}${open ? ' is-open' : ''}">
+<div class="clr-main">${running ? `<span class="clr-ic">${svg(IC.spin, 'ic spin')}</span>` : `<span class="clr-ic" title="${RES_WORD[r]}">${svg(RES_GLYPH[r], 'ic')}</span>`}
+<span class="clr-n">${n}</span><span class="clr-t">${esc(it.text)}${running ? '<span class="clr-now">Running…</span>' : ''}</span>
+${canOpen ? `<button type="button" class="btn btn-quiet btn-icon clr-tog" data-act="clOpen" data-key="${esc(fkey + '#' + n)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} what went wrong">${svg(IC.chev, 'ic ic-s')}</button>` : ''}</div>
+${bad && it.bug && !open ? `<div class="clr-why">${esc(it.bug)}</div>` : ''}
+${open ? `<div class="clr-more">${it.bug ? `<p class="clr-why" style="margin:0">${esc(it.bug)}</p>` : ''}${evidenceView(o.runId, ev)}
+${o.key && !o.readonly ? `<div class="cl-acts"><button type="button" class="btn btn-sm" data-act="askAbout" data-key="${esc(o.key)}" data-n="${n}" data-v="${esc(it.text)}">${svg(INTEG_ICON.claude, 'ic ic-s')}Ask Claude about this</button></div>` : ''}</div>` : ''}</li>`;
+    }).join('');
+    if (!rows) return '';
+    const sc = sec.items.map(res), sp = sc.filter((x) => x === 'pass').length;
+    return `<section class="clsec"><header><h3>${esc(sec.name)}</h3><span>${sp}/${sec.items.length} passed</span></header><div class="clsec-bar"><i style="width:${Math.round((sp / Math.max(1, sec.items.length)) * 100)}%"></i></div><ol>${rows}</ol></section>`;
+  }).join('');
+  return `<div class="qacl">
+<div class="qacl-head"><div class="qacl-counts">${chip('pass')}${chip('fail')}${c.partial ? chip('partial') : ''}${c.blocked ? chip('blocked') : ''}${chip('nt')}</div>
+<div class="seg seg-sm" role="group" aria-label="Show checks">${fbtn('all', 'All')}${fbtn('failed', 'Failed')}${fbtn('passed', 'Passed')}</div></div>
+${countBar(c).replace('class="cbar"', 'class="cbar cbar-lg"')}
+${!o.ran && !o.live ? `<p class="qacl-note">${svg(IC.info, 'ic ic-s')}Nothing has run yet. This is the plan, not a result.</p>` : o.live ? `<p class="qacl-note">${svg(IC.spin, 'ic ic-s spin')}Running: ${done} of ${flat.length} checks done</p>` : ''}
+${sections || '<p class="qacl-note">No checks match this filter.</p>'}</div>`;
+}
+
 function viewDrawer() {
   const B = S.board;
   const t = B.data && B.data.tickets.find((x) => x.key === B.sel);
@@ -601,7 +670,6 @@ function viewDrawer() {
   if (t.env) {
     body += `<div class="box"><div class="brow" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted)">${esc(t.env.kind)}${t.env.source ? ` · from ${esc(t.env.source)}` : ''}</span><span class="mono trunc" style="max-width:100%">${esc(t.env.url)}</span><span style="color:var(--faint);font-size:11.5px">${esc(t.env.api)}</span></div></div>`;
     if (B.envEdit[t.key] && t.canRedo) body += envPicker(t, 'change');
-    else if (/^https?:/.test(t.env.url)) body += `<a class="btn btn-quiet btn-sm" style="margin-top:6px" href="#/run?ticket=${encodeURIComponent(t.key)}&url=${encodeURIComponent(t.env.url)}">${svg(IC.run, 'ic ic-s')}Run site checks on this environment</a>`;
   } else {
     body += `<div class="callout c-warn">${svg(IC.warn)}<span>${esc(sub === 'blocked' && t.doing ? t.doing : 'No environment resolved yet.')}</span></div>`;
     if (sub === 'blocked') body += envPicker(t, 'blocked');
@@ -624,23 +692,11 @@ function viewDrawer() {
   if (st === 2 && sub === 'sso') {
     body += `<div class="callout c-warn">${svg(IC.person)}<span>Sign in with SSO as <span class="mono">${esc(B.data.config.account)}</span> in the browser window that just opened, then continue. This account has no password login. The automation account is only used for unattended runs.</span></div>`;
   }
-  if ((st === 0 && sub === 'gate') || (st === 2 && sub === 'gate')) {
-    const c = d.counts;
-    const summary = ran ? `${c.pass} pass · ${c.partial} partial · ${c.fail} fail · ${c.blocked} blocked · ${c.nt} not tested` : `${d.items.length} items · all NOT TESTED`;
-    let n = 0;
-    body += `<div style="display:flex;flex-direction:column;gap:14px">
-<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="lbl" style="margin:0;white-space:nowrap">QA checklist</span><span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">${summary}</span></div>
-${st === 0 ? `<div class="callout c-info">${svg(IC.info)}<span>Nothing has run yet. This is the plan, not a result.</span></div>` : ''}
-${t.checklist.map((sec, si) => {
-  const start = n + 1;
-  const items = sec.items.map((it) => {
-    n += 1;
-    const r = ran ? it.result : 'nt';
-    return `<li><span class="res r-${r}">${RES[r]}</span>${esc(it.text)}${ran && it.bug ? `<div class="bug">${esc(it.bug)}</div>` : ''}</li>`;
-  }).join('');
-  return `<div><h3 class="sec-h">${si + 1}. ${esc(sec.name)}</h3><ol class="cl" start="${start}">${items}</ol></div>`;
-}).join('')}
-</div>`;
+  if (t.checklist.length && !(st === 0 && sub !== 'gate')) {
+    body += `<div><div class="lbl">QA checklist</div>${qaChecklist({ key: t.key, sections: t.checklist, ran, running: t.running_item, runId: t.run_id, evidence: t.evidence || {}, live: st === 2 && sub === 'working' })}</div>`;
+  }
+  if ((t.runs || []).length) {
+    body += `<div><div class="lbl" style="display:flex;align-items:center">Runs (${t.runs.length})<a class="btn btn-quiet btn-sm" style="margin-left:auto" href="#/history?key=${encodeURIComponent(t.key)}">All in History${svg(IC.arrow, 'ic ic-s')}</a></div><div class="box">${t.runs.slice().reverse().map((r) => `<a class="brow run-row" href="#/history/${encodeURIComponent(r.id)}"><span class="rstat rs-${esc(r.status)}">${esc(RUN_STATUS[r.status] || r.status)}</span><span>Run ${r.run_no}</span><span style="color:var(--muted)">${esc(TRIGGER[r.trigger] || '')}</span>${countBar(r.counts)}<span style="margin-left:auto;color:var(--faint);white-space:nowrap">${when(r.started)}</span></a>`).join('')}</div></div>`;
   }
   if (st === 2 && sub === 'gate') {
     body += `<div><div class="lbl">Cleanup</div><div class="box">${t.cleanup.map((c) => `<div class="brow"><span class="fdot ${c.reread ? 'f-yes' : 'f-no'}">${svg(c.reread ? IC.check : IC.warn, 'ic ic-s')}</span><span class="mono trunc">${esc(c.name)}</span><span style="margin-left:auto;color:var(--muted);white-space:nowrap">reverted to ${esc(c.value)} · ${c.reread ? 're-read ✓' : 'not re-read'}</span></div>`).join('') || '<div class="brow" style="color:var(--muted)">No settings were changed.</div>'}</div>
@@ -672,7 +728,7 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
   body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
 
   const canAct = d.primary && !t.error;
-  const nChat = (t.chat || []).filter((m) => m.role !== 'event').length;
+  const nChat = (t.chat || []).filter((m) => m.role === 'user').length;
   return `<aside class="drawer${B.full ? ' is-full' : ''}${B.chatOpen ? ' has-chat' : ''}" aria-label="Ticket details"><div class="drawer-in"><div class="drawer-main">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
@@ -730,20 +786,38 @@ const CHAT_STARTERS = (t) => {
 function viewChat(t) {
   const B = S.board, key = t.key, ready = B.data && B.data.config.claude;
   const msgs = t.chat || [];
-  const rows = msgs.map((m, mi) => {
+  // progress lines in a row form one group; finished groups fold into one line
+  const groups = []; msgs.forEach((m, mi) => {
+    const last = groups[groups.length - 1];
+    if (m.role === 'progress' && last && last.progress && last.step === (m.step || '')) last.items.push([m, mi]);
+    else groups.push({ progress: m.role === 'progress', step: m.role === 'progress' ? (m.step || '') : null, items: [[m, mi]] });
+  });
+  const STEP_NAME = { gather: 'Gather requirements', build: 'Create tests', run: 'Run tests', jira: 'Jira comment & move', testrail: 'TestRail cases', '': 'Updates' };
+  const progRow = (m) => `<div class="feed-line">${svg(IC.dotc, 'ic ic-s')}<span>${esc(m.text)}</span><time>${when(m.at)}</time></div>`;
+  const msgRow = (m, mi) => {
     if (m.role === 'event') return `<div class="chat-ev">${svg(IC.check, 'ic ic-s')}${esc(m.text)}</div>`;
     const acts = (m.actions || []).map((a, ai) => `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
     return `<div class="chat-msg chat-${m.role}${m.error ? ' chat-err' : ''}">${m.role === 'assistant' ? `<span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span>` : ''}
 <div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.text) : esc(m.text).replace(/\n/g, '<br>')}</div>
 ${acts ? `<div class="chat-acts">${acts}</div>` : ''}</div>`;
+  };
+  const rows = groups.map((g, gi) => {
+    if (!g.progress) return g.items.map(([m, mi]) => msgRow(m, mi)).join('');
+    const isLast = gi === groups.length - 1 || groups.slice(gi + 1).every((x) => !x.progress);
+    const fk = key + '|' + g.items[0][1];
+    const open = B.feedOpen[fk] != null ? B.feedOpen[fk] : isLast;
+    if (g.items.length === 1 && isLast) return `<div class="feed">${progRow(g.items[0][0])}</div>`;
+    return `<div class="feed"><button type="button" class="feed-head" data-act="feedOpen" data-key="${esc(fk)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s', open ? '' : 'style="transform:rotate(-90deg)"')}<b>${esc(STEP_NAME[g.step] || g.step)}</b><span>${g.items.length} update${g.items.length === 1 ? '' : 's'}</span></button>
+${open ? g.items.map(([m]) => progRow(m)).join('') : `<div class="feed-line feed-last">${esc(g.items[g.items.length - 1][0].text)}</div>`}</div>`;
   }).join('');
   const empty = !msgs.length ? `<div class="chat-empty"><p>Ask Claude about <b>${esc(key)}</b>: why it stopped, what to test, or to change something. Claude sees the ticket, environment, checklist and results. Suggestions show as buttons and only run when you click them; the review gates stay yours.</p>
-${ready ? `<div class="chat-starters">${CHAT_STARTERS(t).map((q) => `<button type="button" class="fchip" data-act="chatStarter" data-key="${esc(key)}" data-v="${esc(q)}">${esc(q)}</button>`).join('')}</div>` : ''}</div>` : '';
+</div>` : '';
+  const starters = ready && !msgs.some((m) => m.role === 'user') && !t.chat_busy ? `<div class="chat-starters">${CHAT_STARTERS(t).map((q) => `<button type="button" class="fchip" data-act="chatStarter" data-key="${esc(key)}" data-v="${esc(q)}">${esc(q)}</button>`).join('')}</div>` : '';
   const err = B.chatErr[key] ? `<div class="callout c-err" style="margin:0 18px 10px">${svg(IC.err, 'ic')}<span>${esc(B.chatErr[key])}</span></div>` : '';
   const draft = B.chatDraft[key] || '';
   return `<div class="drawer-body chat-body" data-keep="chat-${esc(key)}" data-stick="bottom" aria-live="polite">${empty}${rows}
 ${t.chat_busy ? `<div class="chat-msg chat-assistant"><span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span><div class="chat-bubble chat-typing">${svg(IC.spin, 'ic ic-s spin')}Thinking…</div></div>` : ''}</div>
-${err}<div class="chat-compose">${ready ? `<textarea id="chat-input" class="inp" rows="2" placeholder="Ask Claude about this ticket… (Enter to send, Shift+Enter for a new line)" data-in="chatDraft" data-key="${esc(key)}">${esc(draft)}</textarea>
+${err}<div class="chat-compose">${starters}${ready ? `<textarea id="chat-input" class="inp" rows="2" placeholder="Ask Claude about this ticket… (Enter to send, Shift+Enter for a new line)" data-in="chatDraft" data-key="${esc(key)}">${esc(draft)}</textarea>
 <div class="chat-row">${msgs.length ? `<button type="button" class="btn btn-quiet btn-sm" data-act="chatClear" data-key="${esc(key)}">Clear chat</button>` : ''}<button type="button" class="btn btn-primary" style="margin-left:auto" data-act="chatSend" data-key="${esc(key)}" ${draft.trim() && !t.chat_busy ? '' : 'disabled'}>Send${svg(IC.arrow, 'ic ic-s')}</button></div>`
     : `<div class="notice" style="margin:0">${svg(IC.info)}<span>Connect Claude to chat about tickets.</span><a class="btn btn-sm" href="#/integrations" style="margin-left:auto">Integrations${svg(IC.arrow, 'ic ic-s')}</a></div>`}</div>`;
 }
@@ -1518,6 +1592,18 @@ const ACTS = {
     try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'redo_gather', stage: t.stage, sub: t.sub }); await loadBoard(); }
     catch (e) { B.actErr = e.message; }
     B.busy = false;
+  },
+  clFilter: (el) => { S.board.clFilter[el.dataset.key] = el.dataset.v; },
+  clOpen: (el) => { const k = el.dataset.key; S.board.clOpen[k] = !S.board.clOpen[k]; },
+  feedOpen: (el) => { const k = el.dataset.key; S.board.feedOpen[k] = !S.board.feedOpen[k]; },
+  askAbout: (el) => {
+    const B = S.board, key = el.dataset.key;
+    B.chatOpen = true; store.set('chatOpen', true);
+    B.chatDraft[key] = `About check ${el.dataset.n} ("${el.dataset.v}"): `;
+    setTimeout(() => { const i = document.getElementById('chat-input'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 0);
+  },
+  openTrace: async (el) => {
+    try { await api('POST', `/api/history/${encodeURIComponent(el.dataset.run)}/trace`, { path: el.dataset.v }); toast('Opening the Trace Viewer on this computer…'); } catch (e) { toast(e.message); }
   },
   chatToggle: () => { const B = S.board; B.chatOpen = !B.chatOpen; store.set('chatOpen', B.chatOpen); if (B.chatOpen) setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 0); },
   chatSend: (el) => chatSend(el.dataset.key),
