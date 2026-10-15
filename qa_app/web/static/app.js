@@ -15,6 +15,7 @@ const IC = {
   skill: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"></path><path d="M17 7.5h1.5A1.5 1.5 0 0 1 20 9v11h-3"></path><path d="M8.5 9h5M8.5 12.5h5M8.5 16h3"></path>',
   board: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
   run: '<circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l5.5-3.5z"></path>',
+  report: '<path d="M6 3.5h8.5L19 8v12.5H6z"></path><path d="M14 3.5V8h5"></path><path d="M9 17v-3M12 17v-6M15 17v-4"></path>',
   history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"></path><path d="M3.5 3.5v5h5"></path><path d="M12 7.5V12l3 2"></path>',
   integ: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><path d="M17 14v6M14 17h6"></path>',
   sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"></path>',
@@ -132,7 +133,7 @@ const CHECK_INFO = [
   ['performance', 'Performance', 'Timing, page weight and Lighthouse', IC.perf],
 ];
 const SEVL = { critical: 'Critical', major: 'Major', minor: 'Minor', info: 'Info' };
-const ROUTES = ['board', 'run', 'history', 'integrations', 'skills'];
+const ROUTES = ['board', 'history', 'reports', 'integrations', 'skills'];
 const STEP_SKILL = ['gather', 'create-tests', 'run-tests', 'jira-comment', 'testrail'];  // board lane i → its skill
 
 
@@ -143,12 +144,8 @@ const S = {
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
     prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), clFilter: {}, clOpen: {}, feedOpen: {}, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
-  run: {
-    form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
-      viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
-    optsOpen: false, logOpen: true, cur: null, sel: null, sev: 'all', check: 'all', q: '', zoom: false, starting: false, err: '', jiraBusy: false,
-  },
-  hist: { runs: null, site: null, q: '', status: 'all', pub: {} },
+  hist: { data: null, run: null, cmp: null, err: '', q: '', key: '', project: '', type: '', status: '', env: '', range: store.get('histRange', '30d') },
+  reports: { trends: null, list: null, range: store.get('repRange', '30d'), project: '', type: '', busy: '', err: '', preview: null, period: { from: '', to: '' } },
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
   jira: { st: null, link: '', busy: '', err: '', col: '', method: store.get('jiraMethod', 'atlassian'), email: '', token: '' },
   azure: { st: null, link: '', pat: '', busy: '', err: '', col: '', changing: false },
@@ -193,12 +190,8 @@ function connect() {
     } else if (ev.type === 'toast') {
       toast(ev.message);
       return;
-    } else if (ev.type === 'run') {
-      if (S.run.cur && S.run.cur.id === ev.run.id) S.run.cur = ev.run;
-      if (S.hist.runs) {
-        const i = S.hist.runs.findIndex((r) => r.id === ev.run.id);
-        if (i > -1) S.hist.runs[i] = ev.run; else S.hist.runs.unshift(ev.run);
-      }
+    } else if (ev.type === 'ticket' && S.route === 'history' && !S.routeArg) {
+      clearTimeout(S.hist.t); S.hist.t = setTimeout(loadHistory, 1500);  // a run may have started or finished
     }
     schedule();
   };
@@ -220,8 +213,8 @@ function render() {
   document.querySelectorAll('[data-keep]').forEach((el) => { scrolls[el.dataset.keep] = [el.scrollLeft, el.scrollTop]; });
   $app.dataset.theme = S.theme;
   document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
-  const screen = { board: viewBoard, run: viewRun, history: viewHistory, integrations: viewIntegrations, skills: viewSkills }[S.route]();
-  $app.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewToast() + (S.route === 'run' ? viewLightbox() : '');
+  const screen = { board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
+  $app.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewToast();
   document.querySelectorAll('[data-keep]').forEach((el) => {
     const v = scrolls[el.dataset.keep];
     if (v) { el.scrollLeft = v[0]; el.scrollTop = v[1]; }
@@ -240,7 +233,7 @@ function viewSide() {
   const link = (r, label, icon, n) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}<span class="kbd">⌘${n}</span></a>`;
   return `<nav class="side" aria-label="Main">
 <div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">YourQA</span></div>
-${link('board', 'Board', IC.board, 1)}${link('run', 'Run', IC.run, 2)}${link('history', 'History', IC.history, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
+${link('board', 'Board', IC.board, 1)}${link('history', 'History', IC.history, 2)}${link('reports', 'Reports', IC.report, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
 ${S.board.data && S.board.data.config.mode !== 'live' ? '<div style="padding:0 4px 10px"><a class="mode" href="#/integrations" title="The Testing board uses sample tickets and simulated Jira and TestRail. Turn it off on the Integrations screen.">Demo data</a></div>' : ''}
 <div class="seg" role="group" aria-label="Theme">
@@ -883,296 +876,119 @@ async function loadBoard() {
   schedule();
 }
 
-/* ================================================================== RUN */
-function fmtDur(sec) { sec = Math.max(0, Math.round(sec || 0)); return `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`; }
-function fmtClock(sec) { sec = Math.max(0, Math.round(sec || 0)); return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`; }
-const runPath = (r, p) => (p && p.startsWith('/') ? p : `/runs/${encodeURIComponent(r.id)}/${p}`);
-const pathOf = (u) => { try { const x = new URL(u); return x.pathname + x.search; } catch (e) { return u; } };
+function viewReports() { return `<main class="main"><h1 style="margin:0;font-size:18px;font-weight:600">Reports</h1><div class="notice">Loading…</div></main>`; }
+async function loadReports() { schedule(); }
 
-function viewRun() {
-  const R = S.run, f = R.form, r = R.cur;
-  const st = r ? r.state : 'empty';
-  const running = st === 'running';
-  const done = ['passed', 'failed', 'stopped'].includes(st);
-  const ticket = (r && r.ticket) || f.ticket;
-  const tk = ticket && S.board.data ? S.board.data.tickets.find((t) => t.key === ticket) : null;
-  const enabled = Object.values(f.checks).filter(Boolean).length;
-  const vpNames = ['desktop', 'tablet', 'mobile'].filter((k) => f.viewports[k]).map((k) => k[0].toUpperCase() + k.slice(1)).join(', ') || 'No viewport';
-  const optsSummary = [f.max_pages + ' pages', vpNames, f.threshold + '% diff', f.lighthouse ? 'Lighthouse' : 'No Lighthouse'].join('  ·  ');
+/* ================================================================== HISTORY: every ticket run */
+function fmtDur(sec) { sec = Math.max(0, Math.round(sec || 0)); return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`; }
+const hostOf = (u) => { try { return new URL(/^https?:/.test(u) ? u : 'https://' + u).host; } catch (e) { return u || ''; } };
+const dayLabel = (ts) => { const d = new Date(ts * 1000), t = new Date(), y = new Date(Date.now() - 86400000);
+  return d.toDateString() === t.toDateString() ? 'Today' : d.toDateString() === y.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
+const runStatus = (st) => `<span class="rstat rs-${esc(st)}">${esc(RUN_STATUS[st] || st)}</span>`;
 
-  let html = `<main class="main">
-<header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:36px">
-<div style="display:flex;flex-direction:column;gap:2px;min-width:0">
-<div class="crumb"><a href="#/board">Board</a><span aria-hidden="true">/</span><span>Run tests</span>${ticket ? `<span aria-hidden="true">/</span><span class="mono" style="color:var(--fg)">${esc(ticket)}</span>` : ''}</div>
-<div style="display:flex;align-items:baseline;gap:10px;min-width:0"><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em" class="trunc">${esc(tk ? tk.title : (r ? r.url : 'New run'))}</h1><span class="mono" style="color:var(--muted);font-size:12px">${esc(r ? r.id : 'New run')}</span></div>
-</div>
-<div style="margin-left:auto;display:flex;gap:8px">
-${done ? `<a class="btn" href="${runPath(r, 'report.html')}" target="_blank" rel="noopener">${svg(IC.ext)}Open full report</a>` : `<button type="button" class="btn" disabled>${svg(IC.ext)}Open full report</button>`}
-${done && ticket ? `<a class="btn btn-primary" href="#/board" data-act="openTicket" data-key="${esc(ticket)}">Review results${svg(IC.arrow)}</a>` : ''}
-${done && !ticket ? `<button type="button" class="btn" data-act="newRun">New run</button>` : ''}
-</div>
-</header>
-
-<section class="card" aria-label="Run setup" style="padding:16px;display:flex;flex-direction:column;gap:14px">
-<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-<label for="target-url" class="sr-only">Website URL</label>
-<div class="urlbox" style="flex:1 1 420px;min-width:0">${svg(IC.globe, 'ic', 'style="width:18px;height:18px;color:var(--faint)"')}<input id="target-url" class="mono" type="url" value="${esc(f.url)}" data-in="runUrl" ${running ? 'readonly' : ''} placeholder="https://your-site.com" spellcheck="false"></div>
-${running ? `<button type="button" class="btn btn-stop btn-lg" data-act="stopRun">${svg(IC.stop)}Stop</button>` : `<button type="button" class="btn btn-primary btn-lg" data-act="startRun" ${R.starting || !f.url.trim() || !enabled ? 'disabled' : ''}>${svg(IC.play)}Run tests<span class="mono" style="font-size:11px;opacity:.7;margin-left:4px">⌘↵</span></button>`}
-</div>
-${R.err ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(R.err)}</span></div>` : ''}
-<div><div class="lbl">Checks <span style="color:var(--faint)">· ${enabled} of 5 on</span></div>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:10px">
-${CHECK_INFO.map(([k, name, desc, icon]) => `<button type="button" class="tog" aria-pressed="${!!f.checks[k]}" data-act="ck" data-v="${k}" ${running ? 'disabled' : ''}>
-<span style="display:flex;align-items:center;gap:8px;width:100%"><span class="tog-ic">${svg(icon)}</span><span style="font-weight:600">${name}</span><span class="sw" style="margin-left:auto" aria-hidden="true"></span></span>
-<span style="color:var(--muted);font-size:12px">${desc}</span></button>`).join('')}
-</div></div>
-</section>
-
-<section class="card" aria-label="Options">
-<button type="button" class="disc" aria-expanded="${R.optsOpen}" aria-controls="run-options" data-act="opts">${svg(IC.sliders, 'ic', 'style="color:var(--muted)"')}<span style="font-weight:600">Options</span><span class="mono trunc" style="color:var(--muted);font-size:12px">${esc(optsSummary)}</span>${svg(IC.chev, 'ic chev', 'style="margin-left:auto"')}</button>
-${R.optsOpen ? `<div id="run-options" style="padding:4px 16px 16px;display:flex;flex-direction:column;gap:16px">
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
-<div><label class="lbl" for="opt-max">Max pages</label><input id="opt-max" class="inp mono" type="number" min="1" max="2000" value="${esc(f.max_pages)}" data-in="runMax"></div>
-<div><div class="lbl" id="vp-label">Viewports</div><div role="group" aria-labelledby="vp-label" style="display:flex;gap:6px;flex-wrap:wrap">
-${['desktop', 'tablet', 'mobile'].map((k) => `<button type="button" class="vchip" aria-pressed="${!!f.viewports[k]}" data-act="vp" data-v="${k}">${svg(IC[k], 'ic', 'style="width:14px;height:14px"')}${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}
-</div></div>
-<div><label class="lbl" for="opt-thr">Visual diff threshold</label><div style="position:relative"><input id="opt-thr" class="inp mono" type="number" min="0" max="100" step="0.1" value="${esc(f.threshold)}" data-in="runThr" style="padding-right:30px"><span style="position:absolute;right:10px;top:7px;color:var(--muted)" aria-hidden="true">%</span></div></div>
-<div><label class="lbl" for="opt-ticket">Ticket <span style="color:var(--faint)">(optional)</span></label><input id="opt-ticket" class="inp mono" value="${esc(f.ticket)}" data-in="runTicket" placeholder="OPTR-48466"></div>
-</div>
-<div style="display:flex;flex-wrap:wrap;gap:10px 24px;padding-top:12px;border-top:1px solid var(--border)">
-${[['lighthouse', 'Use Lighthouse'], ['accept_baselines', 'Accept current screenshots as new baselines'], ['headed', 'Show browser window'], ['publish', 'Publish to integrations after run']].map(([k, l]) => `<label class="cb"><input type="checkbox" ${f[k] ? 'checked' : ''} data-in="runOpt" data-v="${k}">${l}</label>`).join('')}
-</div></div>` : ''}
-</section>`;
-
-  if (!r) {
-    html += `<section class="card" aria-label="No run yet" style="padding:48px 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px">
-<svg class="empty-ill" width="132" height="84" viewBox="0 0 132 84" fill="none" aria-hidden="true"><rect x="1" y="1" width="130" height="82" rx="8" stroke="currentColor" stroke-width="1.5"></rect><path d="M1 15h130" stroke="currentColor" stroke-width="1.5"></path><circle cx="10" cy="8" r="2" fill="currentColor"></circle><circle cx="17" cy="8" r="2" fill="currentColor"></circle><circle cx="24" cy="8" r="2" fill="currentColor"></circle><rect x="14" y="26" width="58" height="6" rx="3" fill="currentColor" opacity=".35"></rect><rect x="14" y="40" width="42" height="6" rx="3" fill="currentColor" opacity=".35"></rect><rect x="14" y="54" width="50" height="6" rx="3" fill="currentColor" opacity=".35"></rect><circle cx="100" cy="47" r="16" stroke="var(--accent)" stroke-width="2"></circle><path d="M93 47.5l5 5 9-10" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-<h2 style="margin:8px 0 0;font-size:16px;font-weight:600">No run yet</h2>
-<p style="margin:0;color:var(--muted);max-width:420px">Enter a URL and press Run tests. Findings stream in here while pages are crawled${ticket ? ', and the result goes back to the board' : ''}.</p>
-<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;justify-content:center"><a class="btn" href="#/board">Back to board</a></div>
-</section></main>`;
-    return html;
-  }
-
-  if (st === 'error') {
-    html += `<section class="card" role="alert" style="padding:16px;display:flex;gap:14px;align-items:flex-start;border-color:color-mix(in srgb,var(--crit-dot) 45%,var(--border))">
-<span style="width:32px;height:32px;border-radius:8px;display:grid;place-items:center;background:var(--crit-bg);color:var(--crit);flex:none">${svg(IC.err)}</span>
-<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
-<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0;font-size:15px;font-weight:600">Run couldn't ${r.crawled ? 'finish' : 'start'}</h2><span class="status sm st-error">Error</span></div>
-<p style="margin:0;color:var(--muted)">${/timeout/i.test(r.error) ? "The site didn't respond before the navigation timeout. Check the URL, VPN or basic auth, then try again." : /executable|browser/i.test(r.error) ? 'The test browser is not installed. Run "python -m playwright install chromium", then try again.' : 'Something went wrong while testing the site.'}</p>
-<pre class="pre mono">${esc(r.error)}</pre>
-<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-primary" data-act="startRun">Retry</button><button type="button" class="btn" data-act="openLog">Show log</button></div>
-</div></section>`;
-    return html + viewLog(r) + '</main>';
-  }
-
-  const counts = r.counts;
-  const elapsed = (running ? Date.now() / 1000 : r.finished) - r.started;
-  const pct = r.total ? Math.min(100, Math.round((r.crawled / r.total) * 100)) : 0;
-  const statusCls = { running: 'st-running', passed: 'st-passed', failed: 'st-failed', stopped: 'st-stopped' }[st];
-  html += `<section class="card" aria-label="Progress" style="padding:12px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px">
-<div style="flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:8px">
-<div style="display:flex;justify-content:space-between;gap:12px"><span><strong style="font-variant-numeric:tabular-nums">${r.crawled}</strong><span style="color:var(--muted)"> / ${r.total} pages crawled</span></span><span class="mono" style="color:var(--muted)">${pct}%</span></div>
-<div class="pbar${running ? ' is-live' : ''}" role="progressbar" aria-valuemin="0" aria-valuemax="${r.total}" aria-valuenow="${r.crawled}" aria-label="Pages crawled"><i style="width:${pct}%"></i></div>
-</div>
-<div style="flex:2 1 300px;min-width:0"><div class="lbl" style="margin-bottom:2px">${running ? 'Now testing' : 'Last page tested'}</div><div class="mono trunc" style="font-size:12.5px">${esc(r.current || '—')}</div></div>
-<div><div class="lbl" style="margin-bottom:2px">Elapsed</div><div class="mono" style="font-size:15px;font-variant-numeric:tabular-nums">${fmtClock(elapsed)}</div></div>
-</section>
-<section class="card" aria-label="Summary" style="display:flex;flex-wrap:wrap;overflow:hidden">
-<div class="sum" style="flex:1.3 1 140px"><div class="lbl">Status</div><span class="status ${statusCls}">${running ? svg(IC.spin, 'ic spin', 'style="width:14px;height:14px"') : ''}${st}</span></div>
-${['critical', 'major', 'minor', 'info'].map((k) => `<div class="sum"><div class="lbl"><span class="dot d-${k}"></span>${SEVL[k]}</div><div class="num">${counts[k]}</div></div>`).join('')}
-<div class="sum"><div class="lbl">Pages tested</div><div class="num">${r.crawled}</div></div>
-<div class="sum"><div class="lbl">Duration</div><div class="num">${fmtDur(elapsed)}</div></div>
-</section>`;
-
-  const q = R.q.trim().toLowerCase();
-  const list = r.findings.filter((x) => (R.sev === 'all' || x.sev === R.sev) && (R.check === 'all' || x.check === R.check) && (!q || (x.title + ' ' + x.url + ' ' + x.details).toLowerCase().includes(q)));
-  const sel = r.findings.find((x) => x.id === R.sel) || list[0] || null;
-  html += `<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start">
-<section class="card" aria-label="Findings" style="flex:999 1 460px;min-width:0;overflow:hidden">
-<div style="padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
-<h2 class="h-sec">Findings</h2><span class="mono" style="color:var(--muted);font-size:12px">${list.length} of ${r.findings.length}</span>
-<label class="search" style="margin-left:auto;flex:0 1 220px;height:30px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search findings</span><input id="find-q" type="search" placeholder="Search findings" value="${esc(R.q)}" data-in="runQ"></label>
-<label class="sr-only" for="check-filter">Filter by check</label>
-<select id="check-filter" class="sel" data-in="runCheck"><option value="all">All checks</option>${Object.entries(CHECKS).map(([k, v]) => `<option value="${k}" ${R.check === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-</div>
-<div role="group" aria-label="Filter by severity" style="display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 12px">
-${[['all', 'All', r.findings.length]].concat(['critical', 'major', 'minor', 'info'].map((k) => [k, SEVL[k], counts[k]])).map(([k, l, n]) => `<button type="button" class="fchip" aria-pressed="${R.sev === k}" data-act="sev" data-v="${k}"><span class="dot d-${k}"></span>${l}<span class="n">${n}</span></button>`).join('')}
-</div>
-<div style="overflow-x:auto"><div style="min-width:560px">
-<div class="thead" aria-hidden="true"><span>Severity</span><span>Check</span><span>Title</span><span>Page</span></div>
-${list.map((x) => `<button type="button" class="frow${sel && x.id === sel.id ? ' is-sel' : ''}" aria-pressed="${!!(sel && x.id === sel.id)}" data-act="pick" data-v="${esc(x.id)}">
-<span><span class="chip sev-${x.sev}">${SEVL[x.sev]}</span></span><span style="color:var(--muted)">${CHECKS[x.check]}</span><span class="trunc" style="font-weight:500">${esc(x.title)}</span><span class="mono trunc u" title="${esc(x.url)}">${esc(pathOf(x.url))}</span></button>`).join('')}
-${running ? `<div class="frow stream" aria-live="polite"><span><span class="skel" style="width:64px"></span></span><span><span class="skel" style="width:70px"></span></span><span class="trunc" style="font-size:12px">Scanning ${esc((r.current || '').replace(/^https?:\/\/[^/]+/, '') || '/')} …</span><span><span class="skel" style="width:120px"></span></span></div>` : ''}
-${!running && r.findings.length === 0 ? `<div style="padding:28px 14px;text-align:center;color:var(--muted);border-top:1px solid var(--border)">No findings. Every enabled check passed.</div>` : ''}
-${r.findings.length > 0 && list.length === 0 ? `<div style="padding:28px 14px;text-align:center;color:var(--muted);border-top:1px solid var(--border)">No findings match these filters. <button type="button" class="btn btn-quiet" style="height:26px;color:var(--link)" data-act="clearFilters">Clear filters</button></div>` : ''}
-</div></div>
-</section>
-<aside class="card" aria-label="Finding details" style="flex:1 1 340px;min-width:0;overflow:hidden;display:flex;flex-direction:column">${sel ? viewFinding(r, sel) : '<div style="padding:40px 20px;text-align:center;color:var(--muted)">Findings will appear here as pages are crawled. Select one to see its details.</div>'}</aside>
-</div>`;
-  return html + viewLog(r) + '</main>';
+function historyQuery() {
+  const H = S.hist, p = new URLSearchParams();
+  ['q', 'key', 'project', 'type', 'status', 'env', 'range'].forEach((k) => { if (H[k]) p.set(k, H[k]); });
+  return p.toString();
 }
-
-function viewFinding(r, f) {
-  const href = /^https?:/.test(f.url) ? f.url : (r.url || '').replace(/\/$/, '') + f.url;
-  let media = '';
-  if (f.kind === 'diff') {
-    media = `<div><div class="lbl" style="justify-content:space-between"><span>Visual diff · ${esc(f.viewport)}</span><span style="color:var(--faint)">Click to enlarge</span></div>
-<button type="button" class="shot-btn" data-act="zoom" aria-label="Enlarge visual diff"><span class="trip">
-<span class="trip-col"><span class="cap">Baseline</span><img class="shot" src="${runPath(r, f.baseline)}" alt="Baseline"></span>
-<span class="trip-col"><span class="cap">Current</span><img class="shot" src="${runPath(r, f.shot)}" alt="Current"></span>
-<span class="trip-col"><span class="cap" style="color:var(--crit)">Diff</span><img class="shot" src="${runPath(r, f.diff)}" alt="Changed pixels"></span>
-</span></button></div>`;
-  } else if (f.kind === 'shot' && f.shot) {
-    media = `<div><div class="lbl" style="justify-content:space-between"><span>Screenshot</span><span style="color:var(--faint)">Click to enlarge</span></div>
-<button type="button" class="shot-btn" data-act="zoom" aria-label="Enlarge screenshot"><img class="shot" src="${runPath(r, f.shot)}" alt="Screenshot of ${esc(f.title)}"></button></div>`;
-  }
-  return `<div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:9px">
-<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="chip sev-${f.sev}">${SEVL[f.sev]}</span><span class="tag">${CHECKS[f.check]}</span><span class="mono" style="margin-left:auto;color:var(--faint);font-size:11.5px">${esc(f.id)}</span></div>
-<h2 style="margin:0;font-size:16px;font-weight:600;line-height:1.35">${esc(f.title)}</h2>
-<a class="mono trunc" href="${esc(href)}" target="_blank" rel="noopener" style="font-size:12px;display:block">${esc(href)}</a>
-</div>
-<div style="padding:14px 16px;display:flex;flex-direction:column;gap:14px"><div><div class="lbl">Details</div><pre class="pre mono">${esc(f.details)}</pre></div>${media}</div>
-<div style="margin-top:auto;padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-${f.jira_key ? `<span style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:7px;background:var(--pass-bg);color:var(--pass);font-weight:500">${svg(IC.check)}Created <span class="mono">${esc(f.jira_key)}</span></span>`
-    : `<button type="button" class="btn btn-primary" data-act="createJira" data-v="${esc(f.id)}" ${S.run.jiraBusy || r.state === 'running' ? 'disabled' : ''}>${svg(IC.ticket)}Create Jira issue</button>`}
-<button type="button" class="btn" data-act="copyFinding" data-v="${esc(f.id)}">Copy details</button>
-<a class="btn btn-quiet btn-icon" href="${esc(href)}" target="_blank" rel="noopener" aria-label="Open page in browser" title="Open page in browser" style="margin-left:auto">${svg(IC.ext)}</a>
-</div>`;
-}
-
-function viewLog(r) {
-  if (!r.logs || !r.logs.length) return '';
-  return `<section class="card" aria-label="Log" style="overflow:hidden">
-<button type="button" class="disc" aria-expanded="${S.run.logOpen}" data-act="log">${svg(IC.term, 'ic', 'style="color:var(--muted)"')}<span style="font-weight:600">Log</span><span class="mono" style="color:var(--muted);font-size:12px">${r.logs.length} lines</span>${svg(IC.chev, 'ic chev', 'style="margin-left:auto"')}</button>
-${S.run.logOpen ? `<div class="console" role="log" aria-label="Run log" data-keep="console" data-stick="bottom">${r.logs.map((l) => `<div><span class="t">${esc(l.t)}</span>  <span class="lv lv-${l.lv.toLowerCase()}">${l.lv}</span>${esc(l.msg)}</div>`).join('')}</div>` : ''}
-</section>`;
-}
-
-function viewLightbox() {
-  const R = S.run, r = R.cur;
-  if (!R.zoom || !r) return '';
-  const f = r.findings.find((x) => x.id === R.sel) || r.findings[0];
-  if (!f || f.kind === 'none') return '';
-  const img = f.kind === 'diff'
-    ? `<div class="trip" style="gap:14px"><div class="trip-col"><span class="cap">Baseline</span><img class="shot" src="${runPath(r, f.baseline)}" alt="Baseline"></div><div class="trip-col"><span class="cap">Current · this run</span><img class="shot" src="${runPath(r, f.shot)}" alt="Current"></div><div class="trip-col"><span class="cap" style="color:var(--crit)">Diff · changed pixels</span><img class="shot" src="${runPath(r, f.diff)}" alt="Diff"></div></div>`
-    : `<img class="shot" src="${runPath(r, f.shot)}" alt="Screenshot">`;
-  return `<div class="lightbox" role="dialog" aria-modal="true" aria-label="Enlarged image" data-act="unzoomBg">
-<div class="card" style="width:100%;max-width:1180px;padding:16px;display:flex;flex-direction:column;gap:12px">
-<div style="display:flex;align-items:center;gap:10px"><span class="chip sev-${f.sev}">${SEVL[f.sev]}</span><strong class="trunc">${esc(f.title)}</strong><span class="mono trunc" style="color:var(--muted);font-size:12px">${esc(f.url)}</span>
-<button type="button" class="btn btn-quiet btn-icon" style="margin-left:auto" aria-label="Close" data-act="unzoom">${svg(IC.close)}</button></div>${img}</div></div>`;
-}
-
-async function startRun() {
-  const R = S.run, f = R.form;
-  if (!f.url.trim() || R.starting) return;
-  R.starting = true; R.err = ''; schedule();
-  try {
-    const run = await api('POST', '/api/runs', { ...f, url: f.url.trim(), max_pages: Number(f.max_pages) || 50, threshold: Number(f.threshold) || 0.5 });
-    R.cur = run; R.sel = null; R.sev = 'all'; R.check = 'all'; R.q = '';
-    history.replaceState(null, '', '#/run/' + run.id);
-    S.routeArg = run.id;
-  } catch (e) { R.err = e.message; }
-  R.starting = false; schedule();
-}
-
-function formFromRun(r) {
-  // Viewing a run shows the setup it ran with, so Retry and Run tests repeat it.
-  const o = r.options || {};
-  Object.assign(S.run.form, { url: o.url || r.url, ticket: o.ticket || '', checks: { ...o.checks }, viewports: { ...o.viewports },
-    max_pages: o.max_pages, threshold: o.threshold, lighthouse: o.lighthouse, accept_baselines: o.accept_baselines, headed: o.headed, publish: o.publish });
-  store.set('runForm2', S.run.form);
-}
-
-async function loadRun(id) {
-  try { S.run.cur = await api('GET', '/api/runs/' + encodeURIComponent(id)); S.run.err = ''; formFromRun(S.run.cur); } catch (e) { S.run.err = e.message; S.run.cur = null; }
+async function loadHistory() {
+  try { S.hist.data = await api('GET', '/api/history?' + historyQuery()); S.hist.err = ''; } catch (e) { S.hist.err = e.message; }
   schedule();
 }
-
-/* ================================================================== HISTORY */
-const hostOf = (u) => { try { return new URL(/^https?:/.test(u) ? u : 'https://' + u).host; } catch (e) { return u; } };
-const fmtDT = (ts) => { const d = new Date(ts * 1000); return d.toLocaleString('en-US', { month: 'short', day: '2-digit' }) + ' · ' + d.toTimeString().slice(0, 5); };
+async function loadRunRecord(id, vs) {
+  const H = S.hist;
+  try {
+    H.run = await api('GET', `/api/history/${encodeURIComponent(id)}`); H.err = '';
+    H.cmp = vs ? await api('GET', `/api/history/${encodeURIComponent(id)}/compare/${encodeURIComponent(vs)}`) : null;
+  } catch (e) { H.err = e.message; H.run = null; H.cmp = null; }
+  schedule();
+}
 
 function viewHistory() {
   const H = S.hist;
-  if (!H.runs) return `<main class="main"><h1 style="margin:0;font-size:18px;font-weight:600">History</h1><div class="notice">Loading runs…</div></main>`;
-  const runs = H.runs.filter((r) => r.state !== 'running');
-  const bySite = {};
-  runs.forEach((r) => { const h = hostOf(r.url); (bySite[h] = bySite[h] || []).push(r); });
-  const sites = Object.keys(bySite).sort((a, b) => bySite[b].length - bySite[a].length);
-  if (!H.site || !bySite[H.site]) H.site = sites[0] || null;
-  let chart = '<div class="notice">No finished runs yet. Start one from the Run screen.</div>';
-  if (H.site) {
-    const data = bySite[H.site].slice(0, 10).reverse();
-    const tot = (r) => r.counts.critical + r.counts.major + r.counts.minor;
-    const max = Math.max(1, ...data.map(tot));
-    const px = (v) => (v === 0 ? '0px' : Math.max(2, Math.round((v / max) * 100)) + 'px');
-    const label = (r) => new Date(r.started * 1000).toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
-    const last = tot(data[data.length - 1]), first = tot(data[0]), diff = last - first;
-    chart = `<div style="display:flex;gap:24px;flex-wrap:wrap;align-items:stretch">
-<div style="flex:999 1 420px;min-width:0">
-<div class="bars" role="img" aria-label="Stacked bars of critical, major and minor issues for the last ${data.length} runs of ${esc(H.site)}. ${data.map((r) => label(r) + ': ' + r.counts.critical + ' critical, ' + r.counts.major + ' major, ' + r.counts.minor + ' minor').join('; ')}">
-<div class="gl" style="bottom:50%"></div>
-${data.map((r) => `<div class="bcol" title="${label(r)}: ${r.counts.critical} critical, ${r.counts.major} major, ${r.counts.minor} minor"><span class="mono" style="font-size:10.5px;color:var(--muted)">${tot(r)}</span><div class="stack"><span class="s-crit" style="height:${px(r.counts.critical)}"></span><span class="s-major" style="height:${px(r.counts.major)}"></span><span class="s-minor" style="height:${px(r.counts.minor)}"></span></div></div>`).join('')}
-</div><div class="xl" aria-hidden="true">${data.map((r) => `<span>${label(r)}</span>`).join('')}</div></div>
-<div style="flex:1 1 200px;display:flex;flex-direction:column;gap:12px;padding-left:20px;border-left:1px solid var(--border)">
-<div><div class="lbl">Latest run</div><div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:24px;font-weight:600;font-variant-numeric:tabular-nums">${last}</span><span style="color:var(--muted)">issues</span></div>
-<div class="mono ${diff <= 0 ? 'ok' : 'c-crit'}" style="font-size:12px">${diff <= 0 ? '▼ ' + Math.abs(diff) : '▲ ' + diff} since ${label(data[0])}</div></div>
-<div style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)">
-<span style="display:flex;align-items:center;gap:8px"><span class="dot sq" style="background:var(--crit-dot)"></span>Critical</span>
-<span style="display:flex;align-items:center;gap:8px"><span class="dot sq" style="background:var(--major-dot)"></span>Major</span>
-<span style="display:flex;align-items:center;gap:8px"><span class="dot sq" style="background:var(--minor-dot)"></span>Minor</span>
-</div></div></div>`;
+  if (S.routeArg) return viewRunPage();
+  const d = H.data;
+  const head = `<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">History</h1>
+<p style="margin:2px 0 0;color:var(--muted)">Every ticket test run, with its evidence. Open a run to see each check, or compare it with another run of the same ticket.</p></div>
+<button type="button" class="btn" style="margin-left:auto" data-act="histRefresh">${svg(IC.sync, 'ic')}Refresh</button></header>`;
+  if (!d) return `<main class="main">${head}<div class="${H.err ? 'callout c-err' : 'notice'}">${H.err ? esc(H.err) : 'Loading runs…'}</div></main>`;
+  const sel = (k, label, opts) => `<label class="hsel"><span class="sr-only">${label}</span><select class="inp" data-in="histF" data-v="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${H[k] === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  const filters = `<div class="hfilters"><label class="search" style="flex:1 1 220px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search runs</span><input type="search" placeholder="Search key or title" value="${esc(H.q)}" data-in="histQ"></label>
+${sel('range', 'Date', [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']])}
+${sel('status', 'Status', [['', 'Any status'], ['passed', 'Passed'], ['failed', 'Failed'], ['error', 'Error'], ['stopped', 'Stopped']])}
+${sel('type', 'FE / BE', [['', 'FE and BE'], ['FE', 'FE'], ['BE', 'BE'], ['FE+BE', 'FE+BE']])}
+${d.projects.length > 1 ? sel('project', 'Project', [['', 'All projects'], ...d.projects.map((x) => [x, x])]) : ''}
+${d.envs.length > 1 ? sel('env', 'Environment', [['', 'All environments'], ...d.envs.map((x) => [x, hostOf(x)])]) : ''}
+${H.key ? `<span class="fpill">${esc(H.key)}<button type="button" data-act="histKeyClear" aria-label="Show all tickets">${svg(IC.close, 'ic')}</button></span>` : ''}</div>`;
+  const t = d.totals;
+  const strip = `<div class="hstrip"><div><b>${t.runs}</b><span>run${t.runs === 1 ? '' : 's'}</span></div><div><b>${t.pass_rate == null ? '–' : t.pass_rate + '%'}</b><span>of runs passed</span></div>
+<div style="flex:3 1 260px"><b class="${t.failing_now.length ? 'c-crit' : ''}">${t.failing_now.length}</b><span>ticket${t.failing_now.length === 1 ? '' : 's'} failing now${t.failing_now.length ? ': ' + t.failing_now.slice(0, 6).map((k) => `<button type="button" class="linkish" data-act="histKey" data-v="${esc(k)}">${esc(k)}</button>`).join(', ') : ''}</span></div>
+<div class="hstrip-note">${d.mode === 'demo' ? 'Demo runs' : 'Evidence'} · ${d.evidence_mb} MB</div></div>`;
+  let list = '';
+  if (!d.runs.length) list = `<div class="notice">${svg(IC.info)}<span>${H.q || H.status || H.key || H.type || H.project || H.env || H.range !== 'all' ? 'No runs match these filters.' : 'No runs yet. Runs appear here as tickets go through step 2 on the board.'}</span></div>`;
+  else {
+    let day = '';
+    d.runs.forEach((r) => {
+      const dl = dayLabel(r.started);
+      if (dl !== day) { if (day) list += '</div>'; day = dl; list += `<h2 class="hday">${esc(dl)}</h2><div class="hrows">`; }
+      list += `<a class="hrow" href="#/history/${encodeURIComponent(r.id)}">${runStatus(r.status)}
+<span class="hrow-t"><span class="mono">${esc(r.key)}</span><span class="trunc">${esc(r.title || '')}</span></span>
+<span class="hrow-m">Run ${r.run_no} · ${esc(TRIGGER[r.trigger] || '')}</span>
+<span class="hrow-env mono trunc" title="${esc(r.env_url || '')}">${esc(hostOf(r.env_url))}</span>
+${countBar(r.counts)}<span class="hrow-d">${r.duration_s != null ? fmtDur(r.duration_s) : ''}</span><time>${when(r.started)}</time>${r.mode === 'demo' ? '<span class="mode">Demo</span>' : ''}</a>`;
+    });
+    list += '</div>';
   }
-  const q = H.q.trim().toLowerCase();
-  const rows = runs.filter((r) => {
-    const failed = r.counts.critical > 0 || r.counts.major > 0;
-    return (H.status === 'all' || (H.status === 'failed') === failed) && (!q || r.url.toLowerCase().includes(q));
-  });
-  const n = (v, c) => `<span class="${v ? c : 'zero'}">${v}</span>`;
-  return `<main class="main">
-<header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:36px">
-<h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">History</h1><span style="color:var(--muted)">${runs.length} runs · ${sites.length} site${sites.length === 1 ? '' : 's'}</span>
-<a class="btn btn-primary" href="#/run" data-act="newRun" style="margin-left:auto">${svg(IC.play)}New run</a>
-</header>
-<section class="card" aria-label="Issues over time" style="padding:16px;display:flex;flex-direction:column;gap:14px">
-<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-<div><h2 style="margin:0;font-size:13px;font-weight:600">Issues per run</h2><div style="color:var(--muted);font-size:12px">${H.site ? `Last ${Math.min(10, bySite[H.site].length)} runs of <span class="mono">${esc(H.site)}</span>` : 'No data'}</div></div>
-${sites.length ? `<div class="seg" role="group" aria-label="Site" style="margin-left:auto;flex-wrap:wrap">${sites.slice(0, 5).map((s) => `<button type="button" class="mono" aria-pressed="${s === H.site}" data-act="site" data-v="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : ''}
-</div>${chart}</section>
-<section class="card" aria-label="Past runs" style="overflow:hidden">
-<div style="padding:12px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-<label class="search" style="flex:0 1 280px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search by URL</span><input id="hist-q" type="search" placeholder="Search by URL" value="${esc(H.q)}" data-in="histQ"></label>
-<div class="seg" role="group" aria-label="Status">${[['all', 'All'], ['passed', 'Passed'], ['failed', 'Failed']].map(([k, l]) => `<button type="button" aria-pressed="${H.status === k}" data-act="histStatus" data-v="${k}">${l}</button>`).join('')}</div>
-<span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">${rows.length} shown</span>
-</div>
-<div style="overflow-x:auto;border-top:1px solid var(--border)"><table class="tbl">
-<thead><tr><th scope="col">Date / time</th><th scope="col">URL</th><th scope="col">Result</th><th scope="col" class="n"><span class="hcnt"><span class="dot sq" style="background:var(--crit-dot)"></span>Crit</span></th><th scope="col" class="n"><span class="hcnt"><span class="dot sq" style="background:var(--major-dot)"></span>Major</span></th><th scope="col" class="n"><span class="hcnt"><span class="dot sq" style="background:var(--minor-dot)"></span>Minor</span></th><th scope="col" class="n">Duration</th><th scope="col" style="text-align:right">Actions</th></tr></thead>
-<tbody>${rows.map((r) => {
-    const failed = r.counts.critical > 0 || r.counts.major > 0;
-    const label = r.state === 'error' ? 'Error' : r.state === 'stopped' ? 'Stopped' : failed ? 'Failed' : 'Passed';
-    const cls = r.state === 'error' ? 'st-error' : r.state === 'stopped' ? 'st-stopped' : failed ? 'st-failed' : 'st-passed';
-    const pub = r.published || H.pub[r.id] === 'done';
-    return `<tr><td class="mono" style="color:var(--muted)">${fmtDT(r.started)}</td>
-<td><a class="mono" href="#/run/${encodeURIComponent(r.id)}">${esc(r.url)}</a>${r.ticket ? ` <span class="tag mono" style="margin-left:6px">${esc(r.ticket)}</span>` : ''}</td>
-<td><span class="status sm ${cls}">${label}</span></td>
-<td class="n">${n(r.counts.critical, 'c-crit')}</td><td class="n">${n(r.counts.major, 'c-major')}</td><td class="n">${n(r.counts.minor, 'c-minor')}</td>
-<td class="n" style="color:var(--muted)">${fmtDur(r.duration)}</td>
-<td style="text-align:right;width:132px">
-<a class="btn btn-quiet btn-icon" href="/runs/${encodeURIComponent(r.id)}/report.html" target="_blank" rel="noopener" aria-label="Open report" title="Open report">${svg(IC.doc)}</a>
-<button type="button" class="btn btn-quiet btn-icon" aria-label="Open folder" title="Open folder" data-act="folder" data-v="${esc(r.id)}">${svg(IC.folder)}</button>
-<button type="button" class="btn btn-quiet btn-icon${pub ? ' ok' : ''}" aria-label="${pub ? 'Published to integrations' : 'Publish to integrations'}" title="${pub ? 'Published to integrations' : 'Publish to integrations'}" data-act="publish" data-v="${esc(r.id)}" ${H.pub[r.id] === 'busy' ? 'disabled' : ''}>${svg(H.pub[r.id] === 'busy' ? IC.spin : pub ? IC.check : IC.send, H.pub[r.id] === 'busy' ? 'ic spin' : 'ic')}</button>
-</td></tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--muted)">No runs match.</td></tr>'}</tbody></table></div>
-</section></main>`;
+  return `<main class="main">${head}${filters}${strip}${list}</main>`;
 }
 
-async function loadHistory() {
-  try { S.hist.runs = await api('GET', '/api/runs'); } catch (e) { toast('Could not load runs: ' + e.message); S.hist.runs = []; }
-  schedule();
+function runSections(rec) {
+  const secs = [];
+  rec.items.forEach((i) => { let s = secs[secs.length - 1]; if (!s || s.name !== i.section) { s = { name: i.section, items: [] }; secs.push(s); } s.items.push(i); });
+  return secs;
 }
 
-/* ================================================================== INTEGRATIONS */
+function viewRunPage() {
+  const H = S.hist, r = H.run;
+  const back = `<a class="btn btn-quiet btn-sm" href="#/history" style="align-self:flex-start">${svg(IC.arrow, 'ic ic-s', 'style="transform:rotate(180deg)"')}History</a>`;
+  if (!r || r.id !== S.routeArg) return `<main class="main">${back}<div class="${H.err ? 'callout c-err' : 'notice'}">${H.err ? esc(H.err) : 'Loading the run…'}</div></main>`;
+  const env = r.env || {};
+  const facts = [['Environment', env.url ? `<span class="mono">${esc(env.url)}</span>${env.source ? `<span class="fact-sub">from ${esc(env.source)}</span>` : ''}` : 'not set'],
+    ['Account', esc(r.account || '–')], ['Started', esc(new Date(r.started * 1000).toLocaleString())],
+    ['Duration', r.duration_s != null ? fmtDur(r.duration_s) : '–'], ['Why it ran', esc(TRIGGER[r.trigger] || r.trigger || '')],
+    ['Claude cost', r.cost != null ? fmtUsd(r.cost) : '–']];
+  const vs = H.cmp ? H.cmp.a.id : '';
+  const cmpSel = r.others.length ? `<label class="hsel"><span class="sr-only">Compare with</span><select class="inp" data-in="histCompare"><option value="">Compare with…</option>${r.others.slice().reverse().map((o) => `<option value="${esc(o.id)}" ${o.id === vs ? 'selected' : ''}>Run ${o.run_no} · ${esc(RUN_STATUS[o.status] || o.status)} · ${esc(when(o.started))}</option>`).join('')}</select></label>` : '';
+  const links = `<div class="hacts">${r.on_board ? `<button type="button" class="btn btn-sm" data-act="openOnBoard" data-key="${esc(r.key)}">Open on the board</button>` : ''}
+<a class="btn btn-sm" href="${esc(r.tracker_url)}" target="_blank" rel="noopener">Open in ${S.board.data && S.board.data.config.tracker === 'Azure Boards' ? 'Azure Boards' : 'Jira'}${svg(IC.ext, 'ic ic-s')}</a>
+${r.has_report ? `<a class="btn btn-sm" href="${evidenceUrl(r.id, 'report/index.html')}" target="_blank" rel="noopener">Full Playwright report${svg(IC.ext, 'ic ic-s')}</a>` : ''}
+${r.spec_files.map((f) => `<a class="btn btn-quiet btn-sm" href="${evidenceUrl(r.id, 'spec/' + f)}" download>${esc(f)}</a>`).join('')}
+<button type="button" class="btn btn-quiet btn-sm" data-act="runFolder" data-v="${esc(r.id)}">Show files</button>
+<button type="button" class="btn btn-primary btn-sm" data-act="makeReport" data-kind="run" data-v="${esc(r.id)}">Report</button></div>`;
+  const nav = `<div class="hnav">${r.prev ? `<a class="btn btn-quiet btn-sm" href="#/history/${encodeURIComponent(r.prev)}">‹ Run ${r.run_no - 1}</a>` : ''}<span>Run ${r.run_no} of ${r.of}</span>${r.next ? `<a class="btn btn-quiet btn-sm" href="#/history/${encodeURIComponent(r.next)}">Run ${r.run_no + 1} ›</a>` : ''}${cmpSel}</div>`;
+  const evidence = {}; r.items.forEach((i) => { if (i.error || (i.attachments || []).length) evidence[String(i.n)] = { error: i.error, attachments: i.attachments }; });
+  const body = H.cmp ? viewCompare(H.cmp) : `${r.error ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(r.error)}</span></div>` : ''}${!r.evidence_kept ? `<div class="notice">${svg(IC.info)}<span>Evidence for this run was removed to save space; the results are kept.</span></div>` : ''}
+${qaChecklist({ key: r.key, sections: runSections(r), ran: r.status !== 'running', live: r.status === 'running', running: -1, runId: r.id, evidence, readonly: true })}`;
+  return `<main class="main">${back}
+<header class="hhead"><div style="min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${runStatus(r.status)}<span class="mono" style="color:var(--muted)">${esc(r.key)}</span>${r.type ? `<span class="ttype tt-${r.type === 'FE+BE' ? 'both' : r.type.toLowerCase()}">${esc(r.type)}</span>` : ''}${r.mode === 'demo' ? '<span class="mode">Demo</span>' : ''}</div>
+<h1 style="margin:6px 0 0;font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(r.title)}</h1></div></header>
+<dl class="jc-facts hfacts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+${links}${nav}${body}</main>`;
+}
+
+const CMP_TAG = { fixed: ['Fixed', 'pass'], newly_failing: ['Newly failing', 'fail'], still_failing: ['Still failing', 'partial'], unchanged: ['Unchanged', 'nt'], added: ['Added', 'info'], removed: ['Removed', 'info'] };
+function viewCompare(c) {
+  const order = ['newly_failing', 'fixed', 'still_failing', 'added', 'removed', 'unchanged'];
+  const rows = c.rows.slice().sort((x, y) => order.indexOf(x.tag) - order.indexOf(y.tag));
+  const badge = (r) => (r ? `<span class="cmpres clc-${r}">${svg(RES_GLYPH[r], 'ic ic-s')}${RES_WORD[r]}</span>` : '<span class="cmpres">—</span>');
+  const t = c.tally;
+  const parts = [['fixed', t.fixed], ['newly_failing', t.newly_failing], ['still_failing', t.still_failing], ['added', t.added], ['removed', t.removed], ['unchanged', t.unchanged]].filter(([, n]) => n).map(([k, n]) => `${n} ${CMP_TAG[k][0].toLowerCase()}`).join(' · ');
+  return `<section class="cmp"><header class="cmp-head"><div><b>Run ${c.a.run_no}</b> → <b>Run ${c.b.run_no}</b></div><div class="cmp-sum">${esc(parts)}</div><button type="button" class="btn btn-quiet btn-sm" data-act="cmpClose">Close comparison</button></header>
+${c.env_changed ? `<div class="callout c-warn">${svg(IC.warn)}<span>The environment changed: ${esc(hostOf(c.a.env_url))} → ${esc(hostOf(c.b.env_url))}. Differences may come from that.</span></div>` : ''}
+${c.spec_changed ? `<div class="callout c-info">${svg(IC.info)}<span>The spec changed between these runs (step 1 or the tests were redone).</span></div>` : ''}
+<div class="cmp-rows">${rows.map((r) => `<div class="cmp-row cmp-${r.tag}"><span class="cmp-tag ct-${CMP_TAG[r.tag][1]}">${CMP_TAG[r.tag][0]}</span><span class="cmp-text">${esc(r.text)}<span class="fact-sub">${esc(r.section)}</span></span><span class="cmp-was">${badge(r.before)}${svg(IC.arrow, 'ic ic-s')}${badge(r.after)}</span></div>`).join('')}</div></section>`;
+}
+
 function integStatus(c) {
   const I = S.integ;
   if (c.key === 'workflow') return I.vals.workflow.demo ? ['Demo data', 'd d-setup', 'setup'] : ['Live', 'd d-ok', 'ok'];
@@ -1641,46 +1457,13 @@ const ACTS = {
   },
   openTicket: (el) => { S.board.sel = el.dataset.key; },
   // run
-  ck: (el) => { const f = S.run.form; f.checks[el.dataset.v] = !f.checks[el.dataset.v]; store.set('runForm2', f); },
-  vp: (el) => { const f = S.run.form; f.viewports[el.dataset.v] = !f.viewports[el.dataset.v]; store.set('runForm2', f); },
-  opts: () => { S.run.optsOpen = !S.run.optsOpen; },
-  log: () => { S.run.logOpen = !S.run.logOpen; },
-  openLog: () => { S.run.logOpen = true; },
-  startRun: () => startRun(),
-  stopRun: async () => { try { await api('POST', `/api/runs/${encodeURIComponent(S.run.cur.id)}/stop`); } catch (e) { toast(e.message); } },
-  newRun: () => { S.run.cur = null; S.run.err = ''; location.hash = '#/run'; },
-  sev: (el) => { S.run.sev = el.dataset.v; },
-  pick: (el) => { S.run.sel = el.dataset.v; },
-  clearFilters: () => { S.run.sev = 'all'; S.run.check = 'all'; S.run.q = ''; },
-  zoom: () => { S.run.zoom = true; },
-  unzoom: () => { S.run.zoom = false; },
-  unzoomBg: (el, ev) => { if (ev.target === el) S.run.zoom = false; },
-  createJira: async (el) => {
-    const R = S.run; R.jiraBusy = true; schedule();
-    try {
-      const r = await api('POST', `/api/runs/${encodeURIComponent(R.cur.id)}/findings/${encodeURIComponent(el.dataset.v)}/jira`);
-      const f = R.cur.findings.find((x) => x.id === el.dataset.v); if (f) f.jira_key = r.key;
-      toast(`Created ${r.key}`);
-    } catch (e) { toast(e.message); }
-    R.jiraBusy = false;
-  },
-  copyFinding: async (el) => {
-    const f = S.run.cur.findings.find((x) => x.id === el.dataset.v);
-    try { await navigator.clipboard.writeText(`[${SEVL[f.sev]}] ${f.title}\n${/^https?:/.test(f.url) ? f.url : S.run.cur.url.replace(/\/$/, '') + f.url}\n\n${f.details}`); toast('Details copied'); } catch (e) { toast('Copy failed'); }
-  },
   // history
-  site: (el) => { S.hist.site = el.dataset.v; },
-  histStatus: (el) => { S.hist.status = el.dataset.v; },
-  folder: async (el) => { try { const r = await api('POST', `/api/runs/${encodeURIComponent(el.dataset.v)}/open-folder`); toast('Opened ' + r.path); } catch (e) { toast(e.message); } },
-  publish: async (el) => {
-    const id = el.dataset.v; S.hist.pub[id] = 'busy'; schedule();
-    try {
-      const r = await api('POST', `/api/runs/${encodeURIComponent(id)}/publish`);
-      const parts = Object.entries(r.result);
-      S.hist.pub[id] = parts.length && parts.some(([, v]) => !v.startsWith('error')) ? 'done' : '';
-      toast(parts.length ? parts.map(([k, v]) => `${k}: ${v}`).join(' · ') : 'No integration is enabled and set up');
-    } catch (e) { S.hist.pub[id] = ''; toast(e.message); }
-  },
+  histRefresh: () => (S.routeArg ? loadRunRecord(S.routeArg, S.hist.cmp ? S.hist.cmp.a.id : '') : loadHistory()),
+  histKey: (el) => { S.hist.key = el.dataset.v; loadHistory(); },
+  histKeyClear: () => { S.hist.key = ''; loadHistory(); },
+  cmpClose: () => { location.hash = '#/history/' + encodeURIComponent(S.routeArg); },
+  openOnBoard: (el) => { S.board.sel = el.dataset.key; location.hash = '#/board'; },
+  runFolder: async (el) => { try { const r = await api('POST', `/api/history/${encodeURIComponent(el.dataset.v)}/open-folder`); toast('Opened ' + r.path); } catch (e) { toast(e.message); } },
   // skills
   skSel: (el) => { S.skills.sel = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
   skTab: (el) => { S.skills.tab = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
@@ -1777,14 +1560,9 @@ const INPUTS = {
   comment: (el) => { S.board.comment[el.dataset.key] = el.value; saveDraft(el.dataset.key, { comment: el.value }); },
   target: (el) => { saveDraft(el.dataset.key, { target: el.value.trim() }); },
   targetSel: (el) => { const t = S.board.data.tickets.find((x) => x.key === el.dataset.key); t.target = el.value; saveDraft(el.dataset.key, { target: el.value }); },
-  runUrl: (el) => { S.run.form.url = el.value; store.set('runForm2', S.run.form); },
-  runMax: (el) => { S.run.form.max_pages = el.value; store.set('runForm2', S.run.form); },
-  runThr: (el) => { S.run.form.threshold = el.value; store.set('runForm2', S.run.form); },
-  runTicket: (el) => { S.run.form.ticket = el.value.trim(); store.set('runForm2', S.run.form); },
-  runOpt: (el) => { S.run.form[el.dataset.v] = el.checked; store.set('runForm2', S.run.form); },
-  runQ: (el) => { S.run.q = el.value; },
-  runCheck: (el) => { S.run.check = el.value; },
-  histQ: (el) => { S.hist.q = el.value; },
+  histQ: (el) => { S.hist.q = el.value; clearTimeout(S.hist.qt); S.hist.qt = setTimeout(loadHistory, 250); },
+  histF: (el) => { S.hist[el.dataset.v] = el.value; if (el.dataset.v === 'range') store.set('histRange', el.value); loadHistory(); },
+  histCompare: (el) => { location.hash = '#/history/' + encodeURIComponent(S.routeArg) + (el.value ? '?vs=' + encodeURIComponent(el.value) : ''); },
   jiraLink: (el) => { S.jira.link = el.value; S.jira.err = ''; },
   jiraEmail: (el) => { S.jira.email = el.value; S.jira.err = ''; },
   jiraToken: (el) => { S.jira.token = el.value; S.jira.err = ''; },
@@ -1871,9 +1649,8 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && ev.target && ev.target.id === 'jira-link') { ev.preventDefault(); const p = parseJiraLink(S.jira.link); if (p && !p.err && !S.jira.busy) jiraConnect(); return; }
   const mod = ev.metaKey || ev.ctrlKey;
   if (mod && ['1', '2', '3', '4', '5'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }
-  if (mod && ev.key === 'Enter' && S.route === 'run' && !(S.run.cur && S.run.cur.state === 'running')) { ev.preventDefault(); startRun(); }
   if (ev.key === 'Escape') {
-    if (S.board.fopen) S.board.fopen = false; else if (S.run.zoom) S.run.zoom = false; else if (S.board.sel) { S.board.sel = null; }
+    if (S.board.fopen) S.board.fopen = false; else if (S.board.sel) { S.board.sel = null; }
     schedule();
   }
 });
@@ -1883,20 +1660,16 @@ function route() {
   const h = location.hash.replace(/^#\/?/, '');
   const [path, query] = h.split('?');
   const [name, arg] = path.split('/');
+  if (name === 'run') { location.replace('#/history'); return; }  // the Run screen became History + Reports
   S.route = ROUTES.includes(name) ? name : 'board';
-  S.routeArg = arg || '';
+  S.routeArg = arg ? decodeURIComponent(arg) : '';
   if (S.route === 'board' && !S.board.data) loadBoard();
-  if (S.route === 'run') {
-    if (S.routeArg && (!S.run.cur || S.run.cur.id !== S.routeArg)) loadRun(S.routeArg);
-    if (query) {
-      const p = new URLSearchParams(query);
-      if (p.get('url')) S.run.form.url = p.get('url');
-      if (p.has('ticket')) S.run.form.ticket = p.get('ticket') || '';
-      store.set('runForm2', S.run.form);
-      if (!S.routeArg) S.run.cur = null;
-    }
+  if (S.route === 'history') {
+    const p = new URLSearchParams(query || '');
+    if (S.routeArg) loadRunRecord(S.routeArg, p.get('vs') || '');
+    else { if (p.has('key')) S.hist.key = p.get('key') || ''; loadHistory(); }
   }
-  if (S.route === 'history') loadHistory();
+  if (S.route === 'reports') loadReports();
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
   if (S.route === 'integrations') { loadJira(); loadAzure(); }
   if (S.route === 'skills') {
@@ -1911,7 +1684,7 @@ window.addEventListener('hashchange', route);
 
 // Tick once a second for the elapsed timer and "synced N min ago".
 setInterval(() => {
-  if ((S.route === 'run' && S.run.cur && S.run.cur.state === 'running') || S.route === 'board') {
+  if (S.route === 'board') {
     const a = document.activeElement;
     if (!(a && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && a.type !== 'checkbox')))) schedule();
   }

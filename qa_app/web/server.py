@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import integrations
-from ..config import APP_DIR, DEFAULT_SETTINGS, RUNS_DIR, SECRET_KEYS, WORKFLOW_DIR, ensure_dirs, load_settings, save_section
+from ..config import APP_DIR, DEFAULT_SETTINGS, SECRET_KEYS, WORKFLOW_DIR, ensure_dirs, load_settings, save_section
 from ..workflow import agent, seed
 from ..workflow.clients import MockJira, MockTestRail
 from ..workflow.engine import GateError, Workflow
@@ -31,7 +31,6 @@ from ..workflow.models import Ticket
 from ..workflow.settings import WorkflowConfig
 from ..workflow.store import TicketStore, bus
 from . import azure_connect, jira_connect
-from .runs import RunManager
 
 log = logging.getLogger("qa_app.web")
 STATIC = Path(__file__).parent / "static"
@@ -111,7 +110,6 @@ class Services:
         issues, late = seed.jira_issues()
         self.workflow = Workflow(TicketStore(WORKFLOW_DIR / "tickets-demo.json"), TicketStore(WORKFLOW_DIR / "tickets.json"),
                                  MockJira(issues, late), MockTestRail())
-        self.runs = RunManager()
         self.jira_pending: dict[str, dict] = {}  # Atlassian sign-ins in progress, by OAuth state
 
     def seed_demo(self) -> None:
@@ -373,57 +371,64 @@ async def events(request: Request):
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
-# ------------------------------------------------------------------ runs (your Runner)
-@app.get("/api/runs")
-def list_runs() -> list[dict]:
-    return S().runs.all()
+# ------------------------------------------------------------------ History: every ticket run
+def _since(range_: str) -> Optional[float]:
+    days = {"today": 0, "7d": 7, "30d": 30}.get(range_)
+    if days is None:
+        return None
+    now = time.time()
+    if days == 0:
+        lt = time.localtime(now)
+        return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    return now - days * 86400
 
 
-@app.post("/api/runs")
-async def start_run(opts: dict[str, Any] = Body(...)) -> dict:
-    if not str(opts.get("url", "")).strip():
-        raise HTTPException(422, "Enter a URL to test")
+@app.get("/api/history")
+def history_list(q: str = "", key: str = "", project: str = "", type: str = "", status: str = "", env: str = "",
+                 range: str = "all") -> dict:
+    store = S().workflow.history()
+    runs = store.list(q=q, key=key, project=project, type_=type, status=status, env=env, since=_since(range))
+    every = store.list()
+    return {"runs": runs, "mode": "demo" if S().workflow.cfg.is_mock else "live",
+            "totals": store.totals(runs),
+            "projects": sorted({r.get("project") for r in every if r.get("project")}),
+            "envs": sorted({r.get("env_url") for r in every if r.get("env_url")}),
+            "evidence_mb": round(store.evidence_bytes() / 1e6, 1)}
+
+
+@app.get("/api/history/{run_id}")
+def history_get(run_id: str) -> dict:
+    store = S().workflow.history()
     try:
-        return S().runs.start(opts)
+        rec = store.view(run_id)
+    except KeyError:
+        raise HTTPException(404, "That run isn't in History")
+    st = load_settings()
+    if st.get("workflow", {}).get("tracker") == "azure":
+        a = st.get("azure", {})
+        from urllib.parse import quote
+        tracker_url = f"{str(a.get('org_url', '')).rstrip('/')}/{quote(a.get('project', ''), safe='')}/_workitems/edit/{rec['key']}"
+    else:
+        tracker_url = f"{(st.get('jira', {}).get('base_url') or 'https://example.atlassian.net').rstrip('/')}/browse/{rec['key']}"
+    return {**rec, "on_board": S().workflow.tickets.get(rec["key"]) is not None, "tracker_url": tracker_url}
+
+
+@app.get("/api/history/{run_id}/compare/{other}")
+def history_compare(run_id: str, other: str) -> dict:
+    try:
+        return S().workflow.history().compare(other, run_id)
+    except KeyError:
+        raise HTTPException(404, "That run isn't in History")
     except ValueError as e:
         raise HTTPException(422, str(e))
 
 
-@app.get("/api/runs/{run_id}")
-def get_run(run_id: str) -> dict:
-    r = S().runs.get(run_id)
-    if not r:
-        raise HTTPException(404, "Run not found")
-    return r
-
-
-@app.post("/api/runs/{run_id}/stop")
-def stop_run(run_id: str) -> dict:
-    return {"stopping": S().runs.stop(run_id)}
-
-
-@app.post("/api/runs/{run_id}/publish")
-async def publish(run_id: str) -> dict:
-    if not (RUNS_DIR / run_id / "result.json").exists():
-        raise HTTPException(404, "Run not found")
-    return {"result": await asyncio.to_thread(S().runs.publish, run_id)}
-
-
-@app.post("/api/runs/{run_id}/findings/{fid}/jira")
-async def finding_jira(run_id: str, fid: str) -> dict:
-    try:
-        return {"key": await asyncio.to_thread(S().runs.create_jira, run_id, fid)}
-    except (KeyError, FileNotFoundError):
-        raise HTTPException(404, "Finding not found")
-    except ValueError as e:
-        raise HTTPException(422, str(e))
-    except Exception as e:
-        raise HTTPException(502, str(e)[:300])
-
-
-@app.post("/api/runs/{run_id}/open-folder")
+@app.post("/api/history/{run_id}/open-folder")
 def open_folder(run_id: str) -> dict:
-    d = RUNS_DIR / run_id
+    try:
+        d = S().workflow.history().dir(run_id)
+    except KeyError:
+        raise HTTPException(404)
     if not d.exists():
         raise HTTPException(404)
     try:
@@ -703,16 +708,6 @@ def skill_delete_project(key: str, step: str) -> dict:
 
 
 # ------------------------------------------------------------------ static
-@app.get("/files/{path:path}")
-def app_file(path: str):
-    """Screenshots, diffs and baselines for the Run screen. Only files inside the app folder."""
-    p = (APP_DIR / path).resolve()
-    if APP_DIR.resolve() not in p.parents or not p.is_file():
-        raise HTTPException(404)
-    return FileResponse(p)
-
-
-app.mount("/runs", StaticFiles(directory=str(RUNS_DIR), html=True, check_dir=False), name="runs")
 class _Static(StaticFiles):
     """The app's own files: the browser checks for a newer copy on every load (cheap, by ETag),
     so an update shows after a reload instead of a stale cached script."""

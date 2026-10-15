@@ -90,3 +90,18 @@ def test_evidence_is_pruned_to_the_newest_runs_and_files_stay_inside_the_run(tmp
             s.file(ids[2], bad)
     with pytest.raises(KeyError):
         s.dir("../x")
+
+
+def test_totals_and_run_page_view(tmp_path):
+    s = H.RunStore(tmp_path)
+    a = s.start(ticket(), "first", "live", now=1)
+    s.finish(a, ticket(["fail", "pass", "pass"]), now=2)
+    b = s.start(ticket(), "rerun_gate2", "live", now=3)
+    s.finish(b, ticket(["pass"] * 3), now=4)
+    c = s.start(ticket(key="SCRUM-9"), "first", "live", now=5)
+    s.fail(c, "npx is not installed")
+    tot = s.totals(s.list())
+    assert tot == {"runs": 3, "pass_rate": 50, "failing_now": ["SCRUM-9"]}  # SCRUM-8 is green now
+    v = s.view(b)
+    assert (v["of"], v["prev"], v["next"]) == (2, a, None) and [o["id"] for o in v["others"]] == [a]
+    assert s.view(a)["next"] == b and v["has_report"] is False

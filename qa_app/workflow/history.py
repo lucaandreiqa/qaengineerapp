@@ -248,6 +248,29 @@ class RunStore:
         older = [r for r in self.runs_for(rec["key"]) if r.get("started", 0) < rec["started"]]
         return older[-1]["id"] if older else None
 
+    def totals(self, runs: list[dict]) -> dict:
+        """The History summary strip for a list of runs."""
+        finished = [r for r in runs if r.get("status") in ("passed", "failed")]
+        latest: dict[str, dict] = {}
+        for r in sorted(runs, key=lambda r: r.get("started") or 0):
+            latest[r["key"]] = r
+        return {"runs": len(runs),
+                "pass_rate": round(100 * sum(r["status"] == "passed" for r in finished) / len(finished)) if finished else None,
+                "failing_now": sorted(k for k, r in latest.items() if r.get("status") in ("failed", "error"))}
+
+    def view(self, run_id: str) -> dict:
+        """A run with where it sits among the ticket's runs (for its page in History)."""
+        rec = self.get(run_id)
+        runs = self.runs_for(rec["key"])
+        ids = [r["id"] for r in runs]
+        i = ids.index(run_id) if run_id in ids else -1
+        d = self.dir(run_id)
+        return {**rec, "of": len(runs), "prev": ids[i - 1] if i > 0 else None,
+                "next": ids[i + 1] if 0 <= i < len(ids) - 1 else None,
+                "others": [{k: r.get(k) for k in ("id", "run_no", "status", "started")} for r in runs if r["id"] != run_id],
+                "has_report": (d / "report" / "index.html").exists(),
+                "spec_files": sorted(f.name for f in (d / "spec").glob("*")) if (d / "spec").exists() else []}
+
     # ------------------------------------------------------------------ compare
     def compare(self, a_id: str, b_id: str) -> dict:
         """b against a (a = the earlier run). Checks matched by their text."""
