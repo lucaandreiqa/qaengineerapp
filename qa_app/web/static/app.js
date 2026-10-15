@@ -142,7 +142,7 @@ const S = {
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
-    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatTab: false, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -672,26 +672,31 @@ ${t.cases.map((c, i) => `<div class="brow"><span class="mono" style="color:var(-
   body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
 
   const canAct = d.primary && !t.error;
-  return `<aside class="drawer${B.full ? ' is-full' : ''}" aria-label="Ticket details"><div class="drawer-in">
+  const nChat = (t.chat || []).filter((m) => m.role !== 'event').length;
+  return `<aside class="drawer${B.full ? ' is-full' : ''}${B.chatOpen ? ' has-chat' : ''}" aria-label="Ticket details"><div class="drawer-in"><div class="drawer-main">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
 ${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${statusTag(t)}
 <a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
+${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet btn-sm" data-act="chatToggle" title="Chat with Claude about this ticket">${svg(INTEG_ICON.claude, 'ic ic-s')}Ask Claude${nChat ? `<span class="seg-n">${nChat}</span>` : ''}${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}</button>`}
 <button type="button" class="btn btn-quiet btn-icon" aria-label="${B.full ? 'Exit full screen' : 'Full screen'}" title="${B.full ? 'Exit full screen' : 'Full screen'}" aria-pressed="${!!B.full}" data-act="drawerFull">${svg(B.full ? IC.shrink : IC.expand)}</button>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" title="Close (Esc)" data-act="close">${svg(IC.close)}</button>
 </div>
 <h2 style="margin:0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em">${esc(t.title)}</h2>
 <div class="gates" aria-label="Review gates">${gateTracker(t)}</div>
 <div style="font-size:12px;color:var(--muted)">${LANES[st].name} · <strong style="color:var(--fg);font-weight:500">${esc(d.stateLabel)}</strong></div>
-<div class="dtabs" role="tablist" aria-label="Ticket views"><button type="button" role="tab" aria-selected="${!B.chatTab}" data-act="dtab" data-v="0">Details</button><button type="button" role="tab" aria-selected="${!!B.chatTab}" data-act="dtab" data-v="1">${svg(INTEG_ICON.claude, 'ic ic-s')}Chat with Claude${(t.chat || []).filter((m) => m.role !== 'event').length ? `<span class="seg-n">${(t.chat || []).filter((m) => m.role !== 'event').length}</span>` : ''}${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}</button></div>
 </div>
-${B.chatTab ? viewChat(t) : `<div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
+<div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;background:var(--raised)">
 ${t.canRedo ? redoButton(t) : ''}
 <span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above, then retry.' : d.note || 'Working. Nothing needs you yet.'))}</span>
 ${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
-</div>`}
+</div>
+</div>${B.chatOpen ? `<section class="drawer-chat" aria-label="Chat with Claude about ${esc(t.key)}">
+<div class="chat-head">${svg(INTEG_ICON.claude, 'ic ic-s')}<span>Chat with Claude</span>${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}
+<button type="button" class="btn btn-quiet btn-icon" style="margin-left:auto" data-act="chatToggle" aria-label="Hide the chat" title="Hide the chat">${svg(IC.close)}</button></div>
+${viewChat(t)}</section>` : ''}
 </div></aside>`;
 }
 
@@ -1514,7 +1519,7 @@ const ACTS = {
     catch (e) { B.actErr = e.message; }
     B.busy = false;
   },
-  dtab: (el) => { S.board.chatTab = el.dataset.v === '1'; if (S.board.chatTab) setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 0); },
+  chatToggle: () => { const B = S.board; B.chatOpen = !B.chatOpen; store.set('chatOpen', B.chatOpen); if (B.chatOpen) setTimeout(() => { const i = document.getElementById('chat-input'); if (i) i.focus(); }, 0); },
   chatSend: (el) => chatSend(el.dataset.key),
   chatStarter: (el) => chatSend(el.dataset.key, el.dataset.v),
   chatClear: async (el) => {

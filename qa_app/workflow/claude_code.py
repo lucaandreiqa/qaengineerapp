@@ -81,7 +81,7 @@ def auth_status() -> dict:
     if method == "third_party":
         return {"ok": True, "method": method, "text": "Claude Code uses a cloud provider (Bedrock / Vertex / Foundry) login"}
     return {"ok": False, "method": method or "none",
-            "text": "Claude Code isn't signed in. Open Terminal, run `claude`, and sign in with your Claude account."}
+            "text": "Claude Code isn't signed in. Open Terminal, run `claude auth login`, and sign in with your Claude account."}
 
 
 def ask(model: str, system: str, prompt: str) -> tuple[str, str, dict]:
@@ -111,8 +111,10 @@ def ask(model: str, system: str, prompt: str) -> tuple[str, str, dict]:
     text = str(data.get("result") or "")
     if data.get("is_error") or p.returncode != 0 or data.get("subtype", "success") != "success":
         low = text.lower()
+        said = " ".join((text or (p.stderr or "")).split())[:220]
         if "login" in low or "log in" in low or "authenticat" in low or "api key" in low:
-            raise ClaudeCodeError("Claude Code isn't signed in. Open Terminal, run `claude`, and sign in with your Claude account.")
+            raise ClaudeCodeError("Claude Code isn't signed in. Open Terminal, run `claude auth login`, and sign in with your Claude account"
+                                  + (f" (Claude Code said: {said})" if said else "."))
         if "limit" in low:
             raise ClaudeCodeError(f"Your Claude plan's usage limit was reached: {text[:200]}")
         raise ClaudeCodeError(f"Claude Code failed: {text[:300] or (p.stderr or '').strip()[-300:] or data.get('subtype')}")
