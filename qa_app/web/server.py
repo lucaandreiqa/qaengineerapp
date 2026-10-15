@@ -85,10 +85,11 @@ CATALOGUE: list[dict[str, Any]] = [
                 {"k": "repos", "label": "Repos or orgs to search for the ticket key", "full": True, "ph": "acme, acme/admin-suite"}],
      "required": ["token"]},
     {"key": "testrail", "name": "TestRail", "mono": "TR", "tint": "#1F7F70", "desc": "Run results, and board cases on your go-ahead",
-     "fields": [{"k": "base_url", "label": "Base URL", "full": True, "ph": "https://your-org.testrail.io"},
+     "fields": [{"k": "base_url", "label": "TestRail link: paste any page of your project", "full": True,
+                 "ph": "https://your-org.testrail.io/index.php?/projects/overview/3"},
                 {"k": "username", "label": "Username"}, {"k": "api_key", "label": "API key", "secret": True},
-                {"k": "project_id", "label": "Project ID"}, {"k": "suite_id", "label": "Suite ID"}],
-     "required": ["base_url", "username", "api_key", "project_id"]},
+                {"k": "project_id", "label": "Project ID (filled in from the link)"}, {"k": "suite_id", "label": "Suite ID (optional, from the link)"}],
+     "required": ["base_url", "username", "api_key"]},
     {"key": "xray", "name": "Xray", "mono": "X", "tint": "#2E7D3E", "desc": "Import executions into Xray",
      "fields": [{"k": "client_id", "label": "Client ID"}, {"k": "client_secret", "label": "Client secret", "secret": True},
                 {"k": "project_key", "label": "Project key", "full": True}],
@@ -605,6 +606,13 @@ def save_integration(key: str, body: IntegrationIn) -> dict:
         raise HTTPException(404)
     allowed = set(DEFAULT_SETTINGS[key])
     values = {k: v for k, v in body.values.items() if k in allowed}
+    if key == "testrail" and values.get("base_url"):  # a pasted page link: keep the site, take the project / suite from it
+        from ..integrations import testrail
+        link = testrail.parse_link(str(values["base_url"]))
+        values["base_url"] = link["base_url"]
+        for f in ("project_id", "suite_id"):
+            if not str(values.get(f) or "").strip() and link.get(f):
+                values[f] = link[f]
     save_section(key, {**values, "enabled": body.enabled})
     return {"ok": True}
 
@@ -626,6 +634,13 @@ async def test_integration(key: str, values: dict[str, Any] = Body(...)) -> dict
         res = await asyncio.to_thread(_test_claude_code)
     elif key == "claude":
         res = await asyncio.to_thread(_test_claude, values)
+    elif key == "testrail":
+        from ..integrations import testrail
+        try:
+            text, filled = await asyncio.to_thread(testrail.check, values)
+            res = {"ok": True, "text": text, "values": filled}
+        except Exception as e:
+            res = {"ok": False, "text": (str(e).splitlines() or ["error"])[0][:300]}
     elif key == "github":
         from ..integrations import github
         try:

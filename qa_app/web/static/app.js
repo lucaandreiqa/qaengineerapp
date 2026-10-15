@@ -1755,7 +1755,10 @@ const ACTS = {
   integSave: (el) => saveIntegration(el.dataset.key),
   integTest: async (el) => {
     const I = S.integ, k = el.dataset.key; I.testing[k] = true; schedule();
-    try { I.results[k] = await api('POST', `/api/integrations/${k}/test`, I.vals[k]); } catch (e) { I.results[k] = { ok: false, text: e.message }; }
+    try {
+      I.results[k] = await api('POST', `/api/integrations/${k}/test`, I.vals[k]);
+      if (I.results[k].values) I.vals[k] = { ...I.vals[k], ...I.results[k].values };  // e.g. TestRail project taken from the link
+    } catch (e) { I.results[k] = { ok: false, text: e.message }; }
     I.testing[k] = false;
   },
 };

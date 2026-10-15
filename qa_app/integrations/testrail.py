@@ -1,6 +1,9 @@
 """TestRail: one test case per (check, page), auto-created, and a test run with results."""
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 import requests
 
 from ..models import RunResult, Severity
@@ -12,11 +15,11 @@ PASSED, FAILED = 1, 5
 
 class TestRail:
     def __init__(self, cfg: dict):
-        self.base = cfg["base_url"].rstrip("/") + "/index.php?/api/v2/"
+        self.base = parse_link(cfg["base_url"])["base_url"] + "/index.php?/api/v2/"  # a pasted page link works too
         self.s = requests.Session()
         self.s.auth = (cfg["username"], cfg["api_key"])
         self.s.headers["Content-Type"] = "application/json"
-        self.project = int(cfg["project_id"])
+        self.project = int(cfg["project_id"]) if str(cfg.get("project_id") or "").strip() else None
         self.suite = int(cfg["suite_id"]) if cfg.get("suite_id") else None
 
     def get(self, path: str):
@@ -68,10 +71,74 @@ def publish(result: RunResult, cfg: dict, shared: dict, log) -> str:
     return f"run R{run['id']} with {len(results)} results"
 
 
+class TestRailError(Exception):
+    """A message for the user."""
+
+
+ROUTES = {"projects/overview": "project_id", "suites/view": "suite_id", "cases/view": "case_id", "runs/view": "run_id"}
+
+
+def parse_link(url: str) -> dict:
+    """Any TestRail page link -> {base_url, and project_id / suite_id / case_id / run_id when the page names one}."""
+    url = (url or "").strip()
+    if url and "://" not in url:
+        url = "https://" + url
+    u = urlparse(url)
+    path = re.sub(r"/index\.php$", "", u.path.rstrip("/"))
+    out = {"base_url": f"{u.scheme}://{u.netloc}{path}" if u.netloc else url.rstrip("/")}
+    route = u.query.split("&")[0].lstrip("/")  # index.php?/suites/view/12&group_by=…
+    for prefix, field in ROUTES.items():
+        m = re.match(rf"{prefix}/(\d+)", route)
+        if m:
+            out[field] = m.group(1)
+    return out
+
+
+def _client(cfg: dict) -> "TestRail":
+    return TestRail(cfg)
+
+
+def resolve(cfg: dict) -> dict:
+    """The settings with a clean base URL and the project (and suite) filled in: typed values win, then what the
+    pasted link names, then TestRail itself (a suite, case or run page's project; or the only project there is)."""
+    link = parse_link(cfg.get("base_url", ""))
+    out = {**cfg, "base_url": link["base_url"]}
+    for f in ("project_id", "suite_id"):
+        if not str(out.get(f) or "").strip() and link.get(f):
+            out[f] = link[f]
+    if str(out.get("project_id") or "").strip():
+        return out
+    tr = _client({**out, "project_id": ""})
+    if link.get("case_id"):
+        out["suite_id"] = str(out.get("suite_id") or tr.get(f"get_case/{link['case_id']}").get("suite_id") or "")
+    if link.get("run_id"):
+        run = tr.get(f"get_run/{link['run_id']}")
+        out["project_id"] = str(run.get("project_id") or "")
+        out["suite_id"] = str(out.get("suite_id") or run.get("suite_id") or "")
+    if not out.get("project_id") and out.get("suite_id"):
+        out["project_id"] = str(tr.get(f"get_suite/{out['suite_id']}").get("project_id") or "")
+    if not out.get("project_id"):
+        data = tr.get("get_projects")
+        projects = data.get("projects", []) if isinstance(data, dict) else data
+        if len(projects) == 1:
+            out["project_id"] = str(projects[0]["id"])
+        else:
+            names = ", ".join(f"{p.get('name')} ({p.get('id')})" for p in projects[:12]) or "none visible to this account"
+            raise TestRailError("Paste a link to a page of your project (its overview, a suite or a case), or type the "
+                                f"Project ID. Projects: {names}")
+    return out
+
+
+def check(cfg: dict) -> tuple[str, dict]:
+    """Connection test: (message, the fields it filled in for the card)."""
+    r = resolve(cfg)
+    p = _client(r).get(f"get_project/{r['project_id']}")
+    filled = {k: str(r.get(k) or "") for k in ("base_url", "project_id", "suite_id")}
+    return f"Connected · project {p.get('name')} (ID {r['project_id']})" + (f", suite {r['suite_id']}" if r.get("suite_id") else ""), filled
+
+
 def test_connection(cfg: dict) -> str:
-    tr = TestRail(cfg)
-    p = tr.get(f"get_project/{tr.project}")
-    return f"Connected — project {p['name']}"
+    return check(cfg)[0]
 
 
 # ---------------------------------------------------------------------------------------------

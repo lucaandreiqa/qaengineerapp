@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-15 (Claude fetches missing data; connected-app lookups; product-neutral skills).
+Last updated: 2026-10-15 (TestRail project from the pasted link; Claude fetches missing data; connected-app lookups).
 
 
 ## 1. What it is
@@ -108,7 +108,7 @@ step answer says "need": [...]  ────────────────
 |---|---|---|
 | GitHub | GitHub card: fine-grained read-only token, optional repos/orgs | PRs linked on the ticket, then PRs mentioning the key (up to 4): description, commits, changed files, diffs, review comments |
 | Confluence | The Jira connection (MCP sign-in or REST token on the same site) | Pages linked on the ticket, then pages matching the key or title (up to 3) |
-| TestRail | TestRail card | Cases whose title matches the key or title (up to 40) |
+| TestRail | TestRail card: paste any page link of the project; the project (and suite) are taken from it (`testrail.resolve`) | Cases whose title matches the key or title (up to 40) |
 
 - Results are trimmed (PR body 3k, per-file patch 0.8k for gathering / 2.5k for writing tests, diff total 12k / 30k,
   page 6k), wrapped in `<connected_apps>`, and saved as `<KEY>-sources.json`; `<KEY>-context.md` gets a "From
@@ -175,6 +175,15 @@ Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-
   comment instead of uploading a file.
 - Secrets are entered by the user on the Integrations screen and stay in the local settings file.
 
+### Connection setup helpers
+
+- Jira: paste a board link, sign in with Atlassian (MCP) or use an API token (`jira_connect.py`).
+- Azure Boards: paste a board link plus a PAT (`azure_connect.py`).
+- TestRail: paste any page of the project. `testrail.parse_link` reads the site and whatever the page names (project,
+  suite, case, run); `testrail.resolve` fills the project and suite: typed values first, then the link, then TestRail
+  (a suite, case or run's project, or the only project there is; with several it lists them). The connection test
+  returns the filled-in fields so the card shows them; saving stores the clean site address.
+
 
 ## 10. Testing
 
@@ -188,6 +197,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-15: TestRail card takes the project (and suite) from a pasted page link; Project ID is no longer required.
 - 2026-10-15: Claude fetches missing data with read-only tools enforced by Claude Code (`dontAsk` + allowlist), on gaps
   and when a step asks; streamed to the terminal.
 - 2026-10-15: Connected-app lookups before gathering (GitHub card, Confluence via Jira, TestRail); YourQA fetches,

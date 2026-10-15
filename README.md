@@ -255,6 +255,9 @@ To accept intended UI changes, tick *Accept current screenshots as new baselines
 
 ## Integrations
 
+**TestRail:** paste any page link of your project (its overview, a suite, a case or a run). YourQA takes the project and suite from it, asking TestRail when the page doesn't name them, and fills the fields in when you test the connection.
+
+
 | Service | What happens | Needs |
 |---|---|---|
 | Jira Cloud | One bug per finding at or above *min severity*, deduplicated across runs (a hidden label tracks it), screenshot attached | base URL, email, [API token](https://id.atlassian.com/manage-profile/security/api-tokens), project key |
