@@ -24,7 +24,7 @@ from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
 from . import chat as chat_mod
-from . import costs, history, move_rules, skills, terminal as term_mod, ticket_context
+from . import costs, history, move_rules, skills, sources, terminal as term_mod, ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
@@ -607,6 +607,40 @@ class Workflow:
         self.toast(f"{t.key} cases pushed to TestRail and verified · ticket done")
         return t
 
+    # ---------------------------------------------------------------- connected apps (read-only lookups)
+    def _source_clients(self) -> dict:
+        """The connected apps a step may read: GitHub (own card), Confluence (through the Jira connection), TestRail."""
+        st = load_settings()
+        out: dict = {"github": None, "github_scope": [], "confluence": None, "testrail_search": None}
+        gh = st.get("github", {})
+        if gh.get("enabled") and gh.get("token"):
+            from ..integrations import github
+            out["github"], out["github_scope"] = github.GitHub(gh["token"]), github.scope(gh)
+        try:
+            from ..integrations import confluence
+            out["confluence"] = confluence.for_jira(self.jira())
+        except Exception:  # Jira not connected yet, or Azure Boards
+            out["confluence"] = None
+        tr = st.get("testrail", {})
+        if tr.get("enabled") and tr.get("base_url") and tr.get("api_key") and tr.get("project_id"):
+            from ..integrations import testrail
+            out["testrail_search"] = lambda text: testrail.search_cases(tr, text)
+        return out
+
+    async def _lookups(self, key: str, issue: dict) -> "sources.Sources":
+        """Read what the connected apps know about the ticket, show each lookup in the feed and keep it for later steps."""
+        if self.cfg.is_mock:
+            return sources.Sources()
+        self.patch(key, doing="Looking in the connected apps: GitHub, Confluence, TestRail")
+        ctx = issue.get("context")
+        text = ticket_context.to_markdown(ctx) if ctx else (issue.get("description", "") + "\n" + "\n".join(issue.get("comments", [])))
+        clients = await asyncio.to_thread(self._source_clients)
+        found = await asyncio.to_thread(lambda: sources.lookup(key=key, title=issue.get("title", ""), ticket_text=text, **clients))
+        for line in found.feed + found.problems:
+            self.say(key, line, "gather")
+        sources.save(self.cfg, key, found)
+        return found
+
     # ---------------------------------------------------------------- background steps
     async def _gather(self, key: str) -> None:
         """Phase 1: context → classification and environment → scenarios → checklist → gate 1."""
@@ -658,11 +692,15 @@ class Workflow:
             sections, serial = t.checklist, t.serial
             await self.pause(2.5)
         else:
-            scenarios, sections, serial, analysis = await agent.plan_checklist(self.cfg, issue, t.env)
+            found = await self._lookups(key, issue)
+            scenarios, sections, serial, analysis = await agent.plan_checklist(self.cfg, issue, t.env, sources_md=found.markdown("gather"))
             if self.cfg.claude_ready:
                 self._used(key, "gather")
-            if analysis.strip():  # the gather-context findings go into the context file, after what the ticket says
-                agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue).rstrip() + "\n\n## QA analysis\n\n" + analysis.strip() + "\n")
+            extra = found.markdown("gather")
+            if analysis.strip() or extra:  # what the apps said and the gather-context findings, after what the ticket says
+                agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue).rstrip()
+                                 + (f"\n\n## From connected apps\n\n{extra}" if extra else "")
+                                 + (f"\n\n## QA analysis\n\n{analysis.strip()}" if analysis.strip() else "") + "\n")
         agent.write_file(self.cfg, key, f"{key}-scenarios.md", f"# {key} scenarios\n\n{scenarios}\n")
         self.patch(key, p1=3, doing="Writing the QA checklist", checklist=sections, serial=serial, ran=False)
         t = self.tickets.get(key)
@@ -709,7 +747,7 @@ class Workflow:
         assert t
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
         self.say(key, f"Building the Playwright spec for {len(t.items())} checks.", "build")
-        await agent.build_spec(self.cfg, t)
+        await agent.build_spec(self.cfg, t, sources_md=sources.load(self.cfg, key).markdown("create-tests"))
         if self.cfg.claude_ready and not self.cfg.is_mock:
             self._used(key, "create-tests")
         await self.pause(2.6)
@@ -811,7 +849,7 @@ class Workflow:
             try:
                 errfile = self.cfg.ticket_dir(key) / f"{key}-errors.json"
                 details = json.loads(errfile.read_text(encoding="utf-8")) if errfile.exists() else {}
-                if await agent.review_results(self.cfg, t, details):
+                if await agent.review_results(self.cfg, t, details, sources_md=sources.load(self.cfg, key).markdown("run-tests")):
                     t.skills = {**t.skills, "run-tests": agent.skill_source("run-tests", self.cfg)}
             except Exception:  # the runner's own notes stay; the review is a refinement
                 log.exception("Result review failed for %s", key)

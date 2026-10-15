@@ -37,9 +37,9 @@ def test_project_skill_adds_or_replaces_and_general_can_be_edited_and_reset(stor
     assert skills.effective("gather", "OTHER")[1] == "general"  # other projects are untouched
     skills.save_project("SCRUM", "gather", "Only this.", mode="replace")
     assert skills.effective("gather", "SCRUM") == ("Only this.", "SCRUM")
-    assert skills.projects() == ["SCRUM"]
+    assert skills.projects() == ["OPTR", "SCRUM"]  # OPTR ships with the app
     skills.delete_project("SCRUM", "gather")
-    assert skills.effective("gather", "SCRUM")[1] == "general" and skills.projects() == []
+    assert skills.effective("gather", "SCRUM")[1] == "general" and skills.projects() == ["OPTR"]
 
     skills.save_general("testrail", "Write cases in Gherkin.")
     assert skills.general("testrail") == ("Write cases in Gherkin.", True)
@@ -101,21 +101,18 @@ def test_without_claude_the_templates_still_work(store, tmp_path):
     assert run(agent.review_results(cfg, t, {})) is False
 
 
-def test_the_teams_skills_are_the_built_in_general_skills():
+def test_the_general_skills_are_the_teams_rules_without_product_specifics():
     from qa_app.workflow import skills as sk
     g = sk.shipped("gather")
-    assert "Enumerate all states for each affected UI component" in g      # define-scenarios
-    assert "Identify affected Admin Suite pages" in g                       # gather-context
-    assert "Classify the ticket and resolve the target environment" in g    # test-ticket, phase 1
+    assert "Enumerate all states for each affected UI component" in g and "<connected_apps>" in g and "Open questions" in g
     c = sk.shipped("create-tests")
-    assert "## Records and cleanup" in c and "Test account convention" in c  # test-specs + test-ticket
-    r = sk.shipped("run-tests")
-    assert "Update the QA checklist with real results" in r and "Unslop" in r
-    j = sk.shipped("jira-comment")
-    assert "Post a QA summary comment" in j and "Unslop" in j
-    assert "Draft cases" in sk.shipped("testrail")
+    assert "## Records and cleanup" in c and "test.step()" in c and "PR" in c
+    assert "Unslop" in sk.shipped("run-tests") and "Unslop" in sk.shipped("jira-comment")
+    assert "capability statement" in sk.shipped("jira-comment") and "Only items that passed" in sk.shipped("testrail")
     for step in sk.STEP_IDS:
-        assert "personal_" not in sk.shipped(step).splitlines()[0]  # each file keeps YourQA's own name
+        text = sk.shipped(step)
+        for eva in ("Admin Suite", "EVA", "euw", "andrei.luca", "on-eva.io", "callEvaApi", "OPTR-4"):
+            assert eva not in text, (step, eva)
 
 
 def test_a_long_skill_can_be_saved(tmp_path, monkeypatch):
@@ -123,3 +120,21 @@ def test_a_long_skill_can_be_saved(tmp_path, monkeypatch):
     monkeypatch.setattr(sk, "root", lambda: tmp_path)
     sk.save_general("create-tests", "x" * 45000)  # the test-specs skill alone is ~28k characters
     assert len(sk.general("create-tests")[0]) == 45000
+
+
+def test_built_in_project_versions_add_to_general_and_yours_override_them(tmp_path, monkeypatch):
+    from qa_app.workflow import skills as sk
+    monkeypatch.setattr(sk, "root", lambda: tmp_path)
+    p = sk.project("OPTR", "gather")
+    assert p and p["mode"] == "add" and p.get("shipped") and "on-eva.io" in p["text"]   # EVA specifics live here
+    assert "OPTR" in sk.projects()
+    text, source = sk.effective("gather", "OPTR")
+    assert source == "general + OPTR" and "on-eva.io" in text
+    assert "on-eva.io" not in sk.shipped("gather") and "Admin Suite" not in sk.shipped("gather")   # general is product-neutral
+    assert "andrei.luca" not in sk.shipped("create-tests") and "callEvaApi" not in sk.shipped("create-tests")
+    assert "callEvaApi" in sk.project("OPTR", "create-tests")["text"]
+    sk.save_project("OPTR", "gather", "Our own note", mode="add")
+    assert sk.project("OPTR", "gather")["text"] == "Our own note" and not sk.project("OPTR", "gather").get("shipped")
+    sk.delete_project("OPTR", "gather")   # removing yours brings the built-in one back
+    assert "on-eva.io" in sk.project("OPTR", "gather")["text"]
+    assert sk.project("SCRUM", "gather") is None

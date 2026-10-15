@@ -554,10 +554,10 @@ ${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}
     ? `What's different in ${proj}? For example:\n- The API is GraphQL at /graphql; check errors in the "errors" array.\n- Always add an item for the mobile viewport.\n- Test data lives in the "QA-Store" tenant.`
     : '';
   const status = isProject
-    ? (step.project ? `${step.project.mode === 'replace' ? 'Replaces' : 'Adds to'} the general skill for ${esc(proj)}` : `${esc(proj)} uses the general skill as is`)
+    ? (step.project ? `${step.project.shipped ? 'Built-in version · ' : ''}${step.project.mode === 'replace' ? 'Replaces' : 'Adds to'} the general skill for ${esc(proj)}` : `${esc(proj)} uses the general skill as is`)
     : (step.general.customised ? 'Edited · applies to every project' : 'Default that ships with the app · applies to every project');
   const actions = isProject
-    ? `${step.project ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDelete" ${K.busy ? 'disabled' : ''}>Remove ${esc(proj)} version</button>` : ''}`
+    ? `${step.project && !step.project.shipped ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDelete" ${K.busy ? 'disabled' : ''}>${(K.data.builtin || []).includes(proj) ? `Reset to the built-in ${esc(proj)} version` : `Remove ${esc(proj)} version`}</button>` : ''}`
     : `${step.general.customised ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skReset" ${K.busy ? 'disabled' : ''}>Reset to default</button>` : ''}`;
   return `<main class="main">
 <header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
@@ -1401,6 +1401,7 @@ ${connected ? '' : `<button type="button" class="btn btn-sm" data-act="integSetu
 /* Integration icons: simple original glyphs for what each service does, in its colour.
    An official logo file in static/logos/<key>.svg (or .png) replaces the glyph when present. */
 const INTEG_ICON = {
+  github: '<circle cx="6.5" cy="5.5" r="2"></circle><circle cx="6.5" cy="18.5" r="2"></circle><circle cx="17.5" cy="18.5" r="2"></circle><path d="M6.5 7.5v9M17.5 16.5V10a3 3 0 0 0-3-3H11"></path><path d="M13 5l-2 2 2 2"></path>',
   jira: '<rect x="4" y="4" width="16" height="16" rx="2.5"></rect><path d="M9.3 4v16M14.7 4v16"></path><path d="M6 8h1.6M11.2 8h1.6M11.2 11.5h1.6M16.4 8h1.6"></path>',
   claude: '<path d="M5 19l8.5-8.5"></path><path d="M15.5 3.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4L12 7l2.4-1.1z"></path><path d="M19 13.5l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6z"></path>',
   slack: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4A1.5 1.5 0 0 1 4 14.5z"></path><path d="M10.2 7.2l-1 6.4M14.2 7.2l-1 6.4M8.2 9.4h7.2M7.6 11.9h7.2"></path>',
@@ -1423,6 +1424,7 @@ const jiraLogo = () => integLogo('jira');
 const INTEG_GROUPS = [
   ['Project management', 'Where tickets come from, and where QA comments and moves go', ['jira-mcp', 'azure']],
   ['AI', 'Who does the work in each board step', ['claude']],
+  ['Code', 'What Claude reads (read-only) to see the real change behind a ticket. Confluence is read through your Jira connection.', ['github']],
   ['Test case management', 'Where passing checks become test cases, and runs are recorded', ['testrail', 'xray', 'zephyr']],
   ['Communication', 'Where run summaries are posted', ['slack', 'teams']],
   ['Testing board', 'How the board works for your project', ['workflow']],

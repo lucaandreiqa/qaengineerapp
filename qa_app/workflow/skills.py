@@ -71,13 +71,15 @@ def general(step: str) -> tuple[str, bool]:
 
 
 def project(key: str, step: str) -> Optional[dict]:
-    """{"text", "mode"} or None."""
+    """{"text", "mode", "shipped"} or None. Yours (saved on the Skills screen) wins over one that ships with the app."""
     _check(step, key)
-    raw = _read(root() / "projects" / key / f"{step}.md")
+    raw, shipped_one = _read(root() / "projects" / key / f"{step}.md"), False
+    if raw is None:
+        raw, shipped_one = _read(SHIPPED / "projects" / key / f"{step}.md"), True
     if raw is None:
         return None
     meta, body = split(raw)
-    return {"text": body, "mode": "replace" if meta.get("mode") == "replace" else "add"}
+    return {"text": body, "mode": "replace" if meta.get("mode") == "replace" else "add", "shipped": shipped_one}
 
 
 def effective(step: str, key: Optional[str] = None) -> tuple[str, str]:
@@ -127,8 +129,11 @@ def delete_project(key: str, step: str) -> None:
 
 
 def projects() -> list[str]:
-    d = root() / "projects"
-    return sorted(p.name for p in d.iterdir() if p.is_dir() and KEY_RE.match(p.name) and any(p.glob("*.md"))) if d.exists() else []
+    found = set()
+    for d in (root() / "projects", SHIPPED / "projects"):
+        if d.exists():
+            found |= {p.name for p in d.iterdir() if p.is_dir() and KEY_RE.match(p.name) and any(p.glob("*.md"))}
+    return sorted(found)
 
 
 def overview(key: Optional[str] = None) -> dict:
@@ -140,4 +145,5 @@ def overview(key: Optional[str] = None) -> dict:
         eff, source = effective(sid, key)
         steps.append({"id": sid, "name": name, "general": {"text": text, "customised": custom, "shipped": shipped(sid)},
                       "project": p, "effective": eff, "source": source})
-    return {"steps": steps, "project": key or "", "projects": projects()}
+    builtin = sorted(p.name for p in (SHIPPED / "projects").iterdir() if p.is_dir()) if (SHIPPED / "projects").exists() else []
+    return {"steps": steps, "project": key or "", "projects": projects(), "builtin": builtin}

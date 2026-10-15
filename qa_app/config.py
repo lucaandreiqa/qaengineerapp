@@ -28,6 +28,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     # Azure Boards: board link + personal access token (Work items: read & write).
     "azure": {"enabled": False, "org_url": "", "pat": "", "project": "", "team": "", "board": "", "column_field": "",
               "link": "", "connection": {}},
+    "github": {"enabled": False, "token": "", "repos": ""},
     "testrail": {"enabled": False, "base_url": "", "username": "", "api_key": "",
                  "project_id": "", "suite_id": ""},
     "xray": {"enabled": False, "client_id": "", "client_secret": "", "project_key": ""},

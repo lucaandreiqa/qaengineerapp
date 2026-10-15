@@ -130,3 +130,12 @@ def add_case(cfg: dict, section_id: int, title: str, steps: str, expected: str) 
         if e.response is not None and e.response.status_code == 400:  # template without those fields
             return tr.post(f"add_case/{section_id}", {"title": title})["id"]
         raise
+
+
+def search_cases(cfg: dict, text: str, limit: int = 30) -> list[dict]:
+    """Read-only: cases whose title contains the text, across the project (and suite, when one is set)."""
+    tr = TestRail(cfg)
+    path = f"get_cases/{tr.project}{tr.suite_q()}&filter={requests.utils.quote(text)}&limit={limit}"
+    data = tr.get(path)
+    cases = data.get("cases", []) if isinstance(data, dict) else data
+    return [{"id": c.get("id"), "title": c.get("title", ""), "section_id": c.get("section_id")} for c in cases[:limit]]

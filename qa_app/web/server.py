@@ -78,6 +78,11 @@ CATALOGUE: list[dict[str, Any]] = [
      "fields": [{"k": "webhook_url", "label": "Webhook URL", "secret": True, "full": True, "ph": "https://…webhook.office.com/…"},
                 {"k": "only_on_failure", "label": "Only on failure", "check": True, "full": True}],
      "required": ["webhook_url"]},
+    {"key": "github", "name": "GitHub", "mono": "GH", "tint": "#3B3F46",
+     "desc": "Claude reads the PRs behind a ticket (read-only) when gathering context and writing tests",
+     "fields": [{"k": "token", "label": "Token (fine-grained, read-only)", "secret": True, "full": True, "ph": "github_pat_…"},
+                {"k": "repos", "label": "Repos or orgs to search for the ticket key", "full": True, "ph": "acme, acme/admin-suite"}],
+     "required": ["token"]},
     {"key": "testrail", "name": "TestRail", "mono": "TR", "tint": "#1F7F70", "desc": "Run results, and board cases on your go-ahead",
      "fields": [{"k": "base_url", "label": "Base URL", "full": True, "ph": "https://your-org.testrail.io"},
                 {"k": "username", "label": "Username"}, {"k": "api_key", "label": "API key", "secret": True},
@@ -620,6 +625,12 @@ async def test_integration(key: str, values: dict[str, Any] = Body(...)) -> dict
         res = await asyncio.to_thread(_test_claude_code)
     elif key == "claude":
         res = await asyncio.to_thread(_test_claude, values)
+    elif key == "github":
+        from ..integrations import github
+        try:
+            res = {"ok": True, "text": await asyncio.to_thread(github.test_connection, values)}
+        except Exception as e:
+            res = {"ok": False, "text": (str(e).splitlines() or ["error"])[0][:300]}
     else:
         try:
             res = {"ok": True, "text": await asyncio.to_thread(integrations.test_connection, key, values)}

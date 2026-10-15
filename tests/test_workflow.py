@@ -619,3 +619,46 @@ def test_gather_has_no_fixed_item_cap_says_claude_has_no_tools_and_keeps_its_ana
     assert "2-4 sections" not in seen["prompt"] and "2-5 items" not in seen["prompt"]
     assert "no tools" in seen["system"].lower()
     assert out[3] == "Affected page: Control Room > Settings"  # the gather-context findings, kept for the context file
+
+
+def test_lookups_are_saved_shown_and_reach_each_steps_prompt(wf, monkeypatch, tmp_path):
+    from qa_app.workflow import agent as ag, sources
+    from qa_app.workflow.models import Env
+    found = sources.Sources(prs=[{"repo": "acme/admin", "number": 5, "url": "u", "title": "Usage limit", "state": "open", "branch": "b", "base": "main",
+                                  "body": "Adds limit", "commits": [{"sha": "abc1234", "message": "add limit"}],
+                                  "files": [{"name": "src/Limit.tsx", "status": "added", "additions": 9, "deletions": 0, "patch": "+const limit = 1"}],
+                                  "review_comments": [], "comments": []}],
+                            feed=["Read PR acme/admin#5 (1 commits, 1 files): Usage limit"], missing=["Confluence", "TestRail"])
+    seen_args = {}
+
+    def fake_lookup(**kw):
+        seen_args.update(kw)
+        return found
+    monkeypatch.setattr(sources, "lookup", fake_lookup)
+    monkeypatch.setattr(wf, "_source_clients", lambda: {"github": object(), "github_scope": ["acme"], "confluence": None, "testrail_search": None})
+    key = "OPTR-48498"
+    _live(wf, key)
+    issue = {"key": key, "title": "Device list filter", "description": "see https://github.com/acme/admin/pull/5", "comments": []}
+    got = run(wf._lookups(key, issue))
+    assert got is found and seen_args["key"] == key and "pull/5" in seen_args["ticket_text"]
+    assert any(m["text"].startswith("Read PR acme/admin#5") for m in wf.tickets.get(key).chat)       # in the live feed
+    assert sources.load(wf.cfg, key).markdown("create-tests") == found.markdown("create-tests")      # saved for later steps
+
+    prompts = {}
+
+    async def fake_claude(cfg, system, prompt, max_tokens=4000, step=None):
+        step = system.split('<skill step="')[1].split('"')[0]
+        prompts[step] = prompt
+        return {"gather": '{"scenarios": "- s", "serial": false, "sections": [{"name": "A", "items": ["x"]}]}',
+                "create-tests": "test('[1] x', async () => {});",
+                "run-tests": '{"items": []}'}[step]
+    monkeypatch.setattr(ag, "ask_claude", fake_claude)
+    cfg = Config(demo=False, anthropic_api_key="k", data_dir=tmp_path, workspace=tmp_path / "ws")
+    run(ag.plan_checklist(cfg, issue, Env(kind="Test environment", url="https://x.test/"), sources_md=found.markdown("gather")))
+    assert "Usage limit" in prompts["gather"] and "<connected_apps>" in prompts["gather"]
+    t = wf.tickets.get(key).model_copy(update={"env": Env(kind="Test environment", url="https://x.test/"), "ran": True})
+    run(ag.build_spec(cfg, t, sources_md=found.markdown("create-tests")))
+    assert "+const limit = 1" in prompts["create-tests"]
+    t.checklist[0].items[0].result = "fail"
+    run(ag.review_results(cfg, t, {}, sources_md=found.markdown("run-tests")))
+    assert "src/Limit.tsx" in prompts["run-tests"]

@@ -184,7 +184,7 @@ def skill_source(step: str, cfg: Config) -> str:
     return skills.effective(step, cfg.jira_project)[1]
 
 
-async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[Section], bool]:
+async def plan_checklist(cfg: Config, issue: dict, env: Env, sources_md: str = "") -> tuple[str, list[Section], bool, str]:
     """Returns (scenarios markdown, checklist sections, serial_needed, analysis markdown from the gather-context skill)."""
     if cfg.claude_ready:
         if issue.get("context"):  # the whole ticket: every field, all comments, links, attachments
@@ -194,7 +194,7 @@ async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[
         else:
             ticket = (f"Ticket {issue['key']}: {issue['title']}\nType: {type_label(issue.get('type', ''))}\nStatus: {issue.get('status')}\n\n"
                       f"Description:\n{issue.get('description', '')}\n\nComments:\n" + "\n---\n".join(issue.get("comments", [])))
-        prompt = (f"{ticket}\n\nTest environment: {env.kind} {env.url}\n\n"
+        prompt = (f"{ticket}\n\n" + (sources_md + "\n\n" if sources_md else "") + f"Test environment: {env.kind} {env.url}\n\n"
                   "Use everything above: description, acceptance criteria, every comment (later comments can change "
                   "what was agreed), labels, versions, linked tickets and attachments by name."
                   "\n\nReturn JSON only: {\"analysis\": \"markdown: what changed, affected pages and flows, settings, "
@@ -262,12 +262,12 @@ def spec_template(t: Ticket, cfg: Config, serial: bool = False) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def build_spec(cfg: Config, t: Ticket) -> list[str]:
+async def build_spec(cfg: Config, t: Ticket, sources_md: str = "") -> list[str]:
     files = []
     if cfg.claude_ready and not cfg.is_mock:
         prompt = (f"Ticket {t.key}: {t.title}\nBase URL: {t.env.url if t.env else 'process.env.BASE_URL'}\n"
                   f"Test account (SSO, storage state is preloaded): {who(cfg)}\n\n"
-                  f"Checklist:\n{checklist_md(t)}")
+                  f"Checklist:\n{checklist_md(t)}" + (f"\n\n{sources_md}" if sources_md else ""))
         spec = await ask_claude(cfg, system(SPEC_SYSTEM, "create-tests", cfg), prompt, max_tokens=16000)
         spec = re.sub(r"^```\w*\n|```\s*$", "", spec.strip(), flags=re.M)
     else:
@@ -426,7 +426,7 @@ def _results_md(t: Ticket) -> str:
         (f"\n- Left behind: {t.left}" if t.left else "")
 
 
-async def review_results(cfg: Config, t: Ticket, details: dict) -> bool:
+async def review_results(cfg: Config, t: Ticket, details: dict, sources_md: str = "") -> bool:
     """Step 3: Claude writes the bug note and severity for failed / partial / blocked items. True if it did."""
     items = t.items()
     todo = [(n, i) for n, i in enumerate(items, 1) if i.result in ("fail", "partial", "blocked")]
@@ -435,7 +435,7 @@ async def review_results(cfg: Config, t: Ticket, details: dict) -> bool:
     lines = [f"[{n}] {RES_LABEL[i.result]} · {i.text}\nRunner said: {details.get(n - 1) or details.get(str(n - 1)) or i.bug or '(nothing)'}"
              for n, i in todo]
     prompt = (f"Ticket {t.key}: {t.title} ({type_label(t.type)})\nEnvironment: {t.env.url if t.env else 'unknown'}\n\n"
-              + "\n\n".join(lines) +
+              + "\n\n".join(lines) + (f"\n\n{sources_md}" if sources_md else "") +
               '\n\nReturn JSON only: {"items": [{"n": int, "note": str, "severity": "Critical"|"Major"|"Minor"|null}]} '
               "with one entry per item above. severity only for FAIL items that are product bugs.")
     data = _json_block(await ask_claude(cfg, system(REVIEW_SYSTEM, "run-tests", cfg), prompt, max_tokens=3000))

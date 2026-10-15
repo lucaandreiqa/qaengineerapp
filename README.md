@@ -99,13 +99,19 @@ each (`qa_app/skills/*.md`). On the **Skills** screen (⌘5, or *Skill* on a boa
 The ticket's Jira project decides which version is used, and the drawer shows which one Claude followed. Output
 formats stay in the code, so editing a skill changes how Claude works, not what the app can read back.
 
-The built-in skills are the team's own: Gather requirements = gather-context + define-scenarios + test-ticket
-phase 1; Create tests = test-specs + test-ticket's cleanup and test account rules; Run tests = YourQA's review
-guidance + test-ticket phase 2 + unslop; Comment & move = test-ticket phase 3 + unslop; TestRail = YourQA's case
-guidance + test-ticket phase 4. Skills can be up to 60,000 characters. Claude has no tools inside a step (no
-files, shell, GitHub or TestRail), so where a skill asks it to read code, a PR or existing specs it works from
-what YourQA gives it and lists what it couldn't check. The test-specs skill expects the EVA test repo (page
-objects, `common/` helpers): set the Playwright workspace folder to that repo for its imports to resolve.
+The built-in general skills are product-neutral versions of the team's skills (gather-context, define-scenarios,
+test-ticket, test-specs, unslop). The original EVA Suite Admin texts ship word for word as a built-in **OPTR**
+project version that adds to them; saving your own OPTR version overrides it, and removing yours brings the built-in
+one back. Skills can be up to 60,000 characters.
+
+**Connected apps.** Before Claude gathers requirements, YourQA reads (read-only) what the connected apps know about
+the ticket: GitHub PRs linked on it or mentioning its key (description, commits, changed files, diffs, review
+comments; add a fine-grained read-only token on the GitHub card), Confluence pages linked on it or matching its key
+or title (through your Jira connection), and matching TestRail cases. Each lookup is a line in the ticket feed, the
+results are saved in `<KEY>-context.md` under "From connected apps", and later steps reuse them (Create tests gets
+the PR diffs, the Run tests review gets the changed files). Long parts are trimmed, a failing app never stops the
+step, and apps that aren't connected are named so Claude says what it couldn't check. Claude itself still has no
+tools inside a step.
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
