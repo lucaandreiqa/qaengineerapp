@@ -214,7 +214,7 @@ function render() {
   $app.dataset.theme = S.theme;
   document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
   const screen = { board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
-  $app.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewToast();
+  $app.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewReportModal() + viewToast();
   document.querySelectorAll('[data-keep]').forEach((el) => {
     const v = scrolls[el.dataset.keep];
     if (v) { el.scrollLeft = v[0]; el.scrollTop = v[1]; }
@@ -876,8 +876,100 @@ async function loadBoard() {
   schedule();
 }
 
-function viewReports() { return `<main class="main"><h1 style="margin:0;font-size:18px;font-weight:600">Reports</h1><div class="notice">Loading…</div></main>`; }
-async function loadReports() { schedule(); }
+/* ================================================================== REPORTS: trends, reports, export, send */
+async function loadReports() {
+  const R = S.reports, p = new URLSearchParams({ range: R.range });
+  if (R.project) p.set('project', R.project);
+  if (R.type) p.set('type', R.type);
+  try {
+    const [t, l] = await Promise.all([api('GET', '/api/reports/trends?' + p), api('GET', '/api/reports')]);
+    R.trends = t; R.list = l.reports; R.err = '';
+  } catch (e) { R.err = e.message; }
+  schedule();
+}
+async function makeReport(kind, ref, extra) {
+  const R = S.reports; R.busy = kind; schedule();
+  try {
+    const meta = await api('POST', '/api/reports', { kind, ref: ref || '', range: R.range, ...(extra || {}) });
+    R.preview = { meta, to: '', pv: null, result: '', err: '' };
+    if (S.route === 'reports') loadReports();
+  } catch (e) { toast(e.message); }
+  R.busy = ''; schedule();
+}
+
+/* One bar segment: rounded top corners only when it's the top of the bar (data-end), square at the baseline. */
+function barSeg(cls, x, top, bottom, w, round) {
+  const h = bottom - top;
+  if (h <= 0.5) return '';
+  const r = round ? Math.min(4, h, w / 2) : 0;
+  return `<path class="${cls}" d="M${x},${bottom}V${top + r}${r ? `Q${x},${top} ${x + r},${top}` : ''}H${x + w - r}${r ? `Q${x + w},${top} ${x + w},${top + r}` : ''}V${bottom}Z"></path>`;
+}
+function trendChart(series) {
+  if (!series.length) return '<div class="notice">No runs in this period.</div>';
+  const W = 760, H = 180, padL = 30, padB = 22, padT = 8;
+  const max = Math.max(1, ...series.map((d) => d.runs));
+  const ticks = max <= 4 ? Array.from({ length: max + 1 }, (_, i) => i) : [0, Math.round(max / 2), max];
+  const bw = Math.min(28, Math.max(6, (W - padL) / series.length - 6));
+  const step = (W - padL) / series.length;
+  const y = (v) => padT + (H - padT - padB) * (1 - v / max);
+  const label = (d) => new Date(d.day + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const every = Math.ceil(series.length / 8);
+  const bars = series.map((d, i) => {
+    const x = padL + i * step + (step - bw) / 2, failed = d.runs - d.passed;
+    const yp = y(d.passed), yt = y(d.runs), base = y(0);
+    const tip = `${label(d)}: ${d.runs} run${d.runs === 1 ? '' : 's'}, ${d.passed} passed, ${failed} failed (${d.pass_rate}% passed)`;
+    return `<g class="tbar" tabindex="0" role="img" aria-label="${esc(tip)}"><title>${esc(tip)}</title>
+<rect class="tbar-hit" x="${x - (step - bw) / 2}" y="${padT}" width="${step}" height="${H - padT - padB}"></rect>
+${barSeg('tb-pass', x, yp, base, bw, !failed)}${barSeg('tb-fail', x, yt, d.passed ? yp - 2 : base, bw, true)}
+${i % every === 0 ? `<text class="tax" x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(label(d))}</text>` : ''}</g>`;
+  }).join('');
+  const grid = ticks.map((v) => `<line class="tgrid" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"></line><text class="tax" x="${padL - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join('');
+  return `<div class="tchart"><div class="tlegend"><span><i class="lg-pass"></i>Passed runs</span><span><i class="lg-fail"></i>Failed runs</span></div>
+<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Runs per day, passed and failed">${grid}${bars}</svg></div>`;
+}
+
+function viewReports() {
+  const R = S.reports, t = R.trends;
+  const sel = (k, label, opts) => `<label class="hsel"><span class="sr-only">${label}</span><select class="inp" data-in="repF" data-v="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${R[k] === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  const head = `<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Reports</h1>
+<p style="margin:2px 0 0;color:var(--muted)">How testing is going, and reports to share: per run, per ticket or for a period.</p></div>
+<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">${sel('range', 'Period', [['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']])}
+${t && t.by_project.length > 1 ? sel('project', 'Project', [['', 'All projects'], ...t.by_project.map((x) => [x.name, x.name])]) : ''}
+${sel('type', 'FE / BE', [['', 'FE and BE'], ['FE', 'FE'], ['BE', 'BE'], ['FE+BE', 'FE+BE']])}</div></header>`;
+  if (!t) return `<main class="main">${head}<div class="${R.err ? 'callout c-err' : 'notice'}">${R.err ? esc(R.err) : 'Loading…'}</div></main>`;
+  const tile = (v, l, sub) => `<div class="kpi"><b>${v == null ? '–' : v}</b><span>${l}</span>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const kpis = `<div class="kpis">${tile(t.runs, 'runs', `${t.tickets} ticket${t.tickets === 1 ? '' : 's'}`)}${tile(t.pass_rate == null ? null : t.pass_rate + '%', 'of runs passed')}
+${tile(t.first_time_pass == null ? null : t.first_time_pass + '%', 'green on the first run')}${tile(t.avg_runs_to_green, 'runs to green, on average')}${tile(t.flaky.length, 'flaky checks')}</div>`;
+  const group = (title, rows) => (rows.length > 1 || (rows[0] && rows[0].name !== '—') ? `<section class="rcard"><h2>${title}</h2><table class="rtab"><thead><tr><th>${(t => t[0].toUpperCase() + t.slice(1))(title.replace('By ', ''))}</th><th>Runs</th><th>Tickets</th><th>Passed</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.runs}</td><td>${r.tickets}</td><td><span class="rpct"><i style="width:${r.pass_rate}%"></i></span>${r.pass_rate}%</td></tr>`).join('')}</tbody></table></section>` : '');
+  const flaky = t.flaky.length ? `<section class="rcard"><h2>Flaky checks</h2><p class="rnote">Same ticket, environment and spec, but the result went back and forth.</p><table class="rtab"><tbody>${t.flaky.map((f) => `<tr><td class="mono">${esc(f.key)}</td><td>${esc(f.text)}</td><td>${f.flips} flips</td><td><a class="btn btn-quiet btn-sm" href="#/history?key=${encodeURIComponent(f.key)}">Runs</a></td></tr>`).join('')}</tbody></table></section>` : '';
+  const tickets = t.per_ticket.length ? `<section class="rcard"><h2>Tickets</h2><table class="rtab"><thead><tr><th>Ticket</th><th>Runs</th><th>Latest</th><th>Time testing</th><th>Claude cost</th><th></th></tr></thead><tbody>${t.per_ticket.map((x) => `<tr><td><span class="mono">${esc(x.key)}</span> <span class="rmuted">${esc(x.title)}</span></td><td>${x.runs}</td><td>${runStatus(x.status)}</td><td>${fmtDur(x.time_s)}</td><td>${x.cost != null ? fmtUsd(x.cost) : '–'}</td><td><button type="button" class="btn btn-quiet btn-sm" data-act="makeReport" data-kind="ticket" data-v="${esc(x.key)}">Ticket report</button></td></tr>`).join('')}</tbody></table></section>` : '';
+  const P = R.period;
+  const make = `<section class="rcard"><h2>Make a period summary</h2><p class="rnote">Tickets tested, pass rate, bugs found by severity, failing areas, flaky checks, time and cost.</p>
+<div class="rmake"><label>From <input type="date" class="inp" value="${esc(P.from)}" data-in="repDate" data-v="from"></label><label>To <input type="date" class="inp" value="${esc(P.to)}" data-in="repDate" data-v="to"></label>
+<button type="button" class="btn btn-primary" data-act="makeReport" data-kind="period" ${R.busy ? 'disabled' : ''}>${R.busy === 'period' ? svg(IC.spin, 'ic spin') : ''}${P.from || P.to ? 'Make summary' : `Make summary for ${esc(t.label)}`}</button>
+<a class="btn btn-quiet" href="/api/reports/csv/runs?range=${esc(R.range)}" download>Runs CSV</a><a class="btn btn-quiet" href="/api/reports/csv/checks?range=${esc(R.range)}" download>Checks CSV</a></div></section>`;
+  const saved = `<section class="rcard"><h2>Saved reports</h2>${(R.list || []).length ? `<table class="rtab"><tbody>${R.list.map((m) => `<tr><td><b>${esc(m.title)}</b><div class="rmuted">${esc(m.kind_name)} · ${esc(when(m.created))}</div></td>
+<td class="ract"><a class="btn btn-quiet btn-sm" href="/api/reports/${encodeURIComponent(m.id)}.html" target="_blank" rel="noopener">Open</a><a class="btn btn-quiet btn-sm" href="/api/reports/${encodeURIComponent(m.id)}.pdf" target="_blank" rel="noopener">PDF</a><button type="button" class="btn btn-sm" data-act="repSend" data-v="${esc(m.id)}">Send…</button></td></tr>`).join('')}</tbody></table>` : '<p class="rnote">Reports you make appear here, ready to open, download as PDF or send. Make run and ticket reports from a run in History, or from the Tickets list below.</p>'}</section>`;
+  return `<main class="main">${head}${kpis}<section class="rcard"><h2>Runs per day · ${esc(t.label)}</h2>${trendChart(t.series)}</section>
+<div class="rgrid">${group('By project', t.by_project)}${group('By FE / BE', t.by_type)}${group('By issue type', t.by_issue_type)}</div>
+${flaky}${make}${saved}${tickets}</main>`;
+}
+
+function viewReportModal() {
+  const P = S.reports.preview;
+  if (!P) return '';
+  const m = P.meta;
+  const dest = (v, l) => `<button type="button" class="fchip" aria-pressed="${P.to === v}" data-act="repTo" data-v="${v}">${l}</button>`;
+  return `<div class="modal-bg" data-act="repCloseBg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="rep-title">
+<header><h2 id="rep-title">${esc(m.title)}</h2><button type="button" class="btn btn-quiet btn-icon" data-act="repClose" aria-label="Close">${svg(IC.close)}</button></header>
+<p class="rnote">${esc(m.kind_name)} ready.</p>
+<div class="hacts"><a class="btn" href="/api/reports/${encodeURIComponent(m.id)}.html" target="_blank" rel="noopener">Open${svg(IC.ext, 'ic ic-s')}</a><a class="btn" href="/api/reports/${encodeURIComponent(m.id)}.pdf" target="_blank" rel="noopener">Download PDF</a></div>
+<div class="lbl" style="margin-top:14px">Send it</div><div class="fchips">${dest('slack', 'Slack')}${dest('teams', 'Microsoft Teams')}${m.key ? dest('tracker', S.board.data && S.board.data.config.tracker === 'Azure Boards' ? 'Azure Boards work item' : 'Jira ticket') : ''}</div>
+${P.err ? `<div class="callout c-err" style="margin-top:10px">${svg(IC.err)}<span>${esc(P.err)}</span></div>` : ''}
+${P.pv ? `<div class="rprev"><div><b>Where:</b> ${esc(P.pv.where)}</div><div><b>What:</b> ${esc(P.pv.what)}</div>${P.pv.text ? `<pre>${esc(P.pv.text)}</pre>` : ''}</div>
+<div style="display:flex;gap:8px;margin-top:10px">${P.result ? `<span class="tres tres-ok">${svg(IC.check, 'ic ic-s')}${esc(P.result)}</span>` : `<button type="button" class="btn btn-primary" data-act="repSendNow" ${P.busy ? 'disabled' : ''}>${P.busy ? svg(IC.spin, 'ic spin') : ''}Send now</button>`}</div>` : ''}
+</div></div>`;
+}
 
 /* ================================================================== HISTORY: every ticket run */
 function fmtDur(sec) { sec = Math.max(0, Math.round(sec || 0)); return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`; }
@@ -964,7 +1056,8 @@ function viewRunPage() {
 ${r.has_report ? `<a class="btn btn-sm" href="${evidenceUrl(r.id, 'report/index.html')}" target="_blank" rel="noopener">Full Playwright report${svg(IC.ext, 'ic ic-s')}</a>` : ''}
 ${r.spec_files.map((f) => `<a class="btn btn-quiet btn-sm" href="${evidenceUrl(r.id, 'spec/' + f)}" download>${esc(f)}</a>`).join('')}
 <button type="button" class="btn btn-quiet btn-sm" data-act="runFolder" data-v="${esc(r.id)}">Show files</button>
-<button type="button" class="btn btn-primary btn-sm" data-act="makeReport" data-kind="run" data-v="${esc(r.id)}">Report</button></div>`;
+<button type="button" class="btn btn-primary btn-sm" data-act="makeReport" data-kind="run" data-v="${esc(r.id)}">Run report</button>
+<button type="button" class="btn btn-sm" data-act="makeReport" data-kind="ticket" data-v="${esc(r.key)}">Ticket report</button></div>`;
   const nav = `<div class="hnav">${r.prev ? `<a class="btn btn-quiet btn-sm" href="#/history/${encodeURIComponent(r.prev)}">‹ Run ${r.run_no - 1}</a>` : ''}<span>Run ${r.run_no} of ${r.of}</span>${r.next ? `<a class="btn btn-quiet btn-sm" href="#/history/${encodeURIComponent(r.next)}">Run ${r.run_no + 1} ›</a>` : ''}${cmpSel}</div>`;
   const evidence = {}; r.items.forEach((i) => { if (i.error || (i.attachments || []).length) evidence[String(i.n)] = { error: i.error, attachments: i.attachments }; });
   const body = H.cmp ? viewCompare(H.cmp) : `${r.error ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(r.error)}</span></div>` : ''}${!r.evidence_kept ? `<div class="notice">${svg(IC.info)}<span>Evidence for this run was removed to save space; the results are kept.</span></div>` : ''}
@@ -1457,6 +1550,23 @@ const ACTS = {
   },
   openTicket: (el) => { S.board.sel = el.dataset.key; },
   // run
+  // reports
+  makeReport: (el) => {
+    const P = S.reports.period;
+    makeReport(el.dataset.kind, el.dataset.v || '', el.dataset.kind === 'period' && (P.from || P.to) ? { from_: P.from, to: P.to } : {});
+  },
+  repSend: (el) => { const m = (S.reports.list || []).find((x) => x.id === el.dataset.v); if (m) S.reports.preview = { meta: m, to: '', pv: null, result: '', err: '' }; },
+  repClose: () => { S.reports.preview = null; },
+  repCloseBg: (el, ev) => { if (ev.target === el) S.reports.preview = null; },
+  repTo: async (el) => {
+    const P = S.reports.preview; P.to = el.dataset.v; P.pv = null; P.err = ''; P.result = ''; schedule();
+    try { P.pv = await api('POST', `/api/reports/${encodeURIComponent(P.meta.id)}/preview`, { to: P.to }); } catch (e) { P.err = e.message; }
+  },
+  repSendNow: async () => {
+    const P = S.reports.preview; P.busy = true; P.err = ''; schedule();
+    try { const r = await api('POST', `/api/reports/${encodeURIComponent(P.meta.id)}/send`, { to: P.to }); P.result = r.result; toast(r.result); } catch (e) { P.err = e.message; }
+    P.busy = false;
+  },
   // history
   histRefresh: () => (S.routeArg ? loadRunRecord(S.routeArg, S.hist.cmp ? S.hist.cmp.a.id : '') : loadHistory()),
   histKey: (el) => { S.hist.key = el.dataset.v; loadHistory(); },
@@ -1561,6 +1671,8 @@ const INPUTS = {
   target: (el) => { saveDraft(el.dataset.key, { target: el.value.trim() }); },
   targetSel: (el) => { const t = S.board.data.tickets.find((x) => x.key === el.dataset.key); t.target = el.value; saveDraft(el.dataset.key, { target: el.value }); },
   histQ: (el) => { S.hist.q = el.value; clearTimeout(S.hist.qt); S.hist.qt = setTimeout(loadHistory, 250); },
+  repF: (el) => { S.reports[el.dataset.v] = el.value; if (el.dataset.v === 'range') store.set('repRange', el.value); loadReports(); },
+  repDate: (el) => { S.reports.period[el.dataset.v] = el.value; },
   histF: (el) => { S.hist[el.dataset.v] = el.value; if (el.dataset.v === 'range') store.set('histRange', el.value); loadHistory(); },
   histCompare: (el) => { location.hash = '#/history/' + encodeURIComponent(S.routeArg) + (el.value ? '?vs=' + encodeURIComponent(el.value) : ''); },
   jiraLink: (el) => { S.jira.link = el.value; S.jira.err = ''; },
@@ -1650,7 +1762,7 @@ document.addEventListener('keydown', (ev) => {
   const mod = ev.metaKey || ev.ctrlKey;
   if (mod && ['1', '2', '3', '4', '5'].includes(ev.key)) { ev.preventDefault(); location.hash = '#/' + ROUTES[+ev.key - 1]; }
   if (ev.key === 'Escape') {
-    if (S.board.fopen) S.board.fopen = false; else if (S.board.sel) { S.board.sel = null; }
+    if (S.reports.preview) S.reports.preview = null; else if (S.board.fopen) S.board.fopen = false; else if (S.board.sel) { S.board.sel = null; }
     schedule();
   }
 });

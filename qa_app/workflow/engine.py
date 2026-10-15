@@ -484,6 +484,7 @@ class Workflow:
         transitions = [tr["name"] for tr in await self._call(jira.get_transitions, t.key)]
         target = t.target if t.target in transitions else ""
         t = self.patch(t.key, sub="transition", comment=text, comment_at=now_hhmm(), transitions=transitions, target=target)
+        self.history().annotate(t.run_id, comment=text, comment_at=time.time())
         self.say(t.key, "Comment posted on the ticket. Moving it needs its own approval (Gate 3b).", "jira")
         self.toast(f"Comment posted on {t.key} · the move needs its own approval")
         return t
@@ -505,6 +506,7 @@ class Workflow:
         t = self.patch(t.key, stage=4, sub="drafting", status=status or target, section=section, error="")
         self.spawn(t.key, self._draft(t.key))
         self.say(t.key, f"Ticket moved to {target}. Drafting TestRail cases.", "jira")
+        self.history().annotate(t.run_id, moved_to=target)
         self.toast(f"{t.key} moved to {target} · drafting TestRail cases")
         return t
 
@@ -536,6 +538,7 @@ class Workflow:
                                     f"Pushing again will only add the missing ones.")
             raise GateError(f"Push not verified: {len(missing)} cases missing in TestRail")
         self.tickets.finish(t.key)
+        self.history().annotate(t.run_id, cases=[{"title": c.title} for c in t.cases], testrail_section=t.section)
         self.toast(f"{t.key} cases pushed to TestRail and verified · ticket done")
         return t
 

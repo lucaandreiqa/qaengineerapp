@@ -140,11 +140,11 @@ class Azure:
         self.s.headers.update({"Accept": "application/json"})
 
     def req(self, method: str, path: str, *, version: str = API, params: Optional[dict] = None, json: Any = None,
-            headers: Optional[dict] = None) -> Any:
+            headers: Optional[dict] = None, data: Optional[bytes] = None) -> Any:
         url = f"{self.org_url}/{path.lstrip('/')}"
         q = {**(params or {}), **({"api-version": version} if version else {})}
         try:
-            r = self.s.request(method, url, params=q, json=json, headers=headers, timeout=30)
+            r = self.s.request(method, url, params=q, json=json, headers=headers, timeout=30, **({"data": data} if data is not None else {}))
         except requests.RequestException as e:
             raise AzureError(f"Can't reach {self.org_url}: {e.__class__.__name__}") from e
         ctype = r.headers.get("Content-Type", "")

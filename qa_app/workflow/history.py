@@ -196,6 +196,18 @@ class RunStore:
             self._put(rec)
             return rec
 
+    def annotate(self, run_id: str, **fields: Any) -> None:
+        """What happened after the run, kept with it: the Jira comment, the move, the TestRail cases."""
+        if not run_id:
+            return
+        with self._lock:
+            try:
+                rec = self.get(run_id)
+            except KeyError:
+                return
+            rec.setdefault("after", {}).update(fields)
+            self._put(rec)
+
     def close_unfinished(self, message: str = "The app stopped before this run finished") -> list[str]:
         """After a restart: runs still marked running are closed as stopped."""
         done = []

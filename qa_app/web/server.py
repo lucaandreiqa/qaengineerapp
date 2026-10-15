@@ -10,6 +10,7 @@ import logging
 import os
 import platform
 import subprocess
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import date
@@ -274,6 +275,124 @@ async def history_trace(run_id: str, body: TraceIn) -> dict:
     await asyncio.create_subprocess_exec(npx, "playwright", "show-trace", str(f), cwd=str(S().workflow.cfg.workspace),
                                          stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ Reports: trends, reports, export, send
+def _period(range_: str = "30d", from_: str = "", to: str = "") -> tuple[Optional[float], Optional[float], str]:
+    from datetime import datetime as _dt
+    if from_ or to:
+        try:
+            since = _dt.strptime(from_, "%Y-%m-%d").timestamp() if from_ else None
+            until = _dt.strptime(to, "%Y-%m-%d").timestamp() + 86399 if to else None
+        except ValueError:
+            raise HTTPException(422, "Dates must look like 2026-10-15")
+        return since, until, f"{from_ or 'start'} to {to or 'today'}"
+    labels = {"today": "today", "7d": "the last 7 days", "30d": "the last 30 days", "all": "all time"}
+    return _since(range_), None, labels.get(range_, range_)
+
+
+@app.get("/api/reports/trends")
+def reports_trends(range: str = "30d", project: str = "", type: str = "") -> dict:
+    from ..workflow import reports as rep
+    since, _, label = _period(range)
+    return {**rep.trends(S().workflow.history(), since, project, type), "label": label}
+
+
+@app.get("/api/reports")
+def reports_list() -> dict:
+    from ..workflow import reports as rep
+    return {"reports": rep.ReportStore(S().workflow.history()).list()}
+
+
+class ReportIn(BaseModel):
+    kind: str
+    ref: str = ""
+    range: str = "30d"
+    from_: str = ""
+    to: str = ""
+
+
+@app.post("/api/reports")
+async def reports_create(body: ReportIn) -> dict:
+    from ..workflow import reports as rep
+    store = S().workflow.history()
+    since, until, label = _period(body.range, body.from_, body.to) if body.kind == "period" else (None, None, "")
+    t = S().workflow.tickets.get(body.ref) if body.kind == "ticket" else None
+    ticket = {"comment": t.comment, "cases": [c.model_dump() for c in t.cases]} if t else None
+    try:
+        return await asyncio.to_thread(rep.ReportStore(store).create, body.kind, body.ref, since, until, label, ticket)
+    except KeyError:
+        raise HTTPException(404, "There are no runs for that yet")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/reports/{rid}.html")
+def reports_html(rid: str):
+    from ..workflow import reports as rep
+    try:
+        return FileResponse(rep.ReportStore(S().workflow.history()).html_path(rid), media_type="text/html")
+    except KeyError:
+        raise HTTPException(404, "That report isn't there any more")
+
+
+@app.get("/api/reports/{rid}.pdf")
+async def reports_pdf(rid: str):
+    from ..workflow import reports as rep
+    rs = rep.ReportStore(S().workflow.history())
+    try:
+        meta = rs.get(rid)
+        f = await asyncio.to_thread(rs.pdf_path, rid)
+    except KeyError:
+        raise HTTPException(404, "That report isn't there any more")
+    except Exception as e:  # Chromium missing, etc.
+        raise HTTPException(500, f"Couldn't make the PDF: {str(e).splitlines()[0][:200]}")
+    name = re.sub(r"[^\w.-]+", "-", meta["title"]).strip("-") + ".pdf"
+    return FileResponse(f, media_type="application/pdf", filename=name)
+
+
+@app.get("/api/reports/csv/{what}")
+def reports_csv(what: str, range: str = "30d", from_: str = "", to: str = "", key: str = ""):
+    from fastapi.responses import Response
+    from ..workflow import reports as rep
+    store = S().workflow.history()
+    since, until, _ = _period(range, from_, to)
+    runs = store.list(key=key, since=since, until=until)
+    if what == "runs":
+        data = rep.runs_csv(store, runs)
+    elif what == "checks":
+        data = rep.checks_csv(store, runs)
+    else:
+        raise HTTPException(404)
+    return Response(data, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="yourqa-{what}.csv"'})
+
+
+class SendIn(BaseModel):
+    to: str
+
+
+@app.post("/api/reports/{rid}/preview")
+def reports_preview(rid: str, body: SendIn) -> dict:
+    from ..workflow import reports as rep
+    try:
+        return rep.preview(rep.ReportStore(S().workflow.history()).get(rid), body.to, load_settings())
+    except KeyError:
+        raise HTTPException(404, "That report isn't there any more")
+    except rep.SendError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/reports/{rid}/send")
+async def reports_send(rid: str, body: SendIn) -> dict:
+    from ..workflow import reports as rep
+    try:
+        return {"result": await asyncio.to_thread(rep.send, rep.ReportStore(S().workflow.history()), rid, body.to, load_settings())}
+    except KeyError:
+        raise HTTPException(404, "That report isn't there any more")
+    except rep.SendError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Sending failed: {str(e).splitlines()[0][:300]}")
 
 
 class ChatIn(BaseModel):
