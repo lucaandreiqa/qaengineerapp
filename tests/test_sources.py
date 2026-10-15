@@ -116,3 +116,30 @@ def test_confluence_results_are_read_from_both_tool_shapes():
     rest = {"results": [{"content": {"id": "2", "title": "Old spec", "_links": {"webui": "/spaces/A/pages/2"}}, "excerpt": "e"}]}
     assert confluence._hits(new)[0] == {"title": "Spec", "id": "1", "url": "https://x.atlassian.net/wiki/spaces/A/pages/1", "excerpt": "usage limit"}
     assert confluence._hits(rest, "https://x.atlassian.net")[0]["url"] == "https://x.atlassian.net/wiki/spaces/A/pages/2"
+
+
+def test_gaps_name_what_yourqa_could_not_read():
+    text = TICKET + "\nDesign: https://www.figma.com/file/abc/Discounts\nJira: https://acme.atlassian.net/browse/OPTR-1"
+    none = sources.lookup(key="OPTR-77", title="t", ticket_text=text, github=None, github_scope=[], confluence=None, testrail_search=None)
+    gaps = none.gaps(env_url="https://optr-77--abc.on-eva.io")
+    assert any("https://github.com/acme/admin/pull/512" in g for g in gaps)            # linked PR, GitHub not connected
+    assert any("pages/12345" in g for g in gaps)                                         # linked Confluence page
+    assert any("figma.com" in g for g in gaps)                                           # a link YourQA can't read at all
+    assert not any("on-eva.io" in g for g in gaps) and not any("/browse/" in g for g in gaps)  # the environment and Jira itself
+    assert any("mention OPTR-77" in g for g in gaps)                                    # PR search by key, since GitHub isn't connected
+    full = sources.lookup(key="OPTR-77", title="t", ticket_text=TICKET, github=FakeGitHub(), github_scope=["acme"],
+                          confluence=FakeConfluence(), testrail_search=lambda q: [])
+    full.prs[0]["files"].append({"name": "src/huge.json", "status": "modified", "additions": 9000, "deletions": 0, "patch": ""})
+    gaps = full.gaps(env_url="https://optr-77--abc.on-eva.io")
+    assert gaps == ["Full diff of src/huge.json in acme/admin#512 (GitHub left it out because it is too large)"]
+    assert sources.lookup(key="K-1", title="t", ticket_text="nothing linked", github=FakeGitHub(), github_scope=["acme"],
+                          confluence=None, testrail_search=None).gaps() == []          # nothing to fetch: no Claude call
+
+
+def test_what_claude_fetched_is_kept_and_given_to_later_steps():
+    found = sources.lookup(key="OPTR-77", title="t", ticket_text=TICKET, github=None, github_scope=[], confluence=None, testrail_search=None)
+    found.fetched.append({"needs": ["Read PR 512"], "text": "## PR acme/admin#512\nAdds UsageLimit (1-999).", "at": 0})
+    again = sources.Sources.from_dict(found.to_dict())
+    for step in ("gather", "create-tests", "run-tests"):
+        md = again.markdown(step)
+        assert "Fetched by Claude" in md and "UsageLimit (1-999)" in md

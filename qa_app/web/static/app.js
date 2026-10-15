@@ -826,7 +826,7 @@ function viewTerminal(t) {
   const rows = lines.map((l) => `<div class="tl tl-${esc(l.kind)}">${esc(l.text)}</div>`).join('');
   const log = t.run_id && !running ? `<a class="btn btn-quiet btn-sm" href="/api/history/${encodeURIComponent(t.run_id)}/file/terminal.log" target="_blank" rel="noopener">terminal.log${svg(IC.ext, 'ic ic-s')}</a>` : '';
   return `<div><div class="lbl" style="display:flex;align-items:center;gap:8px">
-<button type="button" class="btn btn-quiet btn-sm term-tog" data-act="termToggle" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}Terminal · Playwright</button>
+<button type="button" class="btn btn-quiet btn-sm term-tog" data-act="termToggle" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}Terminal</button>
 ${running ? `<span class="term-live${stalled ? ' is-stall' : ''}">${stalled ? 'silent' : 'live'}</span>` : ''}<span style="color:var(--faint);font-weight:400">${lines.length} line${lines.length === 1 ? '' : 's'}</span>
 <span style="margin-left:auto;display:flex;gap:6px">${log}${running ? `<button type="button" class="btn btn-sm btn-danger" data-act="stopRun" data-key="${esc(key)}" title="End the Playwright run. Retry starts it again.">${svg(IC.close, 'ic ic-s')}Stop</button>` : ''}</span></div>
 ${open ? `<div class="term" data-keep="term-${esc(key)}" data-stick="bottom" role="log" aria-live="off">${rows || '<div class="tl tl-sys">Starting Playwright…</div>'}${running && !stalled ? '<div class="tl tl-cursor">▍</div>' : ''}</div>` : ''}</div>`;

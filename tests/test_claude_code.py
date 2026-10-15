@@ -90,3 +90,75 @@ def test_steps_use_claude_code_mode_and_costs_say_plan(fake_cli):
     assert (step, model, billing) == ("jira-comment", "claude-sonnet-5-5", "plan")
     s = costs.summary([costs.entry(step, model, usage, billing=billing)])
     assert s["plan_calls"] == 1 and s["cost"] == pytest.approx((3000 * 2 + 400 * 10) / 1e6)  # API-price equivalent
+
+
+FETCH = r'''#!{python}
+import json, os, sys
+args = sys.argv[1:]
+if args[:2] == ["mcp", "list"]:
+    print("Checking MCP server health...\n")
+    print("atlassian: https://mcp.atlassian.com/v1/mcp (HTTP) - ✓ Connected")
+    print("claude.ai Linear: https://mcp.linear.app/mcp (HTTP) - ✓ Connected")
+    print("broken: npx broken-server - ✗ Failed to connect")
+    sys.exit(0)
+prompt = sys.stdin.read()
+json.dump({{"args": args, "prompt": prompt, "cwd": os.getcwd()}}, open(os.environ["FAKE_CLAUDE_LOG"], "w"))
+def out(o): print(json.dumps(o), flush=True)
+out({{"type": "system", "subtype": "init", "tools": ["Bash", "Read"]}})
+out({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "id": "t1", "name": "Bash", "input": {{"command": "gh pr diff 512 --repo acme/admin"}}}}]}}}})
+out({{"type": "user", "message": {{"content": [{{"type": "tool_result", "tool_use_id": "t1", "content": "diff --git a/x b/x"}}]}}}})
+out({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "id": "t2", "name": "Bash", "input": {{"command": "gh api -X POST repos/acme/admin/issues"}}}}]}}}})
+out({{"type": "user", "message": {{"content": [{{"type": "tool_result", "tool_use_id": "t2", "is_error": True, "content": "Permission to use Bash has been denied."}}]}}}})
+out({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "id": "t3", "name": "mcp__atlassian__getConfluencePage", "input": {{"pageId": "12345"}}}}]}}}})
+out({{"type": "result", "subtype": "success", "is_error": False, "result": "## PR acme/admin#512\nAdds UsageLimit (1-999).",
+      "usage": {{"input_tokens": 9000, "output_tokens": 700}}, "modelUsage": {{"claude-sonnet-5-5": {{}}}}}})
+'''
+
+
+@pytest.fixture()
+def fetch_cli(tmp_path, monkeypatch):
+    exe = tmp_path / "bin" / "claude"
+    exe.parent.mkdir()
+    exe.write_text(FETCH.format(python=sys.executable))
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{exe.parent}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "call.json"))
+    monkeypatch.setattr(claude_code, "APP_DIR", tmp_path / "app")
+    return tmp_path / "call.json"
+
+
+def test_connected_mcp_servers_are_found_with_their_tool_prefixes(fetch_cli):
+    assert claude_code.mcp_servers() == ["atlassian", "claude_ai_Linear"]
+
+
+def test_fetching_is_read_only_enforced_by_claude_code_and_every_action_is_shown(fetch_cli, tmp_path):
+    seen = []
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    text, model, usage = claude_code.fetch("claude-sonnet-5-5", "You fetch facts.", "Get the diff of PR 512",
+                                           key="OPTR-77", domains=["acme.atlassian.net", "www.figma.com"],
+                                           read_dirs=[ws], on_event=lambda kind, line: seen.append((kind, line)))
+    assert text.startswith("## PR acme/admin#512") and usage["input_tokens"] == 9000
+    a = json.loads(fetch_cli.read_text())["args"]
+    assert a[a.index("--permission-mode") + 1] == "dontAsk"          # anything not allowed is refused, no prompts
+    assert a[a.index("--output-format") + 1] == "stream-json" and "--verbose" in a
+    assert "--strict-mcp-config" not in a                             # your Claude Code MCP servers are available
+    def values(flag):  # the rules after a flag, one argument each, up to the next flag
+        i, out = a.index(flag) + 1, []
+        while i < len(a) and not a[i].startswith("--"):
+            out.append(a[i]); i += 1
+        return out
+    allowed = values("--allowedTools")
+    assert "Bash(gh pr diff *)" in allowed and "Bash(git log *)" in allowed and "Read" in allowed
+    assert "mcp__atlassian__get*" in allowed and "mcp__claude_ai_Linear__search*" in allowed and "mcp__atlassian__executeRead" in allowed
+    assert "WebFetch(domain:acme.atlassian.net)" in allowed and "WebFetch(domain:www.figma.com)" in allowed
+    assert not any(r.startswith("Bash(gh api") for r in allowed)
+    denied = values("--disallowedTools")
+    assert a[a.index("--tools") + 1] == "Bash,Read,Grep,Glob,WebFetch"   # no edit or write tools at all
+    assert {"Edit", "Write", "NotebookEdit", "Bash(gh api *)", "Bash(git push *)"} <= set(denied)
+    assert a[a.index("--add-dir") + 1] == str(ws) and a[a.index("--max-turns") + 1] == "15"
+    assert json.loads(fetch_cli.read_text())["cwd"].endswith(os.path.join("fetch", "OPTR-77"))  # a scratch folder per ticket
+    lines = [l for _, l in seen]
+    assert "▸ gh pr diff 512 --repo acme/admin" in lines
+    assert any(k == "denied" and "gh api -X POST" in l for k, l in seen)  # refused, and you can see it was
+    assert "▸ atlassian · getConfluencePage pageId=12345" in lines

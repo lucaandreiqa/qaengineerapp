@@ -45,6 +45,7 @@ class WorkflowConfig:
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5-5"
     claude_mode: str = "api"  # api (API key) | claude_code (the Claude Code CLI on this computer, your Claude plan) | off
+    claude_fetch: bool = True  # Claude Code may fetch missing data (read-only tools) when YourQA's lookups leave gaps
     mock_speed: float = 1.0
     auto_sync_minutes: int = 5  # 0 = off
     evidence_every_check: bool = False  # screenshots for passing checks too
@@ -106,5 +107,6 @@ class WorkflowConfig:
             anthropic_api_key=c.get("api_key", "") if c.get("enabled") else "",
             claude_mode=(c.get("mode") or "api") if c.get("enabled") else "off",
             anthropic_model=c.get("model") or "claude-sonnet-5-5",
+            claude_fetch=bool(c.get("fetch_missing", True)),
             mock_speed=float(os.environ.get("QA_APP_WORKFLOW_MOCK_SPEED", "1") or 1),
         )

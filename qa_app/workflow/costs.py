@@ -33,7 +33,7 @@ PRICES: list[tuple[str, float, float, float, float, float]] = [
 HAIKU_55_LONG = (0.5, 2.5, 0.625, 1, 0.05)
 STEP_NAMES = {"gather": "Gather requirements", "create-tests": "Create tests", "run-tests": "Run tests",
               "jira-comment": "Jira comment", "testrail": "TestRail cases",
-              "chat": "Chat with Claude"}
+              "chat": "Chat with Claude", "fetch": "Fetching data"}
 
 
 def _prices(model: str) -> Optional[tuple[float, float, float, float, float]]:

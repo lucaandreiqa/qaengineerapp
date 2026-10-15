@@ -641,6 +641,44 @@ class Workflow:
         sources.save(self.cfg, key, found)
         return found
 
+    async def _fetch(self, key: str, needs: list[str], step: str) -> str:
+        """Ask Claude to fetch what YourQA couldn't read (read-only, Claude Code mode). Each action shows live in the
+        ticket's terminal; the findings are kept with the lookups for later steps. Returns them as Markdown ("" if none)."""
+        cfg = self.cfg
+        if cfg.is_mock or not needs:
+            return ""
+        short = "; ".join(needs)[:240]
+        if not agent.can_fetch(cfg):
+            why = ("it needs Claude Code mode (Integrations > Claude)" if cfg.claude_mode != "claude_code"
+                   else "fetching is switched off on the Claude card")
+            self.say(key, f"YourQA couldn't read: {short}. Claude can't fetch it because {why}.", step)
+            return ""
+        from urllib.parse import urlparse
+        found = sources.load(cfg, key)
+        domains = sorted({(urlparse(u).hostname or "").lower() for u in found.links} - {""})
+        ctx = found.markdown("run-tests")  # what's already known, without diffs
+        self.say(key, f"Asking Claude to fetch what YourQA couldn't read: {short}", step)
+        self.term(key, "sys", f"$ claude -p (fetching, read-only) · {len(needs)} request{'s' if len(needs) != 1 else ''}")
+        loop = asyncio.get_running_loop()
+
+        def event(kind: str, line: str) -> None:
+            loop.call_soon_threadsafe(self.term, key, {"tool": "claude", "denied": "stall"}.get(kind, "err"), line)
+        try:
+            dirs = [d for d in (cfg.workspace, cfg.ticket_dir(key)) if d and d.exists()]
+            text = await agent.fetch_missing(cfg, key, needs, ctx, domains, dirs, event)
+        except Exception as e:
+            msg = (str(e).splitlines() or ["error"])[0][:200]
+            self.term(key, "err", f"Fetching failed: {msg}")
+            self.say(key, f"Claude couldn't fetch it: {msg}", step)
+            return ""
+        await asyncio.sleep(0)  # let the last terminal lines land
+        found = sources.load(cfg, key)
+        found.fetched.append({"needs": needs, "text": text, "at": time.time()})
+        sources.save(cfg, key, found)
+        first = next((l.strip("# ").strip() for l in text.splitlines() if l.strip()), "")
+        self.say(key, f"Claude fetched what it could ({len(text)} characters)" + (f": {first[:160]}" if first else "."), step)
+        return f"<fetched_by_claude>\n{text}\n</fetched_by_claude>" if text else ""
+
     # ---------------------------------------------------------------- background steps
     async def _gather(self, key: str) -> None:
         """Phase 1: context → classification and environment → scenarios → checklist → gate 1."""
@@ -693,7 +731,15 @@ class Workflow:
             await self.pause(2.5)
         else:
             found = await self._lookups(key, issue)
-            scenarios, sections, serial, analysis = await agent.plan_checklist(self.cfg, issue, t.env, sources_md=found.markdown("gather"))
+            gaps = found.gaps(t.env.url if t.env else "", tuple(c.get("url", "") for c in t.env_candidates))
+            if gaps and await self._fetch(key, gaps, "gather"):
+                found = sources.load(self.cfg, key)
+
+            async def more(needs: list[str]) -> str:
+                return await self._fetch(key, needs, "gather")
+            scenarios, sections, serial, analysis = await agent.plan_checklist(self.cfg, issue, t.env, sources_md=found.markdown("gather"),
+                                                                                on_need=more)
+            found = sources.load(self.cfg, key)
             if self.cfg.claude_ready:
                 self._used(key, "gather")
             extra = found.markdown("gather")
@@ -747,7 +793,9 @@ class Workflow:
         assert t
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
         self.say(key, f"Building the Playwright spec for {len(t.items())} checks.", "build")
-        await agent.build_spec(self.cfg, t, sources_md=sources.load(self.cfg, key).markdown("create-tests"))
+        async def more_for_spec(needs: list[str]) -> str:
+            return await self._fetch(key, needs, "build")
+        await agent.build_spec(self.cfg, t, sources_md=sources.load(self.cfg, key).markdown("create-tests"), on_need=more_for_spec)
         if self.cfg.claude_ready and not self.cfg.is_mock:
             self._used(key, "create-tests")
         await self.pause(2.6)
@@ -849,7 +897,10 @@ class Workflow:
             try:
                 errfile = self.cfg.ticket_dir(key) / f"{key}-errors.json"
                 details = json.loads(errfile.read_text(encoding="utf-8")) if errfile.exists() else {}
-                if await agent.review_results(self.cfg, t, details, sources_md=sources.load(self.cfg, key).markdown("run-tests")):
+                async def more_for_review(needs: list[str]) -> str:
+                    return await self._fetch(key, needs, "run")
+                if await agent.review_results(self.cfg, t, details, sources_md=sources.load(self.cfg, key).markdown("run-tests"),
+                                              on_need=more_for_review):
                     t.skills = {**t.skills, "run-tests": agent.skill_source("run-tests", self.cfg)}
             except Exception:  # the runner's own notes stay; the review is a refinement
                 log.exception("Result review failed for %s", key)

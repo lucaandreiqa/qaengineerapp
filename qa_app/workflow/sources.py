@@ -34,13 +34,50 @@ class Sources:
     feed: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)  # apps that aren't connected
+    links: list[str] = field(default_factory=list)    # every link on the ticket
+    key: str = ""
+    fetched: list[dict] = field(default_factory=list)  # what Claude fetched itself: {needs, text, at}
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Sources":
-        return cls(**{k: d.get(k, []) for k in ("prs", "pages", "cases", "feed", "problems", "missing")})
+        out = cls(**{k: d.get(k, []) for k in ("prs", "pages", "cases", "feed", "problems", "missing", "links", "fetched")})
+        out.key = d.get("key", "")
+        return out
+
+    def gaps(self, env_url: str = "", skip: tuple = ()) -> list[str]:
+        """What YourQA couldn't read itself, phrased as requests Claude can fetch (read-only). env_url and skip (links
+        YourQA already recognised as test environments) are not things to read."""
+        from urllib.parse import urlparse
+        out: list[str] = []
+        have = {(p["repo"].lower(), int(p["number"])) for p in self.prs}
+        for u in self.links:
+            m = PR_URL.search(u)
+            if m and (f"{m.group(1)}/{m.group(2)}".lower(), int(m.group(3))) not in have:
+                out.append(f"Read PR {m.group(0)}: description, commits, changed files, the full diff and review comments")
+        for p in self.prs:
+            for f in p.get("files", []):
+                if not f.get("patch") and f.get("status") != "removed" and (f.get("additions") or f.get("deletions")):
+                    out.append(f"Full diff of {f['name']} in {p['repo']}#{p['number']} (GitHub left it out because it is too large)")
+        if "GitHub" in self.missing and self.key:  # as YourQA does when GitHub is connected: linked PRs, then a key search
+            out.append(f"Find other pull requests that mention {self.key} (title, branch or description) and read the relevant ones")
+        read_pages = {pg.get("url", "") for pg in self.pages}
+        for u in self.links:
+            if PAGE_URL.search(u) and u not in read_pages and ("Confluence" in self.missing or any("Confluence" in x for x in self.problems)):
+                out.append(f"Read the Confluence page {u}")
+        env_hosts = {(urlparse(x).hostname or "").lower() for x in (env_url, *skip) if x}
+        other = []
+        for u in self.links:
+            host = (urlparse(u).hostname or "").lower()
+            if not host or host in env_hosts or PR_URL.search(u) or PAGE_URL.search(u):
+                continue
+            if host.endswith("atlassian.net") or host.endswith("github.com") or host in {h for h, _ in other}:
+                continue
+            other.append((host, u))
+        out += [f"Read {u} if it describes the change (a design, spec or document)" for _, u in other[:4]]
+        return list(dict.fromkeys(out))[:10]
 
     def markdown(self, step: str = "gather") -> str:
         """What Claude gets for a step. gather: everything; create-tests: PRs with fuller diffs and the pages;
@@ -83,6 +120,13 @@ class Sources:
                 out.append(f"### Confluence: {pg.get('title', '')}\n{pg.get('url', '')}\n{text}")
         if step == "gather" and self.cases:
             out.append("### TestRail cases that already exist (matching the ticket)\n" + "\n".join(f"- C{c.get('id')}: {c.get('title')}" for c in self.cases[:MAX_CASES]))
+        budget = 20000
+        for f in self.fetched:
+            text, cut = _cut(f.get("text", ""), min(8000, budget))
+            trimmed |= cut
+            budget -= len(text)
+            if text and budget >= 0:
+                out.append("### Fetched by Claude (" + "; ".join(f.get("needs", []))[:300] + ")\n" + text)
         for p in self.problems:
             out.append(f"- {p}")
         if self.missing:
@@ -97,8 +141,8 @@ class Sources:
 def lookup(*, key: str, title: str, ticket_text: str, github: Any = None, github_scope: Optional[list[str]] = None,
            confluence: Any = None, testrail_search: Optional[Callable[[str], list[dict]]] = None) -> Sources:
     """Pass None for an app that isn't connected. Blocking (network); run it off the event loop."""
-    s = Sources()
-    links = re.findall(r"https?://[^\s)>\]\"']+", ticket_text or "")
+    links = list(dict.fromkeys(u.rstrip(".,;:!?*_~") for u in re.findall(r"https?://[^\s)>\]\"'|]+", ticket_text or "")))
+    s = Sources(links=links, key=key)
     # ---- GitHub: PRs linked on the ticket first, then PRs that mention the key
     if github is None:
         s.missing.append("GitHub")

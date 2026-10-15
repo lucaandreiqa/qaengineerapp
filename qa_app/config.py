@@ -55,7 +55,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
                  "jira_column_statuses": ""},
     # Claude writes the scenarios, QA checklist and Playwright spec for each ticket.
     # mode "api": an Anthropic API key · "claude_code": the Claude Code CLI on this computer, signed in with your Claude plan
-    "claude": {"enabled": False, "mode": "api", "api_key": "", "model": "claude-sonnet-5-5"},
+    "claude": {"enabled": False, "mode": "api", "api_key": "", "model": "claude-sonnet-5-5", "fetch_missing": True},
 }
 
 SECRET_KEYS = {"api_token", "api_key", "client_secret", "webhook_url"}

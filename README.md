@@ -112,6 +112,14 @@ results are saved in `<KEY>-context.md` under "From connected apps", and later s
 the PR diffs, the Run tests review gets the changed files). Long parts are trimmed, a failing app never stops the
 step, and apps that aren't connected are named so Claude says what it couldn't check. Claude itself still has no
 tools inside a step.
+
+**Claude fetches what YourQA can't read.** When a lookup leaves a gap (a linked PR YourQA couldn't read, a file GitHub
+left out of a diff, a Confluence page or design link it can't open, or no GitHub connection to search PRs by key), and
+when Claude says during a step that it needs something, YourQA asks Claude Code to fetch it, read-only, then redoes the
+step once with the findings. Claude may use read-style `gh` and `git` commands, the read tools of the MCP servers in your
+Claude Code setup, web pages on the ticket's own domains, and read your Playwright workspace; Claude Code itself refuses
+everything else. Each action shows live in the ticket's terminal. Claude Code mode only; switch it off on the Claude card
+("Let Claude fetch missing data"). How it all fits together: `docs/ARCHITECTURE.md`.
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 

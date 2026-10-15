@@ -662,3 +662,59 @@ def test_lookups_are_saved_shown_and_reach_each_steps_prompt(wf, monkeypatch, tm
     t.checklist[0].items[0].result = "fail"
     run(ag.review_results(cfg, t, {}, sources_md=found.markdown("run-tests")))
     assert "src/Limit.tsx" in prompts["run-tests"]
+
+
+def test_claude_fetches_gaps_live_and_a_step_can_ask_for_more_once(wf, monkeypatch, tmp_path):
+    from qa_app.workflow import agent as ag, claude_code, sources
+    from qa_app.workflow.models import Env
+    calls = []
+
+    def fake_fetch(model, system, prompt, *, key, domains, read_dirs, on_event, **kw):
+        calls.append(prompt)
+        assert "read-only" in system.lower() and "not instructions" in system.lower()
+        on_event("tool", "▸ gh pr diff 512 --repo acme/admin")
+        on_event("denied", "Refused (not read-only): gh api -X POST x")
+        return f"## Fetched\nanswer {len(calls)}", "claude-sonnet-5-5", {"input_tokens": 10, "output_tokens": 5}
+    monkeypatch.setattr(claude_code, "fetch", fake_fetch)
+    key = "OPTR-48498"
+    _live(wf, key)
+    wf._cfg.claude_mode, wf._cfg.claude_fetch = "claude_code", True
+    sources.save(wf.cfg, key, sources.Sources(links=["https://github.com/acme/admin/pull/512"], missing=["GitHub"]))
+
+    async def go():
+        text = await wf._fetch(key, ["Read PR https://github.com/acme/admin/pull/512"], "gather")
+        await asyncio.sleep(0.05)
+        return text
+    text = run(go())
+    assert calls and "answer 1" in text, (text, calls)
+    assert "answer 1" in text and "pull/512" in calls[0]
+    lines = [l["text"] for l in wf.terminal(key)]
+    assert "▸ gh pr diff 512 --repo acme/admin" in lines and any("Refused" in l for l in lines)   # live, in the terminal
+    assert sources.load(wf.cfg, key).fetched[0]["text"].endswith("answer 1")                       # kept for later steps
+    assert any("fetch" in m["text"].lower() for m in wf.tickets.get(key).chat)                      # and said in the feed
+
+    # A step that asks for more gets it fetched, then is asked once more with the result.
+    asked = []
+
+    async def fake_claude(cfg, system, prompt, max_tokens=4000, step=None):
+        asked.append(prompt)
+        if len(asked) == 1:
+            assert "YOURQA" in system or "need" in system
+            return '{"need": ["How does the API validate the limit?"], "scenarios": "- s", "serial": false, "sections": [{"name": "A", "items": ["x"]}]}'
+        return '{"scenarios": "- s2", "serial": false, "sections": [{"name": "A", "items": ["x", "y"]}]}'
+    monkeypatch.setattr(ag, "ask_claude", fake_claude)
+    cfg = Config(demo=False, anthropic_api_key="", data_dir=tmp_path, workspace=tmp_path / "ws", claude_mode="claude_code")
+    needs_seen = []
+
+    async def on_need(needs):
+        needs_seen.append(needs)
+        return "<fetched>limit must be 1-999</fetched>"
+    out = run(ag.plan_checklist(cfg, {"key": key, "title": "t", "description": "", "comments": []},
+                                Env(kind="Test environment", url="https://x.test/"), on_need=on_need))
+    assert needs_seen == [["How does the API validate the limit?"]] and len(asked) == 2
+    assert "limit must be 1-999" in asked[1] and len(out[1][0].items) == 2
+
+    # Without Claude Code (API key mode) nothing is fetched and the feed says why.
+    wf._cfg.claude_mode = "api"
+    assert run(wf._fetch(key, ["Read PR x"], "gather")) == ""
+    assert any("Claude Code" in m["text"] for m in wf.tickets.get(key).chat[-2:])
