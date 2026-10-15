@@ -211,21 +211,63 @@ function schedule() {
   requestAnimationFrame(() => { pending = false; render(); });
 }
 
+/* Update the page in place: only what changed is touched, so spinners keep turning, images don't reload and
+   nothing flickers while live updates stream in. */
+function morphAttrs(from, to) {
+  for (const a of [...from.attributes]) if (!to.hasAttribute(a.name)) from.removeAttribute(a.name);
+  for (const a of [...to.attributes]) if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+}
+function morphNode(from, to) {
+  morphAttrs(from, to);
+  const tag = from.nodeName;
+  if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') {
+    if (tag === 'SELECT') morphChildren(from, to);
+    if (from !== document.activeElement) {
+      if (from.type === 'checkbox' || from.type === 'radio') from.checked = to.hasAttribute('checked');
+      else if (tag === 'TEXTAREA') { if (from.value !== to.value) from.value = to.value; }
+      else if (tag === 'SELECT') { const v = [...to.options].find((o) => o.hasAttribute('selected')); from.value = v ? v.value : (to.options[0] ? to.options[0].value : ''); }
+      else if (from.value !== (to.getAttribute('value') || '')) from.value = to.getAttribute('value') || '';
+    }
+    return;
+  }
+  morphChildren(from, to);
+}
+function sameKind(a, b) {
+  if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) return false;
+  if (a.nodeType !== 1) return true;
+  return (a.id || '') === (b.id || '') && (a.dataset.keep || '') === (b.dataset.keep || '');
+}
+function morphChildren(from, to) {
+  const olds = [...from.childNodes], news = [...to.childNodes];
+  news.forEach((nu, i) => {
+    const old = olds[i];
+    if (!old) from.appendChild(nu);
+    else if (!sameKind(old, nu)) from.replaceChild(nu, old);
+    else if (old.nodeType === 1) morphNode(old, nu);
+    else if (old.nodeValue !== nu.nodeValue) old.nodeValue = nu.nodeValue;
+  });
+  for (let i = news.length; i < olds.length; i++) olds[i].remove();
+}
+
 function render() {
   const a = document.activeElement;
   const focus = a && a.id ? { id: a.id, s: a.selectionStart, e: a.selectionEnd } : null;
   const scrolls = {};
-  document.querySelectorAll('[data-keep]').forEach((el) => { scrolls[el.dataset.keep] = [el.scrollLeft, el.scrollTop]; });
+  document.querySelectorAll('[data-keep]').forEach((el) => {  // measured before the update: was it at the bottom?
+    scrolls[el.dataset.keep] = [el.scrollLeft, el.scrollTop, el.scrollTop + el.clientHeight >= el.scrollHeight - 40];
+  });
   $app.dataset.theme = S.theme;
   document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
   const screen = { board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
-  $app.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewReportModal() + viewToast();
+  const next = document.createElement('div');
+  next.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewReportModal() + viewToast();
+  morphChildren($app, next);
   document.querySelectorAll('[data-keep]').forEach((el) => {
     const v = scrolls[el.dataset.keep];
-    if (v) { el.scrollLeft = v[0]; el.scrollTop = v[1]; }
-    if (el.dataset.stick === 'bottom' && (!v || v[1] + el.clientHeight >= el.scrollHeight - 40)) el.scrollTop = el.scrollHeight;
+    if (v && (el.scrollLeft !== v[0] || el.scrollTop !== v[1])) { el.scrollLeft = v[0]; el.scrollTop = v[1]; }
+    if (el.dataset.stick === 'bottom' && (!v || v[2]) && el.scrollTop + el.clientHeight < el.scrollHeight) el.scrollTop = el.scrollHeight;
   });
-  if (focus) {
+  if (focus && document.activeElement !== document.getElementById(focus.id)) {
     const el = document.getElementById(focus.id);
     if (el) {
       el.focus({ preventScroll: true });
