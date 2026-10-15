@@ -384,7 +384,9 @@ function viewBoard() {
 <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 ${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${onPlan(data.claude) ? '≈' : ''}${fmtUsd(data.claude.cost)} on this board${onPlan(data.claude) ? ' · your plan' : ''}</span>` : ''}
 <span class="pill" title="Auto mode never skips a review gate">${svg(IC.lock, 'ic ic-s')}Auto mode · 4 gates always stop</span>
-<span class="pill" role="status" title="${esc(data.syncError ? 'Automatic sync failed: ' + data.syncError : data.autoSync ? `Pulls new tickets every ${data.autoSync} min (Integrations → Testing board)` : 'Automatic sync is off (Integrations → Testing board)')}"><span class="d ${data.syncError ? 'd-err' : 'd-ok'}"></span>${esc(c.tracker || 'Jira')} · ${esc(c.project)} · ${esc(c.column)} · ${data.syncError ? 'sync failed' : ago(data.lastSync)}${data.autoSync ? ` · auto ${data.autoSync} min` : ''}</span>
+<span class="pill" role="status" title="${esc(`${c.tracker || 'Jira'} · ${c.project} · ${c.column}\n`
+  + (data.syncError ? 'Automatic sync failed: ' + data.syncError : data.autoSync ? `Syncs automatically every ${data.autoSync} min` : 'Automatic sync is off')
+  + ' (Integrations → Testing board)')}"><span class="d ${data.syncError ? 'd-err' : 'd-ok'}"></span>${data.syncError ? 'Sync failed' : ago(data.lastSync).replace(/^s/, 'S')}</span>
 <button type="button" class="btn" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic spin' : 'ic')}Sync now</button>
 </div>
 </header>
