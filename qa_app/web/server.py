@@ -638,12 +638,28 @@ def app_file(path: str):
 
 
 app.mount("/runs", StaticFiles(directory=str(RUNS_DIR), html=True, check_dir=False), name="runs")
-app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+class _Static(StaticFiles):
+    """The app's own files: the browser checks for a newer copy on every load (cheap, by ETag),
+    so an update shows after a reload instead of a stale cached script."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/static", _Static(directory=str(STATIC)), name="static")
 
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    # Version the script and styles by file time, so a changed file is a new URL the browser must fetch.
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    for name in ("app.js", "app.css", "tokens.css"):
+        f = STATIC / name
+        if f.exists():
+            page = page.replace(f"/static/{name}\"", f"/static/{name}?v={int(f.stat().st_mtime)}\"")
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 __all__ = ["app", "SECRET_KEYS"]
