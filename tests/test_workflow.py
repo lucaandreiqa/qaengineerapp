@@ -397,7 +397,8 @@ def test_chat_with_claude_suggests_actions_that_run_only_when_clicked(wf, monkey
         await settle(wf)
         t = wf.tickets.get(key)
         assert t.env.url == "https://pr-2.preview.acme.dev/" and t.chat[1]["actions"][0]["state"] == "applied"
-        assert t.chat[-1]["role"] == "event" and "Test on pr-2" in t.chat[-1]["text"]
+        assert any(m["role"] == "event" and "Test on pr-2" in m["text"] for m in t.chat)
+        assert any(m["role"] == "progress" and "Testing on https://pr-2.preview.acme.dev/" in m["text"] for m in t.chat)
         with pytest.raises(GateError, match="Already done"):
             await wf.chat_apply(key, 1, 0, t.stage, t.sub)
         with pytest.raises(GateError, match="still answering|Write a message"):
@@ -410,3 +411,61 @@ def test_chat_needs_claude_connected(wf):
     wf._cfg.claude_mode = "off"
     with pytest.raises(GateError, match="Connect Claude"):
         run(wf.chat_send("OPTR-48507", "hi"))
+
+
+def test_a_run_is_recorded_with_live_check_progress_and_summaries(wf):
+    from qa_app.workflow import history
+
+    async def go():
+        key = "OPTR-48498"  # demo ticket waiting at Gate 1
+        t = wf.tickets.get(key)
+        assert (t.stage, t.sub) == (0, "gate")
+        seen = []
+        orig = wf.patch
+
+        def spy(k, **f):  # watch the live updates the board receives
+            if k == key and "running_item" in f:
+                seen.append(f["running_item"])
+            return orig(k, **f)
+        wf.patch = spy
+        await wf.act(key, "approve_checklist", 0, "gate")
+        await settle(wf)
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if wf.tickets.get(key).sub == "gate":
+                break
+        wf.patch = orig
+        t = wf.tickets.get(key)
+        assert (t.stage, t.sub) == (2, "gate") and t.running_item == -1 and t.run_id
+        n = len(t.items())
+        assert [x for x in seen if x >= 0] == list(range(n))  # each check ran in turn, live
+        store = wf.history()
+        rec = store.get(t.run_id)
+        assert rec["mode"] == "demo" and rec["run_no"] == 1 and rec["trigger"] == "first" and rec["status"] in ("passed", "failed")
+        assert [i["result"] for i in rec["items"]] == [i.result for i in t.items()]
+        assert rec["counts"] == history.counts([{"result": i.result} for i in t.items()])
+        assert store.list(key=key)[0]["id"] == t.run_id and str(store.root).endswith("history/demo")
+        progress = [m["text"] for m in t.chat if m["role"] == "progress"]
+        assert any(p.startswith("Run 1 started") for p in progress) and any(p.startswith(f"Check {n} of {n}") for p in progress)
+        assert any(p.startswith("Run finished") for p in progress)
+        summary = [m for m in t.chat if m["role"] == "assistant"][-1]["text"]
+        assert "checks passed" in summary or "need a look" in summary
+    run(go())
+
+
+def test_a_run_that_cannot_start_is_recorded_as_an_error(wf, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("npx is not installed")
+    monkeypatch.setattr(agent, "run_spec", boom)
+    key = "OPTR-48498"
+    t = wf.tickets.get(key)
+    wf._cfg.demo = False  # a real run, with the board's demo tickets moved to the live store
+    wf.live_store.tickets[key] = t
+
+    async def go():
+        with pytest.raises(RuntimeError):
+            await wf._run(key)
+    run(go())
+    rec = wf.history().list(key=key)[0]
+    assert rec["status"] == "error" and "history/live" in str(wf.history().root)
+    assert wf.history().get(rec["id"])["error"] == "npx is not installed"

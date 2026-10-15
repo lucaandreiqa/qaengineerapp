@@ -1,0 +1,67 @@
+"""The ticket runner: generated settings, live events while Playwright runs, evidence mapped to checks."""
+from __future__ import annotations
+
+import asyncio
+import json
+import stat
+import sys
+
+from qa_app.workflow import playwright_run as pr
+
+FAKE = r'''#!PYTHON
+import json, sys, time, pathlib
+args = sys.argv[1:]
+cfg_path = pathlib.Path(args[args.index("--config") + 1])
+cfg = json.loads(cfg_path.read_text().split("module.exports = ", 1)[1].rstrip().rstrip(";"))
+out = pathlib.Path(cfg["reporter"][0][1]["out"]); res = pathlib.Path(cfg["reporter"][1][1]["outputFile"])
+art = pathlib.Path(cfg["outputDir"]); art.mkdir(parents=True, exist_ok=True)
+def w(ev):
+    with out.open("a") as f: f.write(json.dumps(ev) + "\n")
+w({"type": "start", "total": 2})
+w({"type": "begin", "n": 1, "title": "[1] Search ignores letter case"}); time.sleep(0.3)
+w({"type": "end", "n": 1, "title": "[1] Search ignores letter case", "status": "passed", "duration": 5, "error": "", "qa": "", "attachments": []})
+w({"type": "begin", "n": 2, "title": "[2] Empty search shows a hint"}); time.sleep(0.3)
+shot = art / "t2" / "test-failed-1.png"; shot.parent.mkdir(parents=True, exist_ok=True); shot.write_bytes(b"png")
+w({"type": "end", "n": 2, "title": "[2] Empty search shows a hint", "status": "failed", "duration": 7,
+   "error": "expect(locator).toBeVisible() failed", "qa": "", "attachments": [
+   {"name": "screenshot", "path": str(shot), "contentType": "image/png"},
+   {"name": "trace", "path": "/etc/passwd", "contentType": "application/zip"}]})
+w({"type": "done", "status": "failed"})
+res.write_text(json.dumps({"suites": [{"specs": [
+  {"title": "[1] Search ignores letter case", "tests": [{"results": [{"status": "passed"}]}]},
+  {"title": "[2] Empty search shows a hint", "tests": [{"results": [{"status": "failed", "error": {"message": "expect(locator).toBeVisible() failed"}}]}]}]}]}))
+sys.exit(1)
+'''
+
+
+def test_config_is_plain_commonjs_with_evidence_and_session(tmp_path):
+    state = tmp_path / "storage-state.json"
+    state.write_text("{}")
+    js = pr.config_js(tmp_path / "run", tmp_path / "tickets" / "K-1", ["K-1.spec.ts"], "https://www.google.com/", state, False)
+    cfg = json.loads(js.split("module.exports = ", 1)[1].rstrip().rstrip(";"))
+    assert "require(" not in js and "import " not in js  # loadable from outside the workspace
+    assert cfg["use"] == {"screenshot": "only-on-failure", "video": "retain-on-failure", "trace": "retain-on-failure",
+                          "baseURL": "https://www.google.com/", "storageState": str(state)}
+    assert cfg["testMatch"] == ["K-1.spec.ts"] and cfg["outputDir"].endswith("run/artifacts") and cfg["workers"] == 1
+    every = json.loads(pr.config_js(tmp_path, tmp_path, [], "", None, True).split("module.exports = ", 1)[1].rstrip().rstrip(";"))
+    assert every["use"]["screenshot"] == "on" and "storageState" not in every["use"] and "baseURL" not in every["use"]
+    assert pr.result_of("passed") == "pass" and pr.result_of("timedOut") == "fail" and pr.result_of("passed", "blocked: no data") == "blocked"
+
+
+def test_run_streams_events_and_maps_evidence_to_checks(tmp_path):
+    npx = tmp_path / "npx"
+    npx.write_text(FAKE.replace("#!PYTHON", "#!" + sys.executable))
+    npx.chmod(npx.stat().st_mode | stat.S_IEXEC)
+    got = []
+
+    async def on_event(ev):
+        got.append((ev["type"], ev.get("n"), ev.get("result")))
+
+    run_dir = tmp_path / "history" / "K-1-20261015"
+    out = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(pr.run(
+        run_dir=run_dir, test_dir=tmp_path, specs=["K-1.spec.ts"], workspace=tmp_path / "ws", base_url="https://x.test/",
+        storage_state=None, every_check=False, extra_env={}, on_event=on_event, npx=str(npx), poll=0.05))
+    assert got == [("start", None, None), ("begin", 1, None), ("end", 1, "pass"), ("begin", 2, None), ("end", 2, "fail"), ("done", None, None)]
+    assert out["exit_code"] == 1 and out["report"]["suites"]
+    assert out["attachments"] == {2: [{"kind": "screenshot", "path": "artifacts/t2/test-failed-1.png", "name": "screenshot"}]}  # outside files dropped
+    assert out["errors"][2].startswith("expect") and (run_dir / "yourqa-reporter.js").exists()

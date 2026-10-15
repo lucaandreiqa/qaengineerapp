@@ -313,30 +313,23 @@ def parse_playwright_json(report: dict, n_items: int, details: Optional[dict] = 
     return out
 
 
-async def run_spec(cfg: Config, t: Ticket, log) -> tuple[list[tuple[str, str]], list[CleanupItem]]:
-    npx = shutil.which("npx")
-    if not npx:
-        raise RuntimeError("npx is not installed; Node.js and @playwright/test are needed to run ticket specs")
+async def run_spec(cfg: Config, t: Ticket, run_dir: Path, on_event) -> dict:
+    """Run the ticket's spec(s) into a History run folder (see playwright_run.py), each check reported as it ends.
+    Returns {results [(result, bug)] per item, cleanup, errors {n: text}, attachments {n: [...]}, exit_code}."""
+    from . import playwright_run
     tdir = cfg.ticket_dir(t.key)
     cleanup_file = tdir / f"{t.key}-cleanup.jsonl"
     cleanup_file.unlink(missing_ok=True)
-    specs = [str(tdir / f"{t.key}.spec.ts")] + ([str(tdir / f"{t.key}.serial.spec.ts")] if t.serial else [])
-    env = {**os.environ, "QA_CLEANUP_FILE": str(cleanup_file), "PLAYWRIGHT_JSON_OUTPUT_NAME": str(tdir / "results.json")}
-    if t.env and t.env.url.startswith("http"):
-        env["BASE_URL"] = t.env.url
-    state = cfg.auth_dir / "storage-state.json"
-    if state.exists():
-        env["QA_STORAGE_STATE"] = str(state)
-    proc = await asyncio.create_subprocess_exec(npx, "playwright", "test", *specs, "--reporter=json", cwd=str(cfg.workspace),
-                                                env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await proc.communicate()
-    raw = (tdir / "results.json").read_text(encoding="utf-8") if (tdir / "results.json").exists() else stdout.decode("utf-8", "replace")
-    try:
-        report = json.loads(raw)
-    except json.JSONDecodeError:
-        raise RuntimeError("Playwright did not produce a JSON report: " + stderr.decode("utf-8", "replace")[-400:])
+    specs = [f"{t.key}.spec.ts"] + ([f"{t.key}.serial.spec.ts"] if t.serial else [])
+    out = await playwright_run.run(
+        run_dir=run_dir, test_dir=tdir, specs=specs, workspace=cfg.workspace,
+        base_url=t.env.url if t.env and t.env.url.startswith("http") else "",
+        storage_state=cfg.auth_dir / "storage-state.json", every_check=cfg.evidence_every_check,
+        extra_env={"QA_CLEANUP_FILE": str(cleanup_file)}, on_event=on_event)
+    if out["report"] is None:
+        raise RuntimeError("Playwright did not produce a report: " + (out["stderr"] or f"exit code {out['exit_code']}")[-400:])
     details: dict[int, str] = {}
-    results = parse_playwright_json(report, len(t.items()), details)
+    results = parse_playwright_json(out["report"], len(t.items()), details)
     (tdir / f"{t.key}-errors.json").write_text(json.dumps(details, indent=1), encoding="utf-8")
     cleanup = []
     if cleanup_file.exists():
@@ -344,8 +337,10 @@ async def run_spec(cfg: Config, t: Ticket, log) -> tuple[list[tuple[str, str]], 
             if line.strip():
                 c = json.loads(line)
                 cleanup.append(CleanupItem(name=c["name"], value=str(c["value"]), reread=bool(c.get("reread", True))))
-    log(f"Playwright exited {proc.returncode}")
-    return results, cleanup
+    errors = {i + 1: v for i, v in details.items()}
+    errors.update(out["errors"])
+    return {"results": results, "cleanup": cleanup, "errors": errors, "attachments": out["attachments"],
+            "exit_code": out["exit_code"]}
 
 
 def apply_results(t: Ticket, results: list[tuple[str, str]]) -> None:

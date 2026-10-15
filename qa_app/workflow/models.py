@@ -144,6 +144,8 @@ class Ticket(BaseModel):
     error: str = ""
     pr_url: str = ""
     updated: float = 0.0
+    run_id: str = ""        # the latest run's record in History
+    running_item: int = -1  # index of the check running right now (-1 when idle)
     chat: list[dict] = Field(default_factory=list)  # the ticket's chat with Claude (chat.message), suggested actions included
     chat_busy: bool = False                          # Claude is writing a reply
     # Demo mode only: what the simulated run reports. Never shown before a run.

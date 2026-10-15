@@ -24,12 +24,14 @@ from ..config import load_settings
 from . import agent, sso
 from .clients import MockJira, MockTestRail, RealJira, RealTestRail, normalise
 from . import chat as chat_mod
-from . import costs, ticket_context
+from . import costs, history, ticket_context
 from .models import WORKING_SUBS, Env, Ticket, type_label
 from .settings import WorkflowConfig
 from .store import TicketStore, bus
 
 log = logging.getLogger("qa.workflow")
+
+RESULT_WORD = {"pass": "passed", "fail": "failed", "partial": "partial", "blocked": "blocked", "nt": "not tested"}
 
 # The single action each waiting state accepts.
 ACTIONS: dict[tuple[int, str], str] = {
@@ -67,11 +69,26 @@ class Workflow:
         self.mock_testrail = mock_testrail or MockTestRail()
         self.tasks: dict[str, asyncio.Task] = {}
         self.chat_tasks: dict[str, asyncio.Task] = {}  # Claude's chat replies, apart from the steps
+        self._next_trigger: dict[str, str] = {}  # why the next run of a ticket happens (History)
+        self._stores: dict[str, "history.RunStore"] = {}
         self.toast: Callable[[str], None] = lambda msg: bus.publish({"type": "toast", "message": msg})
         self.sync_error = ""          # the last automatic sync's error, shown on the board until one works
         self._sync_failed_at = 0.0
         self._syncing = False
         agent.usage_listeners.append(self._on_usage)
+
+    # ---------------------------------------------------------------- history and the ticket's live feed
+    def history(self) -> "history.RunStore":
+        root = self.cfg.history_dir
+        if str(root) not in self._stores:
+            self._stores[str(root)] = history.RunStore(root)
+        return self._stores[str(root)]
+
+    def say(self, key: str, text: str, step: str = "", role: str = "progress") -> None:
+        """A line in the ticket's feed (the chat pane): where the ticket is and what is happening."""
+        t = self.tickets.get(key)
+        if t:
+            self.patch(key, chat=(t.chat + [chat_mod.message(role, text, step=step)])[-chat_mod.MAX_MESSAGES:])
 
     def _on_usage(self, key: str, step: str, model: str, usage: dict, billing: str = "api") -> None:
         """Keep each Claude call's tokens and cost on its ticket (redos add to it)."""
@@ -116,7 +133,13 @@ class Workflow:
     # ---------------------------------------------------------------- lifecycle
     def resume(self) -> None:
         """Restart background work for tickets that were mid-step when the app stopped."""
+        try:
+            self.history().close_unfinished()
+        except Exception:
+            log.exception("Could not close unfinished runs")
         for t in self.tickets.all():
+            if t.running_item != -1:
+                self.patch(t.key, running_item=-1)
             if t.chat_busy:  # a chat reply that was cut off by the restart
                 self.patch(t.key, chat_busy=False, chat=t.chat + [chat_mod.message("assistant", "The app restarted before I answered. Ask again.", error=True)])
             if t.sub in WORKING_SUBS and not t.error:
@@ -345,6 +368,7 @@ class Workflow:
         elif kind == "retry":
             await self.act(key, "retry", stage, sub)
         elif kind == "rerun_tests":
+            self._next_trigger[key] = "rerun_chat"
             self.patch(key, stage=2, sub="working", doing=f"Running {key}.spec.ts again", error="")
             self.spawn(key, self._run(key))
         elif kind == "set_checklist":
@@ -387,6 +411,7 @@ class Workflow:
         keep_env = t.env if (t.env and t.env.source.startswith("you") and not p.get("refind_env")) else None
         if p.get("env_url"):  # "Change environment": test on this address from now on
             keep_env = self._chosen_env(t, str(p["env_url"]))
+            self._next_trigger[t.key] = "after_env_change"
         checklist: list = []
         if self.cfg.is_mock:  # demo: keep the sample items (their simulated results are tied to them)
             from .models import CheckItem, Section
@@ -420,6 +445,7 @@ class Workflow:
     async def _a_approve_checklist(self, t: Ticket, p: dict) -> Ticket:
         t = self.patch(t.key, stage=1, sub="working", doing=f"Building {t.key}.spec.ts", error="")
         self.spawn(t.key, self._build_and_run(t.key))
+        self.say(t.key, "You approved the checklist (Gate 1).", "gather")
         self.toast(f"Gate 1 approved · building and running {t.key}")
         return t
 
@@ -445,6 +471,7 @@ class Workflow:
             log.exception("Comment drafting failed for %s", t.key)
             comment = agent.comment_text(t, self.cfg)
         t = self.patch(t.key, stage=3, sub="comment", comment=comment)
+        self.say(t.key, "You approved the results (Gate 2). The Jira comment is drafted for your review.", "jira")
         self.toast(f"Gate 2 approved · comment drafted for {t.key}")
         return t
 
@@ -457,6 +484,7 @@ class Workflow:
         transitions = [tr["name"] for tr in await self._call(jira.get_transitions, t.key)]
         target = t.target if t.target in transitions else ""
         t = self.patch(t.key, sub="transition", comment=text, comment_at=now_hhmm(), transitions=transitions, target=target)
+        self.say(t.key, "Comment posted on the ticket. Moving it needs its own approval (Gate 3b).", "jira")
         self.toast(f"Comment posted on {t.key} · the move needs its own approval")
         return t
 
@@ -476,6 +504,7 @@ class Workflow:
         section = t.section or self._section_for(t)
         t = self.patch(t.key, stage=4, sub="drafting", status=status or target, section=section, error="")
         self.spawn(t.key, self._draft(t.key))
+        self.say(t.key, f"Ticket moved to {target}. Drafting TestRail cases.", "jira")
         self.toast(f"{t.key} moved to {target} · drafting TestRail cases")
         return t
 
@@ -526,6 +555,14 @@ class Workflow:
                                                                ("status", "status"), ("status_cat", "status_cat"))
                            if issue["context"].get(v)} if issue.get("context") else {}))
             agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue))
+            ctx = issue.get("context") or {}
+            parts = [f"{len(ctx.get('comments') or [])} comment{'s' if len(ctx.get('comments') or []) != 1 else ''}",
+                     "a description" if ctx.get("description") else "no description"]
+            if ctx.get("acceptance_criteria"):
+                parts.append("acceptance criteria")
+            if ctx.get("attachments"):
+                parts.append(f"{len(ctx['attachments'])} attachment(s)")
+            self.say(key, f"Read {key}: " + ", ".join(parts) + ".", "gather")
             await self.pause(2.5)
         if t.p1 <= 1 or self.tickets.get(key).env is None:  # type: ignore[union-attr]
             self.patch(key, p1=1, doing="Classifying and resolving the environment",
@@ -538,9 +575,13 @@ class Workflow:
                 env = found_env
                 if env is None:
                     self.patch(key, sub="blocked", p1=1, doing=reason)
+                    self.say(key, reason, "gather")
                     self.toast(f"{key} needs an environment")
                     return
                 self.patch(key, env=env)
+                self.say(key, f"Testing on {env.url} ({env.source or env.kind}).", "gather")
+            else:
+                self.say(key, f"Testing on {env.url} (" + ("chosen by you" if env.source.startswith("you") else env.source or env.kind) + ").", "gather")
         self.patch(key, p1=2, doing="Writing scenarios", pr_url=issue.get("pr_url", ""))
         t = self.tickets.get(key)
         assert t and t.env
@@ -559,6 +600,9 @@ class Workflow:
         agent.write_file(self.cfg, key, f"{key}-qa-checklist.md", agent.checklist_md(t))
         await self.pause(1.5)
         self.patch(key, sub="gate", doing="")
+        n = len(t.items())
+        self.say(key, f"Checklist ready: {n} check{'s' if n != 1 else ''} in {len(t.checklist)} section{'s' if len(t.checklist) != 1 else ''}. Waiting for your review (Gate 1).", "gather")
+        self.say(key, self._plan_summary(t, scenarios), "gather", role="assistant")
         self.toast(f"{key} checklist ready for review")
 
     def _used(self, key: str, step: str) -> None:
@@ -594,42 +638,95 @@ class Workflow:
         t = self.tickets.get(key)
         assert t
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
+        self.say(key, f"Building the Playwright spec for {len(t.items())} checks.", "build")
         await agent.build_spec(self.cfg, t)
         if self.cfg.claude_ready and not self.cfg.is_mock:
             self._used(key, "create-tests")
         await self.pause(2.6)
+        self.say(key, f"Spec ready: {key}.spec.ts" + (" and a serial spec for multi-user checks" if t.serial else "") + ".", "build")
         needs_sso = t.needs_sso if self.cfg.is_mock else not sso.has_session(self.cfg.auth_dir)
         if needs_sso:
             self.patch(key, stage=2, sub="sso", doing="")
             if not self.cfg.is_mock and t.env and t.env.url.startswith("http"):
                 await sso.open_login(key, t.env.url)
+            self.say(key, "Waiting for you to sign in (SSO) in the browser window that opened.", "run")
             self.toast(f"{key} needs an SSO sign-in")
             return
         await self._run(key)
 
     async def _run(self, key: str) -> None:
-        """Phase 2: run, fill in the checklist, write bug notes and the report, revert settings."""
+        """Phase 2: run (each check reported live), fill in the checklist, write bug notes and the report,
+        revert settings, and record the run in History with its evidence."""
         agent.CURRENT_TICKET.set(key)
         t = self.tickets.get(key)
         assert t
-        self.patch(key, stage=2, sub="working", doing=f"Running {key}.spec.ts on {agent.env_name(t, self.cfg)}")
-        if self.cfg.is_mock:
-            await self.pause(3.0)
-            results = [(r[0], r[1]) for r in t.mock_results] or [("nt", "") for _ in t.items()]
-            cleanup, left = t.mock_cleanup, t.mock_left
-        else:
-            results, cleanup = await agent.run_spec(self.cfg, t, lambda m: log.info("%s: %s", key, m))
-            left = t.left
+        store = self.history()
+        trigger = self._next_trigger.pop(key, None) or ("first" if not store.runs_for(key) else "redo")
+        tdir = self.cfg.ticket_dir(key)
+        spec_files = [tdir / f"{key}.spec.ts"] + ([tdir / f"{key}.serial.spec.ts"] if t.serial else [])
+        run_id = store.start(t, trigger, "demo" if self.cfg.is_mock else "live", project=self.cfg.jira_project,
+                             account=agent.who(self.cfg), spec_files=spec_files)
+        started = time.time()
+        items = t.items()
+        for i in items:  # a fresh run: nothing is tested yet
+            i.result, i.bug, i.severity = "nt", "", None
+        self.patch(key, stage=2, sub="working", run_id=run_id, running_item=-1, checklist=t.checklist, ran=False,
+                   doing=f"Running {key}.spec.ts on {agent.env_name(t, self.cfg)}")
+        self.say(key, f"Run {store.get(run_id)['run_no']} started: {len(items)} checks on {agent.env_name(t, self.cfg)}.", "run")
+
+        async def on_event(ev: dict) -> None:
+            n = ev.get("n")
+            if not n or not 1 <= int(n) <= len(items):
+                return
+            n = int(n)
+            cur = self.tickets.get(key)
+            if not cur:
+                return
+            text = cur.items()[n - 1].text
+            if ev.get("type") == "begin":
+                self.patch(key, running_item=n - 1, doing=f"Check {n} of {len(items)}: {text}")
+            elif ev.get("type") == "end":
+                res = ev.get("result", "nt")
+                cl = [s.model_copy(deep=True) for s in cur.checklist]
+                flat = [i for s in cl for i in s.items]
+                flat[n - 1].result = res  # type: ignore[assignment]
+                flat[n - 1].bug = (ev.get("error") or "").splitlines()[0][:300] if res == "fail" else flat[n - 1].bug
+                self.patch(key, checklist=cl, running_item=-1)
+                store.item_result(run_id, n, res, ev.get("error", ""), ev.get("attachments"))
+                self.say(key, f"Check {n} of {len(items)}: {text} · {RESULT_WORD.get(res, res)}", "run")
+
+        try:
+            if self.cfg.is_mock:
+                sim = [(r[0], r[1]) for r in t.mock_results] or [("nt", "") for _ in items]
+                for n, (res, bug) in enumerate(sim, start=1):
+                    await on_event({"type": "begin", "n": n})
+                    await self.pause(0.6)
+                    await on_event({"type": "end", "n": n, "result": res, "error": bug if res == "fail" else ""})
+                results, cleanup, left = sim, t.mock_cleanup, t.mock_left
+                errors, atts, exit_code = {}, {}, 0 if all(r == "pass" for r, _ in sim) else 1
+            else:
+                out = await agent.run_spec(self.cfg, t, store.dir(run_id), on_event)
+                results, cleanup, left = out["results"], out["cleanup"], t.left
+                errors, atts, exit_code = out["errors"], out["attachments"], out["exit_code"]
+        except asyncio.CancelledError:
+            store.fail(run_id, "The run was stopped", status="stopped")
+            self.patch(key, running_item=-1)
+            raise
+        except Exception as e:
+            store.fail(run_id, str(e))
+            self.patch(key, running_item=-1)
+            self.say(key, f"The run couldn't finish: {(str(e).splitlines() or ['error'])[0][:200]}", "run")
+            raise
         t = self.tickets.get(key)
         assert t
         t = t.model_copy(deep=True)
         agent.apply_results(t, results)
-        t.cleanup, t.left, t.ran = cleanup, left, True
+        t.cleanup, t.left, t.ran, t.running_item = cleanup, left, True, -1
         if not self.cfg.is_mock and self.cfg.claude_ready:
             self.patch(key, doing="Claude is reviewing the failures with the Run tests skill")
             try:
-                errors = self.cfg.ticket_dir(key) / f"{key}-errors.json"
-                details = json.loads(errors.read_text(encoding="utf-8")) if errors.exists() else {}
+                errfile = self.cfg.ticket_dir(key) / f"{key}-errors.json"
+                details = json.loads(errfile.read_text(encoding="utf-8")) if errfile.exists() else {}
                 if await agent.review_results(self.cfg, t, details):
                     t.skills = {**t.skills, "run-tests": agent.skill_source("run-tests", self.cfg)}
             except Exception:  # the runner's own notes stay; the review is a refinement
@@ -638,7 +735,45 @@ class Workflow:
         agent.write_file(self.cfg, key, f"{key}-report.md", agent.report_md(t, self.cfg))
         t.sub, t.doing = "gate", ""
         self.tickets.put(t)
+        usage = [u for u in t.usage if (u.get("at") or 0) >= started]
+        rec = store.finish(run_id, t, cleanup=cleanup, exit_code=exit_code, errors=errors, attachments=atts, usage=usage)
+        try:
+            store.prune_evidence(key, self.cfg.evidence_keep_runs)
+        except Exception:
+            log.exception("Evidence pruning failed for %s", key)
+        c = rec["counts"]
+        self.say(key, f"Run finished: {c['pass']} passed, {c['fail']} failed" + (f", {c['partial']} partial" if c["partial"] else "")
+                 + (f", {c['blocked']} blocked" if c["blocked"] else "") + ". Waiting for your review (Gate 2).", "run")
+        self.say(key, self._run_summary(t), "run", role="assistant")
         self.toast(f"{key} results ready for review")
+
+    @staticmethod
+    def _plan_summary(t: Ticket, scenarios: str) -> str:
+        lines = [f"Here's what I'll test on **{t.env.url if t.env else 'the environment'}**:"]
+        for s in t.checklist:
+            lines.append(f"- **{s.name}**: {len(s.items)} check{'s' if len(s.items) != 1 else ''}")
+        if t.serial:
+            lines.append("- Some checks need two sessions, so they run in a separate serial spec.")
+        oq = re.search(r"open questions?:?\s*\n(.+)", scenarios or "", re.I | re.S)
+        if oq:
+            qs = [q.strip("-• ").strip() for q in oq.group(1).splitlines() if q.strip().startswith(("-", "•", "*"))][:3]
+            if qs:
+                lines.append("\nOpen questions from the ticket:")
+                lines += [f"- {q}" for q in qs]
+        lines.append("\nReview the checklist, then approve it to build and run the tests. Ask me if you want checks added or changed.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _run_summary(t: Ticket) -> str:
+        items = t.items()
+        bad = [(n, i) for n, i in enumerate(items, start=1) if i.result in ("fail", "partial", "blocked")]
+        if not bad:
+            return f"All {len(items)} checks passed. Review the results, then approve to draft the Jira comment."
+        out = [f"{len(items) - len(bad)} of {len(items)} checks passed. These need a look:"]
+        for n, i in bad[:8]:
+            out.append(f"- **Check {n}** ({RESULT_WORD.get(i.result, i.result)}): {i.text}" + (f": {i.bug}" if i.bug else ""))
+        out.append("\nOpen a failed check to see its screenshot and error, or ask me whether it's a real bug or a test problem.")
+        return "\n".join(out)
 
     def _section_for(self, t: Ticket) -> str:
         area = {"FE": "Frontend", "BE": "Backend", "FE+BE": "Frontend and backend"}.get(t.type, self.cfg.jira_project or "QA")
@@ -665,4 +800,5 @@ class Workflow:
         t = self.patch(key, section=section, cases=fresh, dups=len(drafts) - len(fresh))
         agent.write_file(self.cfg, key, f"{key}-testrail-cases.md", agent.cases_md(t))
         self.patch(key, sub="gate")
+        self.say(key, f"TestRail draft ready: {len(fresh)} case{'s' if len(fresh) != 1 else ''} in {section}. Waiting for your review (Gate 4).", "testrail")
         self.toast(f"{key} TestRail draft ready for review")

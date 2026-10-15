@@ -38,7 +38,10 @@ DEFAULT_SETTINGS: dict[str, dict] = {
     # demo=True uses sample tickets and simulated Jira/TestRail, so nothing real is touched.
     "workflow": {"enabled": True, "demo": True, "tracker": "jira",
                  # Pull the board column every N minutes while a real board is connected (0 = only "Sync now").
-                 "auto_sync_minutes": 5, "jira_project": "OPTR", "jira_column": "Testing",
+                 "auto_sync_minutes": 5,
+                 # Evidence per run: screenshots for every check (not only failures); how many runs per ticket keep it.
+                 "evidence_every_check": False, "evidence_keep_runs": 5,
+                 "jira_project": "OPTR", "jira_column": "Testing",
                  "test_account": "", "test_ou": "", "comment_signature": "Commented by YourQA",
                  # Where to test when the ticket names no environment: used only once a ticket is merged/done.
                  "default_env_url": "", "default_env_name": "",

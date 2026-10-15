@@ -47,6 +47,8 @@ CATALOGUE: list[dict[str, Any]] = [
                 {"k": "auto_sync_minutes", "label": "Sync the board automatically", "options": [
                     {"v": "0", "label": "Off (Sync now only)"}, {"v": "2", "label": "Every 2 minutes"}, {"v": "5", "label": "Every 5 minutes"},
                     {"v": "10", "label": "Every 10 minutes"}, {"v": "15", "label": "Every 15 minutes"}, {"v": "30", "label": "Every 30 minutes"}]},
+                {"k": "evidence_every_check", "label": "Evidence: screenshot every check (not only failures)", "check": True, "full": True},
+                {"k": "evidence_keep_runs", "label": "Keep evidence for the last N runs of each ticket", "ph": "5"},
                 {"k": "test_account", "label": "Test account (SSO)"},
                 {"k": "test_ou", "label": "Test scope (optional)", "ph": "e.g. a test store, tenant or workspace"},
                 {"k": "comment_signature", "label": "Comment signature"},

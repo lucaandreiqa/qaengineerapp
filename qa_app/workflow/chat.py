@@ -14,7 +14,7 @@ from typing import Optional
 
 from .models import Ticket, type_label
 
-MAX_MESSAGES = 120
+MAX_MESSAGES = 300  # chat, progress lines and summaries
 HISTORY = 20  # earlier messages Claude sees
 
 LANES = ["Gather requirements", "Create tests", "Run tests", "Comment & move ticket", "Update TestRail tests"]

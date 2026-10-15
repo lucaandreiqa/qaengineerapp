@@ -47,6 +47,8 @@ class WorkflowConfig:
     claude_mode: str = "api"  # api (API key) | claude_code (the Claude Code CLI on this computer, your Claude plan) | off
     mock_speed: float = 1.0
     auto_sync_minutes: int = 5  # 0 = off
+    evidence_every_check: bool = False  # screenshots for passing checks too
+    evidence_keep_runs: int = 5         # runs per ticket that keep screenshots, videos, traces and the HTML report
     data_dir: Path = WORKFLOW_DIR
 
     @property
@@ -70,6 +72,11 @@ class WorkflowConfig:
     def auth_dir(self) -> Path:
         return self.data_dir / "auth"
 
+    @property
+    def history_dir(self) -> Path:
+        """Ticket run records (History); demo runs apart from real ones."""
+        return self.data_dir / "history" / ("demo" if self.is_mock else "live")
+
     def ticket_dir(self, key: str) -> Path:
         return self.workspace / "tests" / "tickets" / key
 
@@ -83,6 +90,8 @@ class WorkflowConfig:
             w = {**w, "default_env_url": "https://staging.shop-demo.test/", "default_env_name": "shared staging"}
         return cls(
             demo=demo, jira_project=w.get("jira_project") or "OPTR", auto_sync_minutes=_minutes(w.get("auto_sync_minutes", 5)),
+            evidence_every_check=bool(w.get("evidence_every_check", False)),
+            evidence_keep_runs=max(1, _minutes(w.get("evidence_keep_runs", 5)) or 5),
             jira_column=w.get("jira_column") or "Testing", test_account=w.get("test_account", ""),
             test_ou=w.get("test_ou", ""), signature=_signature(w.get("comment_signature")),
             default_env_url=str(w.get("default_env_url") or "").strip(),
