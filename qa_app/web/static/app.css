@@ -182,6 +182,12 @@ html,body{background:#0B0C0E}
 .ctx-k{flex:0 0 92px;color:var(--muted);font-size:12px}
 .ctx-v{flex:1;min-width:0;line-height:1.5;overflow-wrap:anywhere}
 .env-cand{gap:10px;align-items:center}
+.env-cand.is-sug{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.env-tag{flex:none;height:20px;padding:0 7px;border-radius:5px;display:inline-flex;align-items:center;font-size:11px;font-weight:600;background:var(--raised);color:var(--muted);border:1px solid var(--border)}
+.env-tag.env-sug{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--fg);border-color:transparent}
+.env-tag.env-prod{background:var(--major-bg);color:var(--major);border-color:transparent}
+.env-more{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:4px 0;border:0;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
+.env-more:hover{color:var(--fg)}
 
 /* skills */
 .sk-wrap{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;align-items:start}

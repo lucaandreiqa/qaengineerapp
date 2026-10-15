@@ -37,14 +37,19 @@ def test_noise_links_are_not_environments():
     c = ctx(description="Design https://www.figma.com/file/abc and spec https://acme.atlassian.net/wiki/x and "
                         "code https://github.com/acme/web/pull/12 screenshot https://cdn.acme.com/shot.png",
             comments=["See https://docs.google.com/document/d/1", "Sentry https://acme.sentry.io/issues/9"])
-    assert envs.find(c, jira_host="acme.atlassian.net") == []
+    found = envs.find(c, jira_host="acme.atlassian.net")
+    assert len(found) == 6 and all(x.other for x in found)  # listed for the user, never suggested or used
+    assert best(c)[0] is None and envs.suggest(found) is None and envs.likely(found) == []
+    assert {x.why[0] for x in found} >= {"usually not an environment (the Jira site)", "usually not an environment (a file)",
+                                         "usually not an environment (a tool or docs link)"}
 
 
 def test_newest_comment_wins_and_unclear_links_are_offered_not_used():
     c = ctx(comments=[{"body": "Deployed to https://pr-1.preview.acme.dev", "author": "Ana", "created": "2026-10-10"},
                       {"body": "Redeployed after the fix: https://pr-2.preview.acme.dev", "author": "Ben", "created": "2026-10-14"}])
-    app, _, found = best(c)
-    assert app == "https://pr-2.preview.acme.dev/" and found[0].source == "comment by Ben · 2026-10-14"
+    app, _, found = best(c)  # two deploy links: the user chooses, the newest is suggested
+    assert app is None and found[0].source == "comment by Ben · 2026-10-14"
+    assert envs.suggest(found).url == "https://pr-2.preview.acme.dev/" and found[0].suggested and not found[1].suggested
     c = ctx(description="Customers reported it on https://www.acme.com/checkout")  # production, no env words
     app, _, found = best(c)
     assert app is None and found and found[0].prod  # listed for the user, never used on its own
@@ -94,13 +99,14 @@ def test_a_comment_that_is_just_a_link_is_used_even_typed_without_https():
     assert best(ctx(comments=["www.google.com www.bing.com"]))[0] is None
     # an older lone-link comment loses to a newer env note
     c = ctx(comments=["www.old-site.com", "Deployed to https://pr-9.preview.acme.dev"])
-    assert best(c)[0] == "https://pr-9.preview.acme.dev/"
+    assert best(c)[0] is None and envs.suggest(envs.find(c)).url == "https://pr-9.preview.acme.dev/"  # two links: suggest
 
 
 def test_addresses_without_https_are_found_but_emails_and_files_are_not():
     found = envs.find(ctx(comments=["test on staging.myapp.io/login please, ping a@b.com, notes in report.md and Node.js"]))
     assert [c.url for c in found] == ["https://staging.myapp.io/login"]
-    assert envs.find(ctx(comments=["see meet.google.com/abc and docs.google.com/x"])) == []  # Google tools still skipped
+    tools = envs.find(ctx(comments=["see meet.google.com/abc and docs.google.com/x"]))
+    assert len(tools) == 2 and all(x.other for x in tools)  # Google tools: listed, not suggested
 
 
 def test_jira_link_text_without_the_address_keeps_the_address():

@@ -80,7 +80,7 @@ The server enforces these rules, not just the UI:
 - Checklist results change only through a run.
 - Jira transitions must match by exact name; a near miss returns the available list.
 - A push never re-adds a case that already exists, so a retry after a partial failure only adds what is missing.
-- If the ticket names no clear test environment, it stops at **Needs environment** and lists the links it found, instead of guessing.
+- If the ticket has several links that could be the test environment (or only an unclear one), it stops at **Needs environment**, lists every link with the best one suggested and pre-filled, and you confirm it, pick another or type the address.
 
 **What step 1 reads.** Everything on the ticket itself: summary, description, acceptance criteria, issue type,
 status, priority, labels, components, fix and affects versions, sprint, story points, reporter and assignee, dates,
@@ -138,7 +138,10 @@ fields (e.g. "Preview URL"), web links, every comment (newest first) and the des
 where it is, the words around it ("deployed to", "preview", "staging", "test on"…), and its address (preview / staging
 / qa / pr-123 style hosts, hosting platforms such as vercel.app, netlify.app, pages.dev). Code, design and docs links
 and the Jira site are ignored; production-looking links are never picked on their own. A link is used only when it
-is clearly the environment; otherwise the drawer lists what was found with a **Use** button, or you paste one.
+is clearly the environment and is the only such link; otherwise the drawer lists every link (best one marked *Suggested* and
+pre-filled; tool, docs and file links under *Other links*) with a **Use** button each, or you type one. Addresses
+typed without https:// count too. Once set, **Change** next to the environment lets you test on another link or address
+(step 1 runs again for it).
 For BE tickets an API link is preferred. On the **Testing board** card you can add *Environment hints* (your own
 preview domains or words) and a *Default environment* that is used only for merged / done tickets.
 

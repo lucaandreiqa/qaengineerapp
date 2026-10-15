@@ -8,9 +8,10 @@ first) and the description. Each gets a score from
   what it is      preview / staging / qa / pr-123 style hosts, hosting platforms (vercel.app, netlify.app, …),
                   and the team's own hints from settings (e.g. their preview domain)
 
-Links that are clearly not an environment (the Jira site, code hosts, design and docs tools, files) are dropped,
-and production-looking links are marked down. The best candidate is used only when the evidence is clear;
-otherwise the ticket stops at "Needs environment" and lists what was found, so the user picks.
+Every link is kept and shown. Links that are usually not an environment (the Jira site, code hosts, design and docs
+tools, files) are listed apart as "other links", and production-looking links are marked down.
+One clear environment link is used straight away. When there are several, or the only one is unclear, the ticket
+stops at "Needs environment" with the best one suggested, and the user confirms it, picks another or types one.
 API links (api.…, /api, /graphql) are paired with the app link, or used on their own for BE tickets.
 """
 from __future__ import annotations
@@ -54,6 +55,8 @@ class Candidate:
     why: list[str] = field(default_factory=list)
     api: bool = False
     prod: bool = False
+    other: bool = False      # usually not an environment (code host, design tool, file…), still listed and pickable
+    suggested: bool = False  # the one YourQA proposes when the user has to choose
 
     def public(self) -> dict:
         return asdict(self)
@@ -98,11 +101,13 @@ def _score(url: str, line: str, base: int, source: str, hints: list[str], jira_h
     host = (p.hostname or "").lower()
     if not host or "." not in host and host != "localhost":
         return None
-    if host == jira_host or "confluence" in host or any(host == h or host.endswith("." + h) for h in NOT_ENV_HOSTS):
-        return None
-    if FILE_EXT.search(p.path):
-        return None
-    c = Candidate(url=url if p.path not in ("", "/") or url.endswith("/") else url + "/", source=source, score=base, api=_is_api(url))
+    norm = url if p.path not in ("", "/") or url.endswith("/") else url + "/"
+    not_env = ("the Jira site" if host == jira_host or "confluence" in host else
+               "a file" if FILE_EXT.search(p.path) else
+               "a tool or docs link" if any(host == h or host.endswith("." + h) for h in NOT_ENV_HOSTS) else "")
+    if not_env:
+        return Candidate(url=norm, source=source, score=-100, why=[f"usually not an environment ({not_env})"], other=True)
+    c = Candidate(url=norm, source=source, score=base, api=_is_api(url))
     if ENV_WORDS.search(line.replace(url, " ")):
         c.score += 25; c.why.append("mentioned as an environment")
     if HOST_HINT.search(host.split(".")[0]) or HOST_HINT.search(host):
@@ -157,13 +162,33 @@ def find(ctx: dict, hints: Optional[list[str]] = None, jira_host: str = "") -> l
     return sorted(best.values(), key=lambda c: -c.score)
 
 
+def likely(candidates: list[Candidate]) -> list[Candidate]:
+    """The links that could be the test environment (not tool links, files or production)."""
+    return [c for c in candidates if not c.other and not c.prod]
+
+
+def suggest(candidates: list[Candidate], ticket_type: str = "") -> Optional[Candidate]:
+    """The link to propose when the user has to choose: the best likely one, else the best non-tool link."""
+    envs = likely(candidates)
+    apis, apps = [c for c in envs if c.api], [c for c in envs if not c.api]
+    pick = (apis or apps)[0] if ticket_type == "BE" and apis else (apps or apis or [None])[0]
+    if pick is None:
+        pick = next((c for c in candidates if not c.other), None)
+    for c in candidates:
+        c.suggested = c is pick
+    return pick
+
+
 def choose(candidates: list[Candidate], ticket_type: str = "") -> tuple[Optional[Candidate], Optional[Candidate]]:
-    """(app link, API link) to test with, or (None, None) when no candidate is clear enough."""
-    apps = [c for c in candidates if not c.api and not c.prod]
-    apis = [c for c in candidates if c.api and not c.prod]
+    """(app link, API link) to test with, or (None, None) when the user should choose:
+    used straight away only when exactly one link is a likely environment and the evidence is clear."""
+    envs = likely(candidates)
+    apps = [c for c in envs if not c.api]
+    apis = [c for c in envs if c.api]
     be_only = ticket_type == "BE"
-    primary = (apis[0] if be_only and apis else apps[0] if apps else apis[0] if apis else None)
-    if not primary or primary.score < AUTO_PICK:
+    pool = apis if be_only and apis else apps or apis
+    primary = pool[0] if pool else None
+    if not primary or len(pool) > 1 or primary.score < AUTO_PICK:
         return None, None
     api = None
     if not primary.api and apis:

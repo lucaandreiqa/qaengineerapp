@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from urllib.parse import urlparse
 from datetime import datetime
@@ -286,6 +287,8 @@ class Workflow:
                 raise GateError(f"The QA comment for {t.key} is already being posted to Jira, so step 1 can't be redone now.")
             raise GateError(f"{t.key} is busy in lane {t.stage + 1}. Wait until it stops at a review, then redo step 1.")
         keep_env = t.env if (t.env and t.env.source.startswith("you") and not p.get("refind_env")) else None
+        if p.get("env_url"):  # "Change environment": test on this address from now on
+            keep_env = self._chosen_env(t, str(p["env_url"]))
         checklist: list = []
         if self.cfg.is_mock:  # demo: keep the sample items (their simulated results are tied to them)
             from .models import CheckItem, Section
@@ -297,16 +300,21 @@ class Workflow:
         self.toast(f"{t.key}: reading the ticket again" + (" (keeping the environment you chose)" if keep_env else ""))
         return t
 
-    async def _a_use_env(self, t: Ticket, p: dict) -> Ticket:
-        url = str(p.get("url", "")).strip()
+    def _chosen_env(self, t: Ticket, raw: str) -> Env:
+        """The address the user picked or typed, as the ticket's environment."""
+        url = raw.strip()
         if url and not url.lower().startswith(("http://", "https://")):
             url = "https://" + url.lstrip("/")  # staging.myapp.com → https://staging.myapp.com
         host = urlparse(url).hostname or ""
         if not url or " " in url or not ("." in host or host == "localhost"):
             raise GateError("Enter the test environment address, e.g. staging.your-app.com", 422)
-        picked = next((c for c in t.env_candidates if c.get("url") == url), None)
-        t = self.patch(t.key, env=Env(kind="Test environment", url=url, source="you" + (f" · from {picked['source']}" if picked else ""),
-                                      api="Chosen by you"), sub="working", p1=2, error="")
+        same = lambda a, b: re.sub(r"^https?://", "", a).rstrip("/").lower() == re.sub(r"^https?://", "", b).rstrip("/").lower()  # noqa: E731
+        picked = next((c for c in t.env_candidates if same(c.get("url", ""), url)), None)
+        return Env(kind="API" if picked and picked.get("api") else "Test environment", url=picked["url"] if picked else url,
+                   source="you" + (f" · from {picked['source']}" if picked else ""), api="Chosen by you")
+
+    async def _a_use_env(self, t: Ticket, p: dict) -> Ticket:
+        t = self.patch(t.key, env=self._chosen_env(t, str(p.get("url", ""))), sub="working", p1=2, error="")
         self.spawn(t.key, self._gather(t.key))
         self.toast(f"Environment set for {t.key} · building scenarios and checklist")
         return t
@@ -426,9 +434,10 @@ class Workflow:
                        type=issue["type"], components=issue["components"], labels=issue["labels"])
             await self.pause(2.5)
             env = self.tickets.get(key).env  # type: ignore[union-attr]
+            found_env, reason = agent.resolve_environment(issue, self.cfg)  # every link on the ticket, refreshed each read
+            self.patch(key, env_candidates=issue.get("env_candidates", []))
             if env is None:
-                env, reason = agent.resolve_environment(issue, self.cfg)
-                self.patch(key, env_candidates=issue.get("env_candidates", []))
+                env = found_env
                 if env is None:
                     self.patch(key, sub="blocked", p1=1, doing=reason)
                     self.toast(f"{key} needs an environment")

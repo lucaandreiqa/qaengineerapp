@@ -238,10 +238,25 @@ def test_redo_step_1_rereads_a_changed_ticket(tmp_path):
         await wf.act("OPTR-48466", "redo_gather", 2, "gate")
         await settle(wf)
         t = wf.tickets.get("OPTR-48466")
-        assert (t.stage, t.sub) == (0, "gate") and not t.ran
+        # two deploy links now: the user chooses, with the newest one suggested
+        assert (t.stage, t.sub) == (0, "blocked") and not t.ran and t.env is None
         assert {i.result for i in t.items()} == {"nt"}  # earlier results discarded
-        assert t.env.url == "https://feature-optr-48466-v2.shop-admin.pages.dev/" and t.env.source.startswith("comment by")
+        sug = [c for c in t.env_candidates if c["suggested"]]
+        assert [c["url"] for c in sug] == ["https://feature-optr-48466-v2.shop-admin.pages.dev/"] and sug[0]["source"].startswith("comment by")
+        assert "Suggested: feature-optr-48466-v2.shop-admin.pages.dev" in t.doing
         assert t.context["comments"] == 3
+        await wf.act("OPTR-48466", "use_env", 0, "blocked", {"url": "feature-optr-48466-v2.shop-admin.pages.dev"})
+        await settle(wf)
+        t = wf.tickets.get("OPTR-48466")
+        assert (t.stage, t.sub) == (0, "gate") and t.env.url == sug[0]["url"] and t.env.source.startswith("you · from comment by")
+        assert len(t.env_candidates) >= 2  # every link still listed, to change later
+
+        # Change the environment at Gate 1: re-reads the ticket and tests on the new address.
+        await wf.act("OPTR-48466", "redo_gather", 0, "gate", {"env_url": "https://other.preview.test"})
+        await settle(wf)
+        t = wf.tickets.get("OPTR-48466")
+        assert (t.stage, t.sub) == (0, "gate") and t.env.url == "https://other.preview.test" and t.env.source == "you"
+        assert t.env_candidates  # still listed
 
         # An environment the user chose survives a redo.
         await wf.act("OPTR-48507", "use_env", 0, "blocked", {"url": "https://mine.test/"})

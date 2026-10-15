@@ -68,14 +68,16 @@ def resolve_environment(issue: dict, cfg: Config) -> tuple[Optional[Env], str]:
 
     1. Merged or done, and a default environment is set in settings: the default environment.
     2. A link on the ticket that is clearly the test environment: that link (and its API link if one is given).
-    3. Otherwise stop at "Needs environment" and list the links found, instead of guessing.
+    3. Otherwise stop at "Needs environment": every link is listed, the best one suggested, and the user confirms it,
+       picks another or types one, instead of the app guessing between several.
     """
     from . import environments
 
     ctx = issue.get("context") or {"description": issue.get("description", ""), "status": issue.get("status", ""),
                                    "comments": [{"body": c} for c in issue.get("comments", [])]}
     found = environments.find(ctx, list(cfg.env_hints), cfg.jira_host)
-    issue["env_candidates"] = [c.public() for c in found[:8]]
+    sug = environments.suggest(found, issue.get("type", ""))
+    issue["env_candidates"] = [c.public() for c in found[:30]]
     if environments.looks_released(ctx, bool(issue.get("merged"))) and cfg.default_env_url:
         why = "merged" if issue.get("merged") else (ctx.get("status") or "done").lower()
         return Env(kind=f"{cfg.shared_env_name} · ticket is {why}", url=cfg.default_env_url, shared=True, source="settings",
@@ -86,9 +88,17 @@ def resolve_environment(issue: dict, cfg: Config) -> tuple[Optional[Env], str]:
         return Env(kind=kind, url=app.url, source=app.source,
                    api=f"API: {api.url}" if api else ("Backend link from the ticket" if app.api else "API: whatever this site calls")), ""
     ttype = type_label(issue.get("type", ""))
+    n = len(environments.likely(found))
+    if sug and n > 1:
+        return None, (f"Found {n} links that could be where to test this {ttype} ticket. Suggested: "
+                      f"{re.sub(r'^https?://', '', sug.url).rstrip('/')}. Use it, pick another, or type the address.")
+    if sug:
+        return None, (f"Found {len(found)} link{'s' if len(found) != 1 else ''} on the ticket, but none says it's where to test "
+                      f"this {ttype} ticket. Suggested: {re.sub(r'^https?://', '', sug.url).rstrip('/')}. Use it, pick another, "
+                      "or type the address.")
     if found:
-        return None, (f"Found {len(found)} link{'s' if len(found) != 1 else ''} on the ticket, but none is clearly where to test "
-                      f"this {ttype} ticket. Pick one below or paste the URL.")
+        return None, (f"The links on this {ttype} ticket look like tools or files, not a test environment. "
+                      "Pick one below if it is, or type the address.")
     return None, (f"No test environment link in this {ttype} ticket's description, comments, fields or links. "
                   "Paste the URL to test on.")
 

@@ -142,7 +142,7 @@ const S = {
   route: 'board', routeArg: '',
   toast: '', toastTimer: 0,
   board: { data: null, sel: null, q: '', view: store.get('boardView', 'all'), type: store.get('boardType', 'all'), itype: store.get('boardIType', 'all'),
-    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
+    prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   run: {
     form: Object.assign({ url: '', ticket: '', checks: { functional: true, visual: true, accessibility: true, seo: true, performance: false }, max_pages: 10,
       viewports: { desktop: true, tablet: false, mobile: true }, threshold: 0.5, lighthouse: true, accept_baselines: false, headed: false, publish: false }, store.get('runForm2', {})),
@@ -274,7 +274,7 @@ function deco(t) {
   const st = t.stage, sub = t.sub;
   const d = { stateLabel: '', summary: '', act: 'Review', cls: 'state state-you', note: '', primary: '', disabled: false, counts, items, passes };
   if (st === 0 && sub === 'working') { d.stateLabel = 'Gathering'; d.summary = t.doing; }
-  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; d.summary = (t.env_candidates || []).length ? `${t.env_candidates.length} link${t.env_candidates.length === 1 ? '' : 's'} found, none clearly the test environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Stopped instead of guessing an environment.'; d.primary = 'Use this environment'; d.disabled = !envUrl(S.board.env[t.key]); }
+  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; const sug = (t.env_candidates || []).find((c) => c.suggested); if (sug && S.board.env[t.key] == null) S.board.env[t.key] = sug.url; const nl = (t.env_candidates || []).length; d.summary = sug ? `Suggested ${sug.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}${nl > 1 ? ` · ${nl} links found` : ''}` : nl ? `${nl} link${nl === 1 ? '' : 's'} found, none looks like an environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Confirm the suggested link, pick another, or type the address.'; d.primary = 'Use this environment'; d.disabled = !envUrl(S.board.env[t.key]); }
   if (st === 0 && sub === 'gate') { d.stateLabel = 'Gate 1 · your review'; d.summary = `Checklist ready · ${items.length} items in ${t.checklist.length} sections`; d.act = 'Review checklist'; d.note = 'Gate 1 of 4. Approving builds and runs the spec.'; d.primary = 'Approve checklist'; }
   if (st === 1) { d.stateLabel = 'Building'; d.summary = t.doing || `Building ${t.key}.spec.ts`; }
   if (st === 2 && sub === 'sso') { d.stateLabel = 'SSO login needed'; d.cls = 'state state-warn'; d.summary = 'Waiting for you to sign in'; d.act = 'Sign in'; d.note = 'The run continues once the session is ready.'; d.primary = "I've signed in"; }
@@ -556,6 +556,37 @@ function redoButton(t) {
   return `<button type="button" class="btn ${armed ? 'btn-stop' : 'btn-quiet'} btn-sm" data-act="redo" data-key="${esc(t.key)}" title="${esc(tip)}" ${B.busy ? 'disabled' : ''}>${svg(IC.sync, 'ic ic-s')}${label}</button>`;
 }
 
+/* Every link on the ticket, the suggested one first and pre-filled; pick one or type the address.
+   mode 'blocked': step 1 is waiting for an environment. mode 'change': test on another address (redoes step 1). */
+function envPicker(t, mode) {
+  const B = S.board, key = t.key, cands = t.env_candidates || [];
+  const sug = cands.find((c) => c.suggested);
+  if (B.env[key] == null && mode === 'blocked' && sug) B.env[key] = sug.url;
+  const act = mode === 'blocked' ? 'pickEnv' : 'envChange';
+  const row = (c) => `<div class="brow env-cand${c.suggested ? ' is-sug' : ''}">
+<div style="min-width:0;flex:1"><div class="mono trunc">${esc(c.url)}</div><div style="color:var(--faint);font-size:11.5px">${esc(c.source)}${c.why && c.why.length ? ' · ' + esc(c.why.join(', ')) : ''}</div></div>
+${c.suggested ? '<span class="env-tag env-sug">Suggested</span>' : ''}${c.api ? '<span class="env-tag">API</span>' : ''}${c.prod ? '<span class="env-tag env-prod">Production?</span>' : ''}
+<button type="button" class="btn btn-sm${c.suggested ? ' btn-primary' : ''}" data-act="${act}" data-key="${esc(key)}" data-v="${esc(c.url)}" ${B.busy ? 'disabled' : ''}>Use</button></div>`;
+  const likely = cands.filter((c) => !c.other), other = cands.filter((c) => c.other);
+  let h = '';
+  if (likely.length) h += `<div class="lbl" style="margin-top:12px">${likely.length === 1 ? 'Link on the ticket' : `Links on the ticket (${likely.length})`}</div><div class="box">${likely.map(row).join('')}</div>`;
+  if (other.length) {
+    const open = !!B.envOther[key];
+    h += `<button type="button" class="env-more" data-act="envOther" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s', open ? '' : 'style="transform:rotate(-90deg)"')}Other links (${other.length}) · usually not an environment</button>`;
+    if (open) h += `<div class="box">${other.map(row).join('')}</div>`;
+  }
+  if (!cands.length && mode === 'change') h += `<p style="margin:10px 0 0;color:var(--muted);font-size:12px">No other links on the ticket.</p>`;
+  const v = B.env[key] || '';
+  const typed = envUrl(v);
+  h += `<label class="lbl" for="env-input" style="margin-top:12px">${likely.length || other.length ? 'Or type the test environment address' : 'Type the test environment address'}</label>
+<div class="jc-row"><input id="env-input" class="inp mono" type="text" inputmode="url" placeholder="staging.your-app.com" value="${esc(v)}" data-in="env" data-key="${esc(key)}">
+${mode === 'change' ? `<button type="button" class="btn btn-primary" data-act="envChange" data-key="${esc(key)}" ${typed && !B.busy ? '' : 'disabled'}>Test here instead</button>` : ''}</div>
+${v.trim() && !typed ? `<p class="c-crit" style="margin:6px 0 0;font-size:12px">That isn't a web address. Use something like staging.your-app.com</p>`
+  : typed && typed !== v.trim() ? `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">Will use <span class="mono">${esc(typed)}</span></p>` : ''}
+${mode === 'change' ? `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">Changing it reads the ticket again and rebuilds the checklist for the new address.</p>` : ''}`;
+  return h;
+}
+
 function viewDrawer() {
   const B = S.board;
   const t = B.data && B.data.tickets.find((x) => x.key === B.sel);
@@ -566,20 +597,14 @@ function viewDrawer() {
   let body = '';
 
   body += viewTicketContext(t);
-  body += `<div><div class="lbl">Target environment</div>`;
+  body += `<div><div class="lbl" style="display:flex;align-items:center">Target environment${t.env && t.canRedo && sub !== 'blocked' ? `<button type="button" class="btn btn-quiet btn-sm" style="margin-left:auto" data-act="envEdit" data-key="${esc(t.key)}" aria-expanded="${!!B.envEdit[t.key]}">${B.envEdit[t.key] ? 'Cancel' : 'Change'}</button>` : ''}</div>`;
   if (t.env) {
     body += `<div class="box"><div class="brow" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted)">${esc(t.env.kind)}${t.env.source ? ` · from ${esc(t.env.source)}` : ''}</span><span class="mono trunc" style="max-width:100%">${esc(t.env.url)}</span><span style="color:var(--faint);font-size:11.5px">${esc(t.env.api)}</span></div></div>`;
-    if (/^https?:/.test(t.env.url)) body += `<a class="btn btn-quiet btn-sm" style="margin-top:6px" href="#/run?ticket=${encodeURIComponent(t.key)}&url=${encodeURIComponent(t.env.url)}">${svg(IC.run, 'ic ic-s')}Run site checks on this environment</a>`;
+    if (B.envEdit[t.key] && t.canRedo) body += envPicker(t, 'change');
+    else if (/^https?:/.test(t.env.url)) body += `<a class="btn btn-quiet btn-sm" style="margin-top:6px" href="#/run?ticket=${encodeURIComponent(t.key)}&url=${encodeURIComponent(t.env.url)}">${svg(IC.run, 'ic ic-s')}Run site checks on this environment</a>`;
   } else {
-    body += `<div class="callout c-warn">${svg(IC.warn)}<span>${esc(sub === 'blocked' && t.doing ? t.doing : 'No environment resolved yet.')} It stops here instead of guessing, because the change may not be deployed everywhere yet.</span></div>`;
-    if (sub === 'blocked' && (t.env_candidates || []).length) {
-      body += `<div class="lbl" style="margin-top:12px">Links found on the ticket</div><div class="box">${t.env_candidates.map((c) => `<div class="brow env-cand">
-<div style="min-width:0;flex:1"><div class="mono trunc">${esc(c.url)}</div><div style="color:var(--faint);font-size:11.5px">${esc(c.source)}${c.why && c.why.length ? ' · ' + esc(c.why.join(', ')) : ''}${c.api ? ' · API' : ''}</div></div>
-<button type="button" class="btn btn-sm" data-act="pickEnv" data-key="${esc(t.key)}" data-v="${esc(c.url)}" ${B.busy ? 'disabled' : ''}>Use</button></div>`).join('')}</div>`;
-    }
-    if (sub === 'blocked') body += `<label class="lbl" for="env-input" style="margin-top:12px">Or paste the test environment URL</label><input id="env-input" class="inp mono" type="text" inputmode="url" placeholder="preview.your-app.com" value="${esc(B.env[t.key] || '')}" data-in="env" data-key="${esc(t.key)}">
-${(B.env[t.key] || '').trim() && !envUrl(B.env[t.key]) ? `<p class="c-crit" style="margin:6px 0 0;font-size:12px">That isn't a web address. Use something like staging.your-app.com</p>`
-  : envUrl(B.env[t.key]) && envUrl(B.env[t.key]) !== (B.env[t.key] || '').trim() ? `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">Will use <span class="mono">${esc(envUrl(B.env[t.key]))}</span> · press Enter or <b>Use this environment</b></p>` : ''}`;
+    body += `<div class="callout c-warn">${svg(IC.warn)}<span>${esc(sub === 'blocked' && t.doing ? t.doing : 'No environment resolved yet.')}</span></div>`;
+    if (sub === 'blocked') body += envPicker(t, 'blocked');
   }
   body += '</div>';
 
@@ -1427,6 +1452,19 @@ const ACTS = {
     B.redoArm = null; B.busy = true; B.actErr = ''; schedule();
     try { await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'redo_gather', stage: t.stage, sub: t.sub }); await loadBoard(); }
     catch (e) { B.actErr = e.message; }
+    B.busy = false;
+  },
+  envEdit: (el) => { const k = el.dataset.key; S.board.envEdit[k] = !S.board.envEdit[k]; delete S.board.env[k]; },
+  envOther: (el) => { const k = el.dataset.key; S.board.envOther[k] = !S.board.envOther[k]; },
+  envChange: async (el) => {
+    const B = S.board, t = B.data.tickets.find((x) => x.key === el.dataset.key);
+    const url = el.dataset.v || envUrl(B.env[t.key]);
+    if (!t || !url || B.busy) return;
+    B.busy = true; B.actErr = ''; schedule();
+    try {
+      await api('POST', `/api/tickets/${encodeURIComponent(t.key)}/action`, { action: 'redo_gather', stage: t.stage, sub: t.sub, payload: { env_url: url } });
+      B.envEdit[t.key] = false; delete B.env[t.key]; await loadBoard();
+    } catch (e) { B.actErr = e.message; }
     B.busy = false;
   },
   retry: async (el) => {
