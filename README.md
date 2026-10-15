@@ -1,23 +1,24 @@
 # YourQA
 
-A Python + Playwright app that tests websites for you, and takes Jira tickets through a gated QA
-workflow. Give it a URL and it crawls the site, runs the checks you pick, and produces an HTML report
-plus JUnit XML. It can push results to Jira, Slack, Teams, TestRail, Xray, Zephyr Scale and AWS S3, and
-the same engine runs headless in CI.
+A Python + Playwright app that takes Jira or Azure Boards tickets through a gated QA workflow with Claude:
+it reads the ticket, writes the checklist and the Playwright spec, runs it, posts the Jira comment and drafts
+TestRail cases, stopping at four review gates for you. Every run is kept in History with its evidence, and
+Reports turns them into trends and shareable reports. The site crawler (HTML report + JUnit XML) still runs
+headless in CI and in the classic window.
 
 `run_app.bat` on Windows, `run_app.command` on macOS (or `python -m qa_app`) opens the app in your browser at http://127.0.0.1:8765:
 
 | Screen | What it does |
 |---|---|
 | **Board** ⌘1 | Tickets from a Jira column (OPTR · Testing) in five lanes with four review gates: checklist → spec → run → Jira comment and move → TestRail cases. Each card shows its type (FE, BE or FE+BE) and the board filters by type |
-| **Run** ⌘2 | The website checks below, with live findings, visual diffs (baseline / current / diff) and a log. Any finding can become a Jira issue |
-| **History** ⌘3 | Issues per run per site, past runs, open report or folder, publish to integrations |
+| **History** ⌘2 | Every ticket test run: filters, each run's checks with screenshots / video / trace and the Playwright report, and comparison between two runs of a ticket |
+| **Reports** ⌘3 | Trends (pass rate, first-time pass, runs to green, flaky checks, breakdowns) and run / ticket / period reports as HTML, PDF or CSV, sent to Slack, Teams, Jira or Azure Boards |
 | **Integrations** ⌘4 | Every service, plus the Testing board and Claude settings. Test connection, then Save |
 | **Skills** ⌘5 | How Claude does each board step: a general skill per step, refined per Jira project |
 
 The original PySide window is still there: `run_classic.bat` / `run_classic.command` or `python -m qa_app --classic`.
 
-## Checks
+## Checks (site crawler: CLI, CI and the classic window)
 
 | Check | What it does |
 |---|---|
@@ -140,6 +141,26 @@ tests again (Gate 2), replace the checklist (Gate 1), rewrite the Jira comment o
 Nothing runs until you click, each suggestion is checked against where the ticket is at that moment, and Claude can
 never approve a gate or post to Jira. Chat calls count in the ticket's Claude cost.
 
+**Live ticket view.** While a ticket moves, the chat pane posts short updates (what was read, where it tests, each
+check as it runs, gates reached), folded per step, plus a summary from Claude after step 1 and after each run. The
+QA checklist shows counts, progress and one row per check with clear pass / fail / partial / blocked icons; the
+running check spins live, and a failed check opens to its note, error, screenshot, video and trace, with **Ask Claude
+about this**.
+
+**History.** Every run of a ticket's spec is recorded (`<app folder>/workflow/history/live/`, demo runs apart) with
+its results, the spec that ran, and evidence: each run gets its own Playwright settings (the ticket's environment as
+base URL, the saved SSO session, screenshots on failure or every check, video and trace for failures, JSON and HTML
+reports). Evidence is kept for the last 5 runs of each ticket by default (Testing board settings); results are kept
+forever. Open a run to see each check, the Playwright report and the spec files; **Compare with…** tags every check
+fixed, newly failing, still failing, unchanged, added or removed.
+
+**Reports.** Trends for a period, plus three reports built from History: a run report, a ticket report (every run to
+green, the final checklist, the Jira comment, the move and TestRail cases) and a period summary (tickets, pass rate,
+bugs by severity, failing areas, flaky checks, time and cost). Download as HTML, PDF (rendered with Playwright's
+Chromium) or CSV. **Send** shows a preview first: Slack / Teams get a summary; Jira gets the PDF attached when
+connected with an API token, or the summary as a comment with Atlassian sign-in (attaching files there would need the
+app to run a shell command from the server); Azure Boards gets the PDF attached.
+
 **Where to test.** Step 1 looks for the test environment in what the ticket says: the Environment field, custom
 fields (e.g. "Preview URL"), web links, every comment (newest first) and the description. Each link is scored by
 where it is, the words around it ("deployed to", "preview", "staging", "test on"…), and its address (preview / staging
@@ -236,9 +257,11 @@ qa_app/
   integrations/      jira, slack, teams, testrail, xray, zephyr, aws_s3
                      mcp_client.py (remote MCP + OAuth 2.1), atlassian_mcp.py (Jira through Atlassian's MCP server)
   report.py          HTML (templates/report.html.j2) + JUnit output
-  web/               FastAPI server, Run bridge to runner.py, Jira connect (jira_connect.py), static front end
+  web/               FastAPI server, Jira / Azure connect (jira_connect.py, azure_connect.py), static front end
   workflow/          Testing board: ticket models, gated engine, checklist/spec/comment logic, demo data,
-                     skills.py (general + per-project step skills), environments.py, ticket_context.py
+                     skills.py (general + per-project step skills), environments.py, ticket_context.py,
+                     history.py (run records), playwright_run.py (per-run config + live reporter),
+                     reports.py (trends, reports, export, send), chat.py (Claude on a ticket)
   skills/            the general skill for each board step (Markdown), passed to Claude in that step
   ui/                PySide6 window and background workers (classic)
 tests/               pytest suite for the workflow rules and the report

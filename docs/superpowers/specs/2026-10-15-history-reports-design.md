@@ -1,6 +1,6 @@
 # History, live ticket view and Reports: design
 
-Date: 2026-10-15 · Status: approved in conversation, awaiting written-spec review
+Date: 2026-10-15 · Status: approved and implemented (see §12 for changes made while building)
 
 ## 1. Intent
 
@@ -219,3 +219,14 @@ Not included: scheduled reports.
 2. Live feed and friendly checklist in the ticket.
 3. History screen (list, run page, compare); remove Run screen and crawler.
 4. Reports: trends, three report kinds, export, send.
+
+## 12. Changes made while building
+
+- **History location:** runs live under `<app folder>/workflow/history/live|demo/` (next to the board's other data),
+  not `<app folder>/history/`.
+- **Generated settings file** is `playwright.config.js` (plain CommonJS, no imports) rather than `.ts`, so Node can
+  load it from the run folder without the workspace's `node_modules`.
+- **Sending to Jira with Atlassian sign-in** posts the report summary as a comment instead of attaching the PDF:
+  Atlassian's MCP upload returns a shell command for the client to run, and YourQA does not run shell commands
+  supplied by a server. With an API token connection the PDF is attached.
+- **Flaky checks** need at least two flips (pass → fail → pass or the reverse); a single fail → pass is a fix.
