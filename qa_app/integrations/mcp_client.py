@@ -216,8 +216,10 @@ class OAuth:
 
 # ------------------------------------------------------------------------------------- MCP session
 def _sse_messages(text: str) -> list[dict]:
+    """Event-stream messages. Split on real line ends only: str.splitlines() also breaks on characters such as
+    U+0085 and U+2028, which can appear inside the JSON."""
     out, data = [], []
-    for line in text.splitlines() + [""]:
+    for line in re.split(r"\r\n|\r|\n", text) + [""]:
         if line.startswith("data:"):
             data.append(line[5:].lstrip())
         elif not line.strip() and data:
@@ -269,12 +271,13 @@ class McpSession:
         if "id" not in payload or r.status_code == 202 or not r.content:
             return None
         if "text/event-stream" in r.headers.get("Content-Type", ""):
-            msgs = [m for m in _sse_messages(r.text) if m.get("id") == payload["id"]]
+            # MCP streams are UTF-8 even when the header names no charset (requests would guess Latin-1)
+            msgs = [m for m in _sse_messages(r.content.decode("utf-8", "replace")) if m.get("id") == payload["id"]]
             if not msgs:
                 raise McpError("The MCP server sent no reply.")
             msg = msgs[-1]
         else:
-            msg = r.json()
+            msg = json.loads(r.content.decode("utf-8", "replace"))
         if msg.get("error"):
             raise McpError(f"MCP error: {msg['error'].get('message', msg['error'])}")
         return msg.get("result") or {}

@@ -522,3 +522,61 @@ def test_api_token_path_reads_everything_too(monkeypatch):
     issue = rest.get_issue({"base_url": "https://qaengineerapp.atlassian.net", "email": "x", "api_token": "y"}, "SCRUM-2")
     _check_full_context(issue["context"])
     assert issue["components"] == ["Frontend"] and env_url(issue) == "https://feature-x.pages.dev/"
+
+
+def _sse_response(payload: dict, status: int = 200):
+    """What Atlassian's server sends: raw UTF-8 in an event stream that declares no charset."""
+    import requests
+    r = requests.Response()
+    r.status_code = status
+    r.headers["Content-Type"] = "text/event-stream"
+    r.encoding = requests.utils.get_encoding_from_headers(r.headers)  # as requests' adapter sets it
+    r._content = ("event: message\r\ndata: " + json.dumps(payload, ensure_ascii=False) + "\r\n\r\n").encode("utf-8")
+    return r
+
+
+class _OneShotHttp:
+    def __init__(self, replies):
+        self.replies, self.sent = list(replies), []
+
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.sent.append(json)
+        return self.replies.pop(0)
+
+
+def test_a_reply_with_emoji_in_an_undeclared_charset_stream_is_read():
+    from qa_app.integrations.mcp_client import McpSession
+    body = "**Page availability**\n\n* ✅ loads — fine. Ünïcödé ok"
+    http = _OneShotHttp([_sse_response({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"commentId": "10004", "body": body}}})])
+    s = McpSession("https://mcp.example/v1/mcp", token=lambda: "t", http=http)
+    s._ready = True
+    assert s.call("addOrEditJiraIssueComment", {"issueIdOrKey": "SCRUM-8", "commentBody": body}) == {"commentId": "10004", "body": body}
+
+
+def test_a_comment_whose_reply_is_lost_is_not_reported_as_failed_when_it_landed():
+    from qa_app.integrations.atlassian_mcp import McpJira
+    from qa_app.integrations.mcp_client import McpError
+
+    class Stub:
+        def __init__(self, lands):
+            self.lands, self.posted = lands, []
+
+        def op(self, name, **a):
+            if name == "addOrEditJiraIssueComment":
+                if self.lands:
+                    self.posted.append(a["commentBody"])
+                raise McpError("The MCP server sent no reply.")
+            if name == "listJiraIssueComments":  # Jira re-renders markdown: escapes brackets, adds line-break marks
+                return {"comments": [{"body": b.replace("[", "\\[").replace("\n", "  \n")} for b in self.posted]}
+            raise KeyError(name)
+
+    text = "QA result: 3/12 checks pass.\n* ✅ use locator('textarea[name=q]')\n\nCommented by YourQA"
+    landed = Stub(lands=True)
+    j = McpJira({"cloud_id": "c"}, {}, mcp=landed)
+    j.add_comment("SCRUM-8", text)  # no error: it is on the ticket
+    assert landed.posted == [text]
+    j.add_comment("SCRUM-8", text)  # pressed Post again: it's already there, so nothing new is posted
+    assert landed.posted == [text]
+    lost = Stub(lands=False)
+    with pytest.raises(McpError):
+        McpJira({"cloud_id": "c"}, {}, mcp=lost).add_comment("SCRUM-8", text)

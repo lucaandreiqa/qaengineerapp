@@ -361,7 +361,27 @@ class McpJira:
         return issue_dict(build(raw, comments, links))
 
     def add_comment(self, key: str, text: str) -> None:
-        self.mcp.op("addOrEditJiraIssueComment", issueIdOrKey=key, commentBody=text)  # markdown
+        if self._has_comment(key, text):  # already posted (e.g. an earlier try whose reply was lost): never post twice
+            return
+        try:
+            self.mcp.op("addOrEditJiraIssueComment", issueIdOrKey=key, commentBody=text)  # markdown
+        except McpError as e:
+            # the request reached Jira but its reply was lost or unreadable: the comment may well be there, and
+            # reporting a failure makes people post it again. Look before saying it failed.
+            if self._has_comment(key, text):
+                return
+            raise e
+
+    def _has_comment(self, key: str, text: str) -> bool:
+        def norm(s: str) -> str:
+            return re.sub(r"[\W_]+", "", s or "").lower()
+        want = norm(text)
+        try:
+            res = self.mcp.op("listJiraIssueComments", issueIdOrKey=key, orderBy="-created", maxResults=5)
+        except Exception:
+            return False
+        bodies = [c.get("body") for c in (res.get("comments", []) if isinstance(res, dict) else [])]
+        return any(isinstance(b, str) and norm(b) == want for b in bodies)
 
     def get_transitions(self, key: str) -> list[dict]:
         res = self.mcp.op("listJiraIssueTransitions", issueIdOrKey=key)
