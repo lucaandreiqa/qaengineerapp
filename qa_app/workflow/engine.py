@@ -658,9 +658,11 @@ class Workflow:
             sections, serial = t.checklist, t.serial
             await self.pause(2.5)
         else:
-            scenarios, sections, serial = await agent.plan_checklist(self.cfg, issue, t.env)
+            scenarios, sections, serial, analysis = await agent.plan_checklist(self.cfg, issue, t.env)
             if self.cfg.claude_ready:
                 self._used(key, "gather")
+            if analysis.strip():  # the gather-context findings go into the context file, after what the ticket says
+                agent.write_file(self.cfg, key, f"{key}-context.md", self._context_md(issue).rstrip() + "\n\n## QA analysis\n\n" + analysis.strip() + "\n")
         agent.write_file(self.cfg, key, f"{key}-scenarios.md", f"# {key} scenarios\n\n{scenarios}\n")
         self.patch(key, p1=3, doing="Writing the QA checklist", checklist=sections, serial=serial, ran=False)
         t = self.tickets.get(key)

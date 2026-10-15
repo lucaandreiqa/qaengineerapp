@@ -98,6 +98,14 @@ each (`qa_app/skills/*.md`). On the **Skills** screen (⌘5, or *Skill* on a boa
   (`~/.qa_app/skills/projects/<KEY>/`), e.g. "our API is GraphQL", "always test the mobile viewport".
 The ticket's Jira project decides which version is used, and the drawer shows which one Claude followed. Output
 formats stay in the code, so editing a skill changes how Claude works, not what the app can read back.
+
+The built-in skills are the team's own: Gather requirements = gather-context + define-scenarios + test-ticket
+phase 1; Create tests = test-specs + test-ticket's cleanup and test account rules; Run tests = YourQA's review
+guidance + test-ticket phase 2 + unslop; Comment & move = test-ticket phase 3 + unslop; TestRail = YourQA's case
+guidance + test-ticket phase 4. Skills can be up to 60,000 characters. Claude has no tools inside a step (no
+files, shell, GitHub or TestRail), so where a skill asks it to read code, a PR or existing specs it works from
+what YourQA gives it and lists what it couldn't check. The test-specs skill expects the EVA test repo (page
+objects, `common/` helpers): set the Playwright workspace folder to that repo for its imports to resolve.
 With a Claude API key every step uses Claude and its skill: checklist, spec, bug notes and severity after a run,
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 

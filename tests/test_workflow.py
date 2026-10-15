@@ -601,3 +601,21 @@ def test_no_thanks_leaves_the_skill_alone(wf, tmp_path, monkeypatch):
         assert [a.get("state") for a in t.chat[mi]["actions"]] == ["dismissed", "applied"]
     run(go())
     assert skills.general("jira-comment")[1] is False  # still the shipped skill, unchanged
+
+
+def test_gather_has_no_fixed_item_cap_says_claude_has_no_tools_and_keeps_its_analysis(wf, monkeypatch, tmp_path):
+    from qa_app.workflow import agent as ag
+    from qa_app.workflow.models import Env
+    seen = {}
+
+    async def fake(cfg, system, prompt, max_tokens=4000, step=None):
+        seen["system"], seen["prompt"] = system, prompt
+        return ('{"analysis": "Affected page: Control Room > Settings", "scenarios": "- s", "serial": false, '
+                '"sections": [{"name": "A", "items": ["one", "two", "three", "four", "five", "six", "seven"]}]}')
+    monkeypatch.setattr(ag, "ask_claude", fake)
+    cfg = Config(demo=False, anthropic_api_key="k", data_dir=tmp_path, workspace=tmp_path / "ws")
+    out = run(ag.plan_checklist(cfg, {"key": "OPTR-1", "title": "t", "description": "", "comments": []}, Env(kind="Test environment", url="https://x.test/")))
+    assert len(out[1][0].items) == 7                       # all items kept
+    assert "2-4 sections" not in seen["prompt"] and "2-5 items" not in seen["prompt"]
+    assert "no tools" in seen["system"].lower()
+    assert out[3] == "Affected page: Control Room > Settings"  # the gather-context findings, kept for the context file

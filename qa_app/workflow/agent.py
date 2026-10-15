@@ -166,10 +166,17 @@ QA_SYSTEM = ("You are a senior QA engineer. You write precise, testable checklis
              "statements ('Search ignores letter case'), grouped into short sections. Never invent results.")
 
 
+NO_TOOLS = ("\n\nIn this step you have no tools: you can't open files, run commands, browse, or call Jira, GitHub or "
+            "TestRail. YourQA has already put everything it read into the message. When the skill asks you to read code, a "
+            "PR, existing specs or TestRail, or to stop and ask the user, work from what you were given and say what you "
+            "could not check (in the scenarios under \"Open questions\", or in your note). Never pretend you checked it. "
+            "The review gates are YourQA's: finish this step's output and the user reviews it there.")
+
+
 def system(base: str, step: str, cfg: Config) -> str:
     """The step's base instructions plus its skill (general, refined for the Jira project when it has its own)."""
     from . import skills
-    return base + skills.for_prompt(step, cfg.jira_project)
+    return base + NO_TOOLS + skills.for_prompt(step, cfg.jira_project)
 
 
 def skill_source(step: str, cfg: Config) -> str:
@@ -178,7 +185,7 @@ def skill_source(step: str, cfg: Config) -> str:
 
 
 async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[Section], bool]:
-    """Returns (scenarios markdown, checklist sections, serial_needed)."""
+    """Returns (scenarios markdown, checklist sections, serial_needed, analysis markdown from the gather-context skill)."""
     if cfg.claude_ready:
         if issue.get("context"):  # the whole ticket: every field, all comments, links, attachments
             from .ticket_context import for_prompt
@@ -190,11 +197,13 @@ async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[
         prompt = (f"{ticket}\n\nTest environment: {env.kind} {env.url}\n\n"
                   "Use everything above: description, acceptance criteria, every comment (later comments can change "
                   "what was agreed), labels, versions, linked tickets and attachments by name."
-                  "\n\nReturn JSON only: {\"scenarios\": \"markdown\", \"serial\": bool (true if multi-user or "
-                  "concurrency scenarios exist), \"sections\": [{\"name\": str, \"items\": [str]}]}. 2-4 sections, 2-5 items each.")
-        data = _json_block(await ask_claude(cfg, system(QA_SYSTEM, "gather", cfg), prompt))
+                  "\n\nReturn JSON only: {\"analysis\": \"markdown: what changed, affected pages and flows, settings, "
+                  "permissions, entity variations, deployment, open questions\", \"scenarios\": \"markdown\", \"serial\": bool "
+                  "(true if multi-user or concurrency scenarios exist), \"sections\": [{\"name\": str, \"items\": [str]}]}. "
+                  "Group the checklist items into sections by area; include every item the skill calls for, with no fixed limit.")
+        data = _json_block(await ask_claude(cfg, system(QA_SYSTEM, "gather", cfg), prompt, max_tokens=16000))
         sections = [Section(name=s["name"], items=[CheckItem(text=i) for i in s["items"]]) for s in data["sections"]]
-        return data.get("scenarios", ""), sections, bool(data.get("serial"))
+        return data.get("scenarios", ""), sections, bool(data.get("serial")), str(data.get("analysis") or "")
     # Template fallback: one section from the description's bullet points, plus regression basics.
     ctx = issue.get("context") or {}
     source = "\n".join(x for x in (ctx.get("acceptance_criteria", ""), issue.get("description", "")) if x)
@@ -209,7 +218,7 @@ async def plan_checklist(cfg: Config, issue: dict, env: Env) -> tuple[str, list[
     reg = Section(name="Regression", items=[CheckItem(text="Existing behaviour on the same screen is unchanged"),
                                              CheckItem(text="No console errors while using the feature")])
     scen = "\n".join(f"- Scenario: {i.text}" for s in (main, reg) for i in s.items)
-    return scen, [main, reg], False
+    return scen, [main, reg], False, ""
 
 
 SPEC_SYSTEM = ("You write Playwright Test specs in TypeScript. Each checklist item becomes exactly one test whose title "
@@ -259,7 +268,7 @@ async def build_spec(cfg: Config, t: Ticket) -> list[str]:
         prompt = (f"Ticket {t.key}: {t.title}\nBase URL: {t.env.url if t.env else 'process.env.BASE_URL'}\n"
                   f"Test account (SSO, storage state is preloaded): {who(cfg)}\n\n"
                   f"Checklist:\n{checklist_md(t)}")
-        spec = await ask_claude(cfg, system(SPEC_SYSTEM, "create-tests", cfg), prompt, max_tokens=8000)
+        spec = await ask_claude(cfg, system(SPEC_SYSTEM, "create-tests", cfg), prompt, max_tokens=16000)
         spec = re.sub(r"^```\w*\n|```\s*$", "", spec.strip(), flags=re.M)
     else:
         spec = spec_template(t, cfg)
@@ -434,7 +443,7 @@ async def review_results(cfg: Config, t: Ticket, details: dict) -> bool:
         n = int(e.get("n", 0))
         if 1 <= n <= len(items) and items[n - 1].result in ("fail", "partial", "blocked"):
             it = items[n - 1]
-            it.bug = str(e.get("note") or it.bug)[:600]
+            it.bug = str(e.get("note") or it.bug)[:3000]  # room for the full bug write-up the skill asks for
             sev = e.get("severity")
             it.severity = sev if it.result == "fail" and sev in ("Critical", "Major", "Minor") else (it.severity if it.result == "fail" else None)
     return True

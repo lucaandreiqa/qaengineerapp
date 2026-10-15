@@ -46,7 +46,7 @@ def test_project_skill_adds_or_replaces_and_general_can_be_edited_and_reset(stor
     skills.reset_general("testrail")
     assert skills.general("testrail")[1] is False and "TestRail" in skills.general("testrail")[0]
     for bad in (lambda: skills.save_project("../x", "gather", "t"), lambda: skills.save_general("deploy", "t"),
-                lambda: skills.save_general("gather", "x" * 20001)):
+                lambda: skills.save_general("gather", "x" * 60001)):
         with pytest.raises(ValueError):
             bad()
 
@@ -84,7 +84,7 @@ def test_each_step_sends_its_skill_to_claude(store, monkeypatch, tmp_path):
 
     by_step = dict(calls)
     assert list(by_step) == ["gather", "create-tests", "run-tests", "jira-comment", "testrail"]
-    assert 'source="general + SCRUM"' in by_step["gather"] and "Acceptance criteria are the contract" in by_step["gather"] \
+    assert 'source="general + SCRUM"' in by_step["gather"] and "Enumerate all states for each affected UI component" in by_step["gather"] \
         and "SCRUM: test on Safari too." in by_step["gather"]
     assert 'source="SCRUM"' in by_step["jira-comment"] and "Romanian" in by_step["jira-comment"] \
         and "First line: `QA result:" not in by_step["jira-comment"]  # replaced, not added
@@ -99,3 +99,27 @@ def test_without_claude_the_templates_still_work(store, tmp_path):
     assert run(agent.write_comment(cfg, t)).startswith("QA result: 1/1 checks pass.")
     assert [c.title for c in run(agent.write_cases(cfg, t, []))] == ["x works"]
     assert run(agent.review_results(cfg, t, {})) is False
+
+
+def test_the_teams_skills_are_the_built_in_general_skills():
+    from qa_app.workflow import skills as sk
+    g = sk.shipped("gather")
+    assert "Enumerate all states for each affected UI component" in g      # define-scenarios
+    assert "Identify affected Admin Suite pages" in g                       # gather-context
+    assert "Classify the ticket and resolve the target environment" in g    # test-ticket, phase 1
+    c = sk.shipped("create-tests")
+    assert "## Records and cleanup" in c and "Test account convention" in c  # test-specs + test-ticket
+    r = sk.shipped("run-tests")
+    assert "Update the QA checklist with real results" in r and "Unslop" in r
+    j = sk.shipped("jira-comment")
+    assert "Post a QA summary comment" in j and "Unslop" in j
+    assert "Draft cases" in sk.shipped("testrail")
+    for step in sk.STEP_IDS:
+        assert "personal_" not in sk.shipped(step).splitlines()[0]  # each file keeps YourQA's own name
+
+
+def test_a_long_skill_can_be_saved(tmp_path, monkeypatch):
+    from qa_app.workflow import skills as sk
+    monkeypatch.setattr(sk, "root", lambda: tmp_path)
+    sk.save_general("create-tests", "x" * 45000)  # the test-specs skill alone is ~28k characters
+    assert len(sk.general("create-tests")[0]) == 45000

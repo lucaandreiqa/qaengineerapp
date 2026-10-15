@@ -24,7 +24,7 @@ STEPS = [("gather", "Gather requirements"), ("create-tests", "Create tests"), ("
          ("jira-comment", "Comment & move Jira ticket"), ("testrail", "Update TestRail tests")]
 STEP_IDS = [s for s, _ in STEPS]
 KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,19}$")
-MAX_CHARS = 20000
+MAX_CHARS = 60000  # the team's skills are long (test-specs alone is ~28k characters)
 
 
 def root() -> Path:
