@@ -12,6 +12,7 @@ const store = {
 /* ------------------------------------------------------------------ icons */
 const svg = (d, cls = 'ic', extra = '') => `<svg class="${cls}" ${extra} viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const IC = {
+  spark: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"></path><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"></path>',
   skip: '<path d="M5 6l7 6-7 6z"></path><path d="M13 6l7 6-7 6z"></path>',
   skill: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"></path><path d="M17 7.5h1.5A1.5 1.5 0 0 1 20 9v11h-3"></path><path d="M8.5 9h5M8.5 12.5h5M8.5 16h3"></path>',
   board: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
@@ -149,7 +150,7 @@ const CHECK_INFO = [
   ['performance', 'Performance', 'Timing, page weight and Lighthouse', IC.perf],
 ];
 const SEVL = { critical: 'Critical', major: 'Major', minor: 'Minor', info: 'Info' };
-const ROUTES = ['board', 'history', 'reports', 'integrations', 'skills'];
+const ROUTES = ['onboarding', 'board', 'history', 'reports', 'integrations', 'skills'];
 const STEP_SKILL = ['gather', 'create-tests', 'run-tests', 'jira-comment', 'testrail'];  // board lane i → its skill
 
 
@@ -163,6 +164,7 @@ const S = {
     prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), clFilter: {}, clOpen: {}, feedOpen: {}, termOpen: {}, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   hist: { data: null, run: null, cmp: null, err: '', q: '', key: '', project: '', type: '', status: '', env: '', range: store.get('histRange', '30d') },
   reports: { trends: null, list: null, range: store.get('repRange', '30d'), project: '', type: '', busy: '', err: '', preview: null, period: { from: '', to: '' } },
+  onb: { data: null, projects: null, spaces: null, repo: null, open: {}, details: false, busy: false, err: '' },
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
   jira: { st: null, link: '', busy: '', err: '', col: '', method: store.get('jiraMethod', 'atlassian'), email: '', token: '' },
   azure: { st: null, link: '', pat: '', busy: '', err: '', col: '', changing: false },
@@ -204,6 +206,11 @@ function connect() {
       if (S.board.sel === ev.key) S.board.sel = null;
     } else if (ev.type === 'sync' && d) {
       d.lastSync = ev.lastSync; d.syncError = ev.error || '';
+    } else if (ev.type === 'onboarding') {
+      const O = S.onb;
+      if (O.data && ev.event === 'line') O.data.lines = [...(O.data.lines || []), ev.text].slice(-200);
+      if (ev.event === 'done') loadOnboarding();
+      if (S.route !== 'onboarding') return;
     } else if (ev.type === 'term') {
       if (ev.reset) S.term[ev.key] = [];
       else if (S.term[ev.key]) { S.term[ev.key].push(ev.line); if (S.term[ev.key].length > 1500) S.term[ev.key].splice(0, 300); }
@@ -274,7 +281,7 @@ function render() {
   });
   $app.dataset.theme = S.theme;
   document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
-  const screen = { board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
+  const screen = { onboarding: viewOnboarding, board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
   const next = document.createElement('div');
   next.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewReportModal() + viewToast();
   morphChildren($app, next);
@@ -296,6 +303,7 @@ function viewSide() {
   const link = (r, label, icon, n) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}<span class="kbd">⌘${n}</span></a>`;
   return `<nav class="side" aria-label="Main">
 <div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">YourQA</span></div>
+<a class="nav-link" href="#/onboarding" ${S.route === 'onboarding' ? 'aria-current="page"' : ''}>${svg(IC.spark || IC.skill)}Onboarding</a>
 ${link('board', 'Board', IC.board, 1)}${link('history', 'History', IC.history, 2)}${link('reports', 'Reports', IC.report, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
 ${S.board.data && S.board.data.config.mode !== 'live' ? '<div style="padding:0 4px 10px"><a class="mode" href="#/integrations" title="The Testing board uses sample tickets and simulated Jira and TestRail. Turn it off on the Integrations screen.">Demo data</a></div>' : ''}
@@ -821,6 +829,68 @@ ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="
 <button type="button" class="btn btn-quiet btn-icon" style="margin-left:auto" data-act="chatToggle" aria-label="Hide the chat" title="Hide the chat">${svg(IC.close)}</button></div>
 ${viewChat(t)}</section>` : ''}
 </div></aside>`;
+}
+
+/* ------------------------------------------------------------------ onboarding: one clean screen, four steps */
+async function loadOnboarding() {
+  const O = S.onb;
+  try {
+    O.data = await api('GET', '/api/onboarding');
+    if (O.projects == null) O.projects = (O.data.defaults.projects || []).join(', ');
+    if (O.spaces == null) O.spaces = (O.data.defaults.spaces || []).join(', ');
+    if (O.repo == null) O.repo = O.data.defaults.repo || '';
+  } catch (e) { O.err = e.message; }
+  schedule();
+}
+
+const ONB_AREA = { tickets: 'From your tickets', testrail: 'From TestRail', knowledge: 'Knowledge base', repo: 'From your automation' };
+
+function viewOnboarding() {
+  const O = S.onb, d = O.data;
+  const head = `<header><h1 style="margin:0;font-size:18px;font-weight:600">Onboarding</h1>
+<p style="margin:4px 0 0;color:var(--muted)">Connect your tools. YourQA studies how your team works and sets itself up to match.</p></header>`;
+  if (!d) return `<main class="main onb">${head}<p style="color:var(--muted)">${O.err ? esc(O.err) : 'Loading…'}</p></main>`;
+  const c = d.connections, running = d.running, last = d.last;
+  const row = (label, item, extra = '') => `<div class="onb-row"><span class="onb-dot ${item.connected ? 'on' : ''}"></span><span class="onb-k">${esc(label)}</span>
+<span class="onb-v">${item.connected ? esc(item.name) + (item.note ? ` <span class="onb-note">${esc(item.note)}</span>` : '') : 'Not connected'}</span>
+${item.connected ? '' : `<a class="btn btn-quiet btn-sm" href="#/integrations">Connect</a>`}${extra}</div>`;
+  const step = (n, title, body, done) => `<section class="onb-step${done ? ' is-done' : ''}"><div class="onb-n">${done ? svg(IC.check, 'ic ic-s') : n}</div><div class="onb-body"><h2>${title}</h2>${body}</div></section>`;
+  const connect = row('Tracker', c.tracker) + row('Test cases', c.testrail) + row('Docs', c.confluence) +
+    `<div class="onb-row"><span class="onb-dot ${O.repo ? 'on' : ''}"></span><span class="onb-k">Automation</span>
+<input class="inp" id="onb-repo" data-in="onbRepo" value="${esc(O.repo || '')}" placeholder="Folder on this computer, or a repo link (GitHub, GitLab…)" ${running ? 'disabled' : ''}></div>`;
+  const choose = `<label class="onb-field"><span>Projects to study</span><input class="inp" id="onb-projects" data-in="onbProjects" value="${esc(O.projects || '')}" placeholder="e.g. SCRUM, OPTR" ${running ? 'disabled' : ''}></label>
+${c.confluence.connected ? `<label class="onb-field"><span>Confluence spaces <i>(optional)</i></span><input class="inp" id="onb-spaces" data-in="onbSpaces" value="${esc(O.spaces || '')}" placeholder="e.g. QA, PROD" ${running ? 'disabled' : ''}></label>` : ''}`;
+  const lines = d.lines || [];
+  const study = running
+    ? `<div class="onb-live">${svg(IC.spin, 'ic ic-s spin')}<span>${esc(lines[lines.length - 1] || 'Starting…')}</span><button type="button" class="btn btn-sm" data-act="onbStop">Stop</button></div>
+<button type="button" class="btn btn-quiet btn-sm onb-tog" data-act="onbDetails" aria-expanded="${O.details}">${O.details ? 'Hide' : 'Show'} details</button>
+${O.details ? `<div class="term onb-term">${lines.map((l) => `<div class="tl">${esc(l)}</div>`).join('')}</div>` : ''}`
+    : `<p class="onb-hint">Reads a recent sample: about 200 tickets per project, 150 test cases, 30 docs pages and your automation. Read-only.</p>
+<button type="button" class="btn btn-primary" data-act="onbStudy" ${O.busy ? 'disabled' : ''}>${last ? 'Study again' : 'Study'}</button>${O.err ? `<p class="onb-err">${esc(O.err)}</p>` : ''}`;
+  let changed = '<p class="onb-hint">Nothing yet. Results appear here, applied straight away, each with Undo.</p>';
+  if (last && !running) {
+    const live = (last.changes || []).filter((x) => !x.undone);
+    const groups = Object.keys(ONB_AREA).map((a) => [a, (last.changes || []).filter((x) => x.area === a)]).filter(([, xs]) => xs.length);
+    const when = new Date((last.finished || last.started) * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const status = { done: '', stopped: ' · stopped', error: ' · failed' }[last.status] || '';
+    const problems = Object.entries(last.sources || {}).filter(([, v]) => /^failed/.test(v)).concat(Object.entries(last.failed || {}).map(([k, v]) => [k, 'failed: ' + v]));
+    changed = `<p class="onb-sum">Studied ${esc(when)}${status} · ${live.length} change${live.length === 1 ? '' : 's'} in use</p>
+${problems.length ? `<div class="callout c-warn">${svg(IC.warn)}<span>${problems.map(([k, v]) => `${esc(k)}: ${esc(v.replace(/^failed: /, ''))}`).join('<br>')}</span></div>` : ''}
+${groups.map(([a, xs]) => `<div class="onb-group"><div class="onb-gh">${esc(ONB_AREA[a])}</div>${xs.map((x) => {
+      const open = !!O.open[x.id];
+      return `<div class="onb-ch${x.undone ? ' is-undone' : ''}"><button type="button" class="onb-chh" data-act="onbOpen" data-key="${esc(x.id)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}<span>${esc(x.label)}</span>${x.replaced_edit ? '<span class="onb-tag">replaced your edit</span>' : ''}</button>
+${x.undone ? '<span class="onb-undone">Undone</span>' : `<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndo" data-key="${esc(x.id)}">Undo</button>`}
+${open ? `<ul class="onb-ev">${(x.evidence || []).map((e) => `<li>${esc(e)}</li>`).join('') || '<li>No evidence recorded.</li>'}</ul>` : ''}</div>`;
+    }).join('')}</div>`).join('')}
+${live.length ? '<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndoAll">Undo all</button>' : ''}`;
+  }
+  const hasRun = !!last;
+  return `<main class="main onb">${head}<div class="card onb-card">
+${step(1, 'Connect', connect, c.tracker.connected)}
+${step(2, 'Choose', choose, !!(O.projects || '').trim())}
+${step(3, 'Study', study, hasRun && !running)}
+${step(4, 'What changed', changed, false)}
+</div></main>`;
 }
 
 /* Skip: move on without this lane. Never posts, moves or pushes; asks for a second click. */
@@ -1664,6 +1734,26 @@ const ACTS = {
     const B = S.board, k = el.dataset.key;
     B.termOpen[k] = el.getAttribute('aria-expanded') !== 'true';
   },
+  onbStudy: async () => {
+    const O = S.onb, list = (v) => String(v || '').split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+    O.busy = true; O.err = ''; schedule();
+    try { O.data = { ...O.data, ...(await api('POST', '/api/onboarding/study', { projects: list(O.projects).map((x) => x.toUpperCase()), spaces: list(O.spaces), repo: (O.repo || '').trim() })) }; }
+    catch (e) { O.err = e.message; }
+    O.busy = false; schedule();
+  },
+  onbStop: async () => { try { await api('POST', '/api/onboarding/stop'); } catch (e) { S.onb.err = e.message; } },
+  onbDetails: () => { S.onb.details = !S.onb.details; },
+  onbOpen: (el) => { const k = el.dataset.key; S.onb.open[k] = !S.onb.open[k]; },
+  onbUndo: async (el) => {
+    try { const r = await api('POST', `/api/onboarding/undo/${encodeURIComponent(el.dataset.key)}`); S.onb.data = { ...S.onb.data, ...r };
+      if (r.result === 'changed since') toast('Left as is: you changed it after onboarding'); } catch (e) { S.onb.err = e.message; }
+    schedule();
+  },
+  onbUndoAll: async () => {
+    try { const r = await api('POST', '/api/onboarding/undo-all'); S.onb.data = { ...S.onb.data, ...r };
+      toast(`Undid ${r.result.undone} change${r.result.undone === 1 ? '' : 's'}`); } catch (e) { S.onb.err = e.message; }
+    schedule();
+  },
   skipStep: async (el) => {
     const B = S.board, t = B.data.tickets.find((x) => x.key === el.dataset.key);
     if (!t) return;
@@ -1824,6 +1914,9 @@ const INPUTS = {
     schedule();
   },
   azLink: (el) => { S.azure.link = el.value; S.azure.err = ''; },
+  onbRepo: (el) => { S.onb.repo = el.value; },
+  onbProjects: (el) => { S.onb.projects = el.value; },
+  onbSpaces: (el) => { S.onb.spaces = el.value; },
   chatDraft: (el) => { S.board.chatDraft[el.dataset.key] = el.value; const b = document.querySelector('button[data-act=chatSend]'); if (b) b.disabled = !el.value.trim(); },
   azPat: (el) => { S.azure.pat = el.value; S.azure.err = ''; },
   skText: (el) => { S.skills.draft[skillKey(S.skills)] = el.value; S.skills.saved = ''; },
@@ -1918,6 +2011,7 @@ function route() {
     else { if (p.has('key')) S.hist.key = p.get('key') || ''; loadHistory(); }
   }
   if (S.route === 'reports') loadReports();
+  if (S.route === 'onboarding') loadOnboarding();
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
   if (S.route === 'integrations') { loadJira(); loadAzure(); }
   if (S.route === 'skills') {
@@ -1941,3 +2035,9 @@ setInterval(() => {
 loadBoard();
 connect();
 route();
+if (!location.hash) {  // first run: start with onboarding until something has been studied
+  api('GET', '/api/onboarding').then((d) => {
+    S.onb.data = d;
+    if (!d.last && !location.hash) location.hash = '#/onboarding';
+  }).catch(() => {});
+}

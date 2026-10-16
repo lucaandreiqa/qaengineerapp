@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-15 (TestRail project from the pasted link; Claude fetches missing data; connected-app lookups).
+Last updated: 2026-10-16 (Onboarding: study a company's tools and set YourQA up their way).
 
 
 ## 1. What it is
@@ -34,6 +34,7 @@ use, outside the board.
 | Lookups | `workflow/sources.py`, `integrations/github.py`, `confluence.py`, `testrail.py` | Read-only data from connected apps, and the gaps Claude is asked to fetch. |
 | Running | `workflow/playwright_run.py`, `terminal.py` | Runs Playwright, streams its output, explains stalls. |
 | Records | `workflow/history.py`, `reports.py`, `store.py` | Ticket state, run history with evidence, reports. |
+| Onboarding | `onboarding/collect.py`, `analyze.py`, `apply.py`, `run.py` | Studies a company's tools and applies skills, settings, a framework profile and a knowledge base, with Undo. |
 | Trackers | `integrations/atlassian_mcp.py`, `mcp_client.py`, `jira.py`, `azure_boards.py`, `workflow/clients.py` | Jira via Atlassian MCP (OAuth) or REST token; Azure Boards via PAT; demo stand-ins. |
 
 
@@ -123,6 +124,36 @@ step answer says "need": [...]  ────────────────
   says what it couldn't check.
 
 
+## 5a. Onboarding
+
+The first thing a company does: connect its tools; YourQA studies a recent sample of each and sets itself up their way.
+Spec: `docs/superpowers/specs/2026-10-16-onboarding-design.md`; plan: `docs/superpowers/plans/2026-10-16-onboarding.md`.
+
+```
+collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) ─▶ apply each area as it finishes ─▶ summary + Undo
+```
+
+- **Collect** (`collect.py`): tracker `recent(project, 200)` on every client (Jira REST, Jira MCP, Azure Boards, demo) plus
+  what the sample shows (statuses, components, labels, types, transitions); TestRail `sample()` (section tree, 150 most
+  recently updated cases with steps); Confluence pages linked from the tickets, then the latest in chosen spaces (30,
+  each 6k chars); the automation repo from a folder or a link (`git clone --depth 1` into `company/repos/`): tree,
+  configs, CI, docs, then real specs, page objects and helpers (most recent, one per folder), capped at 120k chars.
+  Heavy folders (`node_modules`, `.git`, venvs, build output) and secret files (`.env`, keys) are never read.
+- **Analyze** (`analyze.py`): tickets in batches of 50 (observations) then one combine call → settings (board column,
+  FE/BE components, environment hints), move rules, Gather requirements and Jira comment skill versions; TestRail →
+  TestRail skill version and a section map; Confluence + tickets → knowledge base; repo → framework profile and a Create
+  tests skill version. Each answer carries evidence. A failing area is reported; the others count.
+- **Apply** (`apply.py`): skills become project versions (mode add) for each studied project; settings go to their
+  sections (`workflow.*`, `testrail.section_map`); move rules go into the general Jira comment skill; the knowledge base
+  and profile become `company/knowledge.md` and `company/profile.json`. Each change records the value before it;
+  **Undo** restores it only while it still holds onboarding's value (a later edit of yours is left alone); **Undo all**
+  unwinds the run. Changes that replaced your own edit are marked.
+- **Use**: `agent.company_context()` adds the knowledge base to every step's system prompt; `agent.framework_note()`
+  adds the profile to the Create tests prompt; the TestRail draft uses the learned section map.
+- **Runs** (`run.py`): one study at a time; progress on the bus (`type: onboarding`); Stop keeps the areas already
+  applied; a run the app didn't finish is marked stopped on restart.
+- **Screen**: Onboarding (first on a fresh install): Connect · Choose · Study · What changed, in one column.
+
 ## 6. Skills
 
 - One skill per step (`gather`, `create-tests`, `run-tests`, `jira-comment`, `testrail`), Markdown, up to 60k chars.
@@ -161,6 +192,7 @@ Under the app folder (`~/.qa_app`):
 | `workflow/history/live/<run-id>/` | One run: `run.json`, config, reporter, `events.jsonl`, `results.json`, `terminal.log`, evidence, spec copy |
 | `workflow/history/live/_reports/` | Saved reports (HTML, PDF) |
 | `skills/general/`, `skills/projects/<KEY>/` | Your skill edits |
+| `company/` | Onboarding: `knowledge.md`, `profile.json`, `repos/` (read-only clones), `onboarding/<run>/` (`collected/*.json`, `summary.json`, `changes.json`) |
 | `claude-code/` | Empty working folder for `claude -p`; `fetch/<KEY>/` scratch folders for fetching |
 | `workspace/` (or the configured repo) | The Playwright workspace; ticket files in `tests/tickets/<KEY>/` |
 
@@ -204,6 +236,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: Onboarding (collect → analyse → apply with Undo) as the first of three projects for selling to companies (then framework adapters, then continuous learning).
 - 2026-10-15: Every lane can be skipped (working, failed or at its gate); skipping never writes to Jira or TestRail and is recorded in History.
 - 2026-10-15: Lane 5 shows the drafted TestRail cases in full (steps, expected) and folds the checklist away; `<KEY>-testrail-cases.md` includes steps and expected results.
 - 2026-10-15: A TestRail project missing from the settings is worked out on first use (suite, link or only project) and saved.

@@ -111,6 +111,26 @@ def _set_status(key: str, value: dict) -> None:
     STATUS_FILE.write_text(json.dumps({**_status(), key: value}, indent=2), encoding="utf-8")
 
 
+def _onboarding_sources() -> dict:
+    """What onboarding can read right now: the board's tracker, Confluence through it, TestRail when set up."""
+    wf = S().workflow
+    st = load_settings()
+    try:
+        tracker = wf.jira()
+    except Exception:
+        tracker = None
+    reader = None
+    if tracker is not None:
+        try:
+            from ..integrations import confluence
+            reader = confluence.for_jira(tracker)
+        except Exception:
+            reader = None
+    tr = st.get("testrail", {})
+    testrail = tr if tr.get("enabled") and tr.get("base_url") and tr.get("api_key") else None
+    return {"cfg": wf.cfg, "tracker": tracker, "testrail": testrail, "confluence": reader}
+
+
 class Services:
     def __init__(self) -> None:
         ensure_dirs()
@@ -119,6 +139,8 @@ class Services:
         self.workflow = Workflow(TicketStore(WORKFLOW_DIR / "tickets-demo.json"), TicketStore(WORKFLOW_DIR / "tickets.json"),
                                  MockJira(issues, late), MockTestRail())
         self.jira_pending: dict[str, dict] = {}  # Atlassian sign-ins in progress, by OAuth state
+        from ..onboarding.run import Onboarding
+        self.onboarding = Onboarding(_onboarding_sources)
 
     def seed_demo(self) -> None:
         store = self.workflow.demo_store
@@ -413,6 +435,67 @@ def ticket_terminal(key: str) -> dict:
         if log_file.exists():
             lines = [{"kind": "out", "text": l, "at": 0} for l in log_file.read_text(encoding="utf-8", errors="replace").splitlines()[-1500:]]
     return {"lines": lines, "running": bool(t and t.stage == 2 and t.sub == "working" and not t.error)}
+
+
+# ------------------------------------------------------------------ onboarding
+class StudyIn(BaseModel):
+    projects: list[str] = []
+    spaces: list[str] = []
+    repo: str = ""
+
+
+@app.get("/api/onboarding")
+def onboarding_state() -> dict:
+    svc = S()
+    cfg = svc.workflow.cfg
+    st = load_settings()
+    tracker_kind = "demo" if cfg.is_mock else st.get("workflow", {}).get("tracker", "jira")
+    src = _onboarding_sources()
+    ws = str(st.get("workflow", {}).get("workspace") or "").strip()
+    return {**svc.onboarding.state(),
+            "connections": {
+                "tracker": {"name": {"demo": "Demo tickets", "azure": "Azure Boards"}.get(tracker_kind, "Jira"),
+                            "connected": src["tracker"] is not None, "demo": cfg.is_mock},
+                "testrail": {"name": "TestRail", "connected": bool(src["testrail"])},
+                "confluence": {"name": "Confluence", "connected": src["confluence"] is not None,
+                               "note": "through your Jira connection"}},
+            "defaults": {"projects": [p for p in [cfg.jira_project] if p], "spaces": [], "repo": ws}}
+
+
+@app.post("/api/onboarding/study")
+async def onboarding_study(body: StudyIn) -> dict:
+    ob = S().onboarding
+    if ob.state()["running"]:
+        raise HTTPException(409, "A study is already running")
+    if not body.projects and not body.repo.strip():
+        raise HTTPException(422, "Choose at least one project or an automation repo to study")
+
+    async def go() -> None:
+        try:
+            await ob.study(body.model_dump())
+        except Exception:
+            log.exception("Onboarding study failed")
+    asyncio.create_task(go())
+    await asyncio.sleep(0)
+    return ob.state()
+
+
+@app.post("/api/onboarding/stop")
+def onboarding_stop() -> dict:
+    return {"stopped": S().onboarding.stop()}
+
+
+@app.post("/api/onboarding/undo/{change_id}")
+def onboarding_undo(change_id: str) -> dict:
+    try:
+        return {"result": S().onboarding.undo(change_id), **S().onboarding.state()}
+    except KeyError:
+        raise HTTPException(404, "That change is gone")
+
+
+@app.post("/api/onboarding/undo-all")
+def onboarding_undo_all() -> dict:
+    return {"result": S().onboarding.undo_all(), **S().onboarding.state()}
 
 
 class ChatIn(BaseModel):

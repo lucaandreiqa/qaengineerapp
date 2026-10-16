@@ -63,6 +63,23 @@ then **Open** again (only needed the first time). If a script won't start, run `
 Or manually: `python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`,
 `.venv/bin/python -m playwright install chromium`, `.venv/bin/python -m qa_app`.
 
+## Onboarding
+
+The first screen on a fresh install (and in the sidebar). Connect the tools your team uses (Jira or Azure Boards,
+TestRail, Confluence through your Jira connection, and your automation as a folder or a repo link), choose the
+projects, and press **Study**. YourQA reads a recent sample of each (about 200 tickets per project, 150 test cases,
+30 docs pages and your automation repo; read-only) and Claude works out how your team does things. It then sets
+YourQA up to match, straight away:
+
+- skills for each project: how your tickets are written, how your QA comments, test cases and tests look;
+- board settings: the QA column, which components mean frontend or backend, how test environment links look, and
+  where tickets move after QA;
+- a framework profile of your automation (language, runner, layout, page objects, helpers, run command);
+- a company knowledge base (product areas, glossary, roles, environments) that Claude gets in every step.
+
+**What changed** lists every change with what it was based on, each with **Undo** (and **Undo all**). Undo leaves a
+change alone if you edited it yourself afterwards. **Study again** refreshes everything.
+
 ## Testing board (ticket workflow)
 
 Each ticket in the Jira column goes through five lanes. Nothing reaches Jira or TestRail until you approve it in the ticket drawer.
