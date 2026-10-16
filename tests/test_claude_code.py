@@ -162,3 +162,13 @@ def test_fetching_is_read_only_enforced_by_claude_code_and_every_action_is_shown
     assert "▸ gh pr diff 512 --repo acme/admin" in lines
     assert any(k == "denied" and "gh api -X POST" in l for k, l in seen)  # refused, and you can see it was
     assert "▸ atlassian · getConfluencePage pageId=12345" in lines
+
+
+def test_yourqa_mcp_servers_are_passed_to_fetching_with_only_their_read_tools(fetch_cli, tmp_path):
+    conf = {"yq_gitlab": {"type": "http", "url": "https://gitlab.example.com/api/mcp", "headers": {"Authorization": "Bearer t"}}}
+    claude_code.fetch("claude-sonnet-5-5", "You fetch facts.", "Get MR 5", key="OPTR-78", domains=[], read_dirs=[],
+                      on_event=lambda k, l: None, servers=[], mcp_config=conf, extra_allow=["mcp__yq_gitlab__get_merge_request"])
+    a = json.loads(fetch_cli.read_text())["args"]
+    assert "mcp__yq_gitlab__get_merge_request" in a and not any(x.startswith("mcp__yq_gitlab__create") for x in a)
+    path = a[a.index("--mcp-config") + 1]
+    assert not os.path.exists(path)          # the config holds a token, so it is removed after the run

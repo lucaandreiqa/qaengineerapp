@@ -164,10 +164,11 @@ const S = {
     prio: store.get('boardPrio', 'all'), fopen: false, tip: -1, envEdit: {}, envOther: {}, chatOpen: store.get('chatOpen', true), clFilter: {}, clOpen: {}, feedOpen: {}, termOpen: {}, chatDraft: {}, chatErr: {}, full: store.get('drawerFull', false), env: {}, comment: {}, busy: false, err: '' },
   hist: { data: null, run: null, cmp: null, err: '', q: '', key: '', project: '', type: '', status: '', env: '', range: store.get('histRange', '30d') },
   reports: { trends: null, list: null, range: store.get('repRange', '30d'), project: '', type: '', busy: '', err: '', preview: null, period: { from: '', to: '' } },
-  onb: { data: null, projects: null, spaces: null, repo: null, open: {}, details: false, busy: false, err: '' },
+  onb: { data: null, projects: null, spaces: null, repo: null, mcp: {}, open: {}, details: false, busy: false, err: '' },
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
   jira: { st: null, link: '', busy: '', err: '', col: '', method: store.get('jiraMethod', 'atlassian'), email: '', token: '' },
   azure: { st: null, link: '', pat: '', busy: '', err: '', col: '', changing: false },
+  mcp: { servers: null, adding: false, form: { name: '', url: '', auth: 'oauth', token: '', header: '' }, draft: {}, open: {}, busy: '', err: {}, cc: null, reveal: false },
   skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
 };
 
@@ -858,7 +859,10 @@ ${item.connected ? '' : `<a class="btn btn-quiet btn-sm" href="#/integrations">C
   const step = (n, title, body, done) => `<section class="onb-step${done ? ' is-done' : ''}"><div class="onb-n">${done ? svg(IC.check, 'ic ic-s') : n}</div><div class="onb-body"><h2>${title}</h2>${body}</div></section>`;
   const connect = row('Tracker', c.tracker) + row('Test cases', c.testrail) + row('Docs', c.confluence) +
     `<div class="onb-row"><span class="onb-dot ${O.repo ? 'on' : ''}"></span><span class="onb-k">Automation</span>
-<input class="inp" id="onb-repo" data-in="onbRepo" value="${esc(O.repo || '')}" placeholder="Folder on this computer, or a repo link (GitHub, GitLab…)" ${running ? 'disabled' : ''}></div>`;
+<input class="inp" id="onb-repo" data-in="onbRepo" value="${esc(O.repo || '')}" placeholder="Folder on this computer, or a repo link (GitHub, GitLab…)" ${running ? 'disabled' : ''}></div>`
+    + (c.mcp || []).map((m) => `<div class="onb-row"><span class="onb-dot ${m.ready ? 'on' : ''}"></span><span class="onb-k">MCP</span>
+<span class="onb-v">${esc(m.name)}${m.ready ? '' : ' <span class="onb-note">confirm its tools on Integrations first</span>'}</span>
+${m.ready ? `<label class="cb"><input type="checkbox" ${O.mcp[m.id] !== false ? 'checked' : ''} data-in="onbMcp" data-key="${esc(m.id)}" ${running ? 'disabled' : ''}>Study</label>` : '<a class="btn btn-quiet btn-sm" href="#/integrations">Open</a>'}</div>`).join('');
   const choose = `<label class="onb-field"><span>Projects to study</span><input class="inp" id="onb-projects" data-in="onbProjects" value="${esc(O.projects || '')}" placeholder="e.g. SCRUM, OPTR" ${running ? 'disabled' : ''}></label>
 ${c.confluence.connected ? `<label class="onb-field"><span>Confluence spaces <i>(optional)</i></span><input class="inp" id="onb-spaces" data-in="onbSpaces" value="${esc(O.spaces || '')}" placeholder="e.g. QA, PROD" ${running ? 'disabled' : ''}></label>` : ''}`;
   const lines = d.lines || [];
@@ -866,7 +870,7 @@ ${c.confluence.connected ? `<label class="onb-field"><span>Confluence spaces <i>
     ? `<div class="onb-live">${svg(IC.spin, 'ic ic-s spin')}<span>${esc(lines[lines.length - 1] || 'Starting…')}</span><button type="button" class="btn btn-sm" data-act="onbStop">Stop</button></div>
 <button type="button" class="btn btn-quiet btn-sm onb-tog" data-act="onbDetails" aria-expanded="${O.details}">${O.details ? 'Hide' : 'Show'} details</button>
 ${O.details ? `<div class="term onb-term">${lines.map((l) => `<div class="tl">${esc(l)}</div>`).join('')}</div>` : ''}`
-    : `<p class="onb-hint">Reads a recent sample: about 200 tickets per project, 150 test cases, 30 docs pages and your automation. Read-only.</p>
+    : `<p class="onb-hint">Reads a recent sample: about 200 tickets per project, 150 test cases, 30 docs pages, your automation and up to 10 reads per MCP server. Read-only.</p>
 <button type="button" class="btn btn-primary" data-act="onbStudy" ${O.busy ? 'disabled' : ''}>${last ? 'Study again' : 'Study'}</button>${O.err ? `<p class="onb-err">${esc(O.err)}</p>` : ''}`;
   let changed = '<p class="onb-hint">Nothing yet. Results appear here, applied straight away, each with Undo.</p>';
   if (last && !running) {
@@ -967,7 +971,11 @@ function viewChat(t) {
   const progRow = (m) => `<div class="feed-line">${svg(IC.dotc, 'ic ic-s')}<span>${esc(m.text)}</span><time>${when(m.at)}</time></div>`;
   const msgRow = (m, mi) => {
     if (m.role === 'event') return `<div class="chat-ev">${svg(IC.check, 'ic ic-s')}${esc(m.text)}</div>`;
-    const acts = (m.actions || []).map((a, ai) => `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || a.state === 'dismissed' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
+    const acts = (m.actions || []).map((a, ai) => a.kind === 'mcp_write' ? `<div class="mcp-prop"><div class="mcp-prop-h">${svg(INTEG_ICON.mcp, 'ic ic-s')}<span>${esc(a.label)}</span></div>
+<div class="mcp-prop-call">${esc(a.server)} › ${esc(a.tool)}</div><pre>${esc(JSON.stringify(a.args || {}, null, 2))}</pre>
+${a.state === 'applied' ? `<span class="tres tres-ok">${svg(IC.check, 'ic ic-s')}Ran</span>` : a.state === 'dismissed' ? '<span class="mcp-note">Not run</span>'
+      : `<div class="chat-acts"><button type="button" class="btn btn-sm btn-primary" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${B.busy ? 'disabled' : ''}>Run</button><button type="button" class="btn btn-sm btn-quiet" data-act="chatDismiss" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}">Don't run</button></div>`}</div>`
+      : `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || a.state === 'dismissed' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
     return `<div class="chat-msg chat-${m.role}${m.error ? ' chat-err' : ''}">${m.role === 'assistant' ? `<span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span>` : ''}
 <div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.text) : esc(m.text).replace(/\n/g, '<br>')}</div>
 ${acts ? `<div class="chat-acts">${acts}</div>` : ''}</div>`;
@@ -1271,6 +1279,77 @@ function integStatus(c) {
   return ['Not tested', 'd d-setup', 'setup'];
 }
 
+/* ------------------------------------------------------------------ MCP servers: any remote server, read tools on,
+   write tools off; Claude can only propose a write in the ticket chat and it runs when you click Run. */
+async function loadMcp() {
+  const M = S.mcp;
+  try { M.servers = (await api('GET', '/api/mcp')).servers; } catch (e) { M.servers = []; }
+  const m = /[?&]mcp=([\w-]+)/.exec(location.hash);
+  if (m) { M.open[m[1]] = true; history.replaceState(null, '', '#/integrations'); }
+  if (M.cc == null) { M.cc = []; api('GET', '/api/mcp/claude-code').then((r) => { M.cc = r.servers || []; schedule(); }).catch(() => {}); }
+  schedule();
+}
+function mcpDraft(srv) {
+  const M = S.mcp;
+  if (!M.draft[srv.id]) M.draft[srv.id] = { read: new Set(srv.read || []), write: new Set(srv.write || []) };
+  return M.draft[srv.id];
+}
+function mcpState(srv) {
+  if (srv.auth === 'oauth' && !srv.signed_in) return ['setup', 'Sign in'];
+  if (!srv.confirmed) return ['setup', 'Review tools'];
+  return ['ok', 'Connected'];
+}
+function mcpRow(srv) {
+  const M = S.mcp, [kind, label] = mcpState(srv);
+  const open = M.open[srv.id] != null ? M.open[srv.id] : kind !== 'ok';
+  const reads = (srv.read || []).length, writes = (srv.write || []).length;
+  const summary = kind === 'ok' ? `${reads} read tool${reads === 1 ? '' : 's'}${writes ? `, ${writes} write tool${writes === 1 ? '' : 's'} (run only when you click Run)` : ''}` : hostOf(srv.url);
+  let body = '';
+  if (open) {
+    const d = mcpDraft(srv), tools = srv.tools || [];
+    const list = (k) => tools.filter((t) => t.kind === k).map((t) => `<label class="cb mcp-tool"><input type="checkbox" ${d[k].has(t.name) ? 'checked' : ''} data-in="mcpTool" data-key="${esc(srv.id)}" data-v="${esc(k + ':' + t.name)}"><span><b>${esc(t.name)}</b>${t.description ? `<span class="mcp-desc">${esc(t.description)}</span>` : ''}</span></label>`).join('');
+    const rl = list('read'), wl = list('write');
+    const dirty = !srv.confirmed || [...d.read].sort().join() !== [...(srv.read || [])].sort().join() || [...d.write].sort().join() !== [...(srv.write || [])].sort().join();
+    body = `<div class="irow-body"><div class="mcp-body">
+<p class="mcp-addr">${esc(srv.url)}, ${srv.auth === 'oauth' ? 'signed in through the browser' : srv.auth === 'token' ? 'with a token' : 'no sign-in'}</p>
+${srv.auth === 'oauth' && !srv.signed_in ? `<div class="callout c-warn">${svg(IC.warn)}<span>Sign in to finish connecting ${esc(srv.name)}.</span><button type="button" class="btn btn-sm btn-primary" style="margin-left:auto" data-act="mcpSignIn" data-key="${esc(srv.id)}">Sign in</button></div>` : ''}
+${tools.length ? `<div class="mcp-cols"><div><h3>Read tools</h3><p class="mcp-note">YourQA runs these when a step or onboarding needs data.</p>${rl || '<p class="mcp-note">None.</p>'}</div>
+<div><h3>Write tools</h3><p class="mcp-note">Off unless you switch one on. Claude can then only propose it in the ticket chat; nothing runs until you click Run.</p>${wl || '<p class="mcp-note">None.</p>'}</div></div>`
+      : (srv.auth === 'oauth' && !srv.signed_in ? '' : '<p class="mcp-note">No tools listed yet. Press Test connection.</p>')}
+${M.err[srv.id] ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(M.err[srv.id])}</span></div>` : ''}
+</div><div class="ifoot">
+<button type="button" class="btn" data-act="mcpTest" data-key="${esc(srv.id)}" ${M.busy ? 'disabled' : ''}>${svg(M.busy === 'test:' + srv.id ? IC.spin : IC.bolt, M.busy === 'test:' + srv.id ? 'ic spin' : 'ic')}Test connection</button>
+<button type="button" class="btn btn-quiet" data-act="mcpRemove" data-key="${esc(srv.id)}">${M.removeArm === srv.id ? 'Remove? Click again' : 'Remove'}</button>
+<button type="button" class="btn btn-primary" style="margin-left:auto" data-act="mcpSave" data-key="${esc(srv.id)}" ${dirty && tools.length && !M.busy ? '' : 'disabled'}>${srv.confirmed && !dirty ? 'Saved' : 'Save'}</button></div></div>`;
+  }
+  return `<section class="irow${open ? ' is-open' : ''}" aria-labelledby="mcp-${esc(srv.id)}"><div class="irow-head">
+<button type="button" class="irow-btn" data-act="mcpOpen" data-key="${esc(srv.id)}" aria-expanded="${open}">${integTile('mcp', '#5B6170', 'M')}
+<span class="irow-text"><span id="mcp-${esc(srv.id)}" class="irow-name">${esc(srv.name)}</span><span class="irow-sum">${esc(summary)}</span></span>
+${statusChip(kind, label)}${svg(IC.chev, 'ic irow-chev')}</button></div>${body}</section>`;
+}
+function mcpAddForm() {
+  const M = S.mcp, f = M.form;
+  const seg = (v, l) => `<button type="button" aria-pressed="${f.auth === v}" data-act="mcpAuth" data-v="${v}">${l}</button>`;
+  return `<section class="irow is-open" aria-label="Add an MCP server"><div class="irow-head"><span class="irow-btn" style="cursor:default">${integTile('mcp', '#5B6170', 'M')}
+<span class="irow-text"><span class="irow-name">Add an MCP server</span><span class="irow-sum">A remote server, by its address</span></span></span></div>
+<div class="irow-body"><div class="fields">
+<div><label class="lbl" style="display:block;margin:0 0 6px" for="mcp-name">Name</label><input id="mcp-name" class="inp" value="${esc(f.name)}" placeholder="GitLab" data-in="mcpForm" data-v="name"></div>
+<div><label class="lbl" style="display:block;margin:0 0 6px" for="mcp-url">Address</label><input id="mcp-url" class="inp" value="${esc(f.url)}" placeholder="https://example.com/mcp" data-in="mcpForm" data-v="url" spellcheck="false" autocomplete="off"></div>
+<div class="full"><span class="lbl" style="display:block;margin:0 0 6px">Sign in</span><div class="seg" style="width:max-content" role="group" aria-label="How to sign in">${seg('oauth', 'In the browser')}${seg('token', 'Token')}${seg('none', 'None')}</div></div>
+${f.auth === 'token' ? `<div><label class="lbl" style="display:block;margin:0 0 6px" for="mcp-token">Token</label><div class="secret"><input id="mcp-token" class="inp" type="${M.reveal ? 'text' : 'password'}" value="${esc(f.token)}" data-in="mcpForm" data-v="token" spellcheck="false" autocomplete="off">
+<button type="button" class="reveal" aria-label="${M.reveal ? 'Hide' : 'Show'} token" aria-pressed="${M.reveal}" data-act="mcpReveal">${svg(M.reveal ? IC.eyeoff : IC.eye)}</button></div></div>
+<div><label class="lbl" style="display:block;margin:0 0 6px" for="mcp-header">Header <i style="color:var(--faint);font-style:normal">(optional)</i></label><input id="mcp-header" class="inp" value="${esc(f.header)}" placeholder="Authorization" data-in="mcpForm" data-v="header"></div>` : ''}
+${M.err.add ? `<div class="full callout c-err">${svg(IC.err)}<span>${esc(M.err.add)}</span></div>` : ''}
+</div><div class="ifoot"><button type="button" class="btn btn-quiet" data-act="mcpCancel">Cancel</button>
+<button type="button" class="btn btn-primary" style="margin-left:auto" data-act="mcpConnect" ${f.url.trim() && (f.auth !== 'token' || f.token.trim()) && !M.busy ? '' : 'disabled'}>${M.busy === 'add' ? svg(IC.spin, 'ic spin') : ''}${f.auth === 'oauth' ? 'Connect and sign in' : 'Connect'}</button></div></div></section>`;
+}
+function mcpRows() {
+  const M = S.mcp;
+  const rows = (M.servers || []).map(mcpRow).join('') + (M.adding ? mcpAddForm() : '');
+  const cc = (M.cc || []).filter((n) => !/^yq_/.test(n));
+  return rows + (rows && cc.length ? `<p class="mcp-cc">Claude's fetching can also use the servers set up in Claude Code: ${cc.map(esc).join(', ')}.</p>` : '');
+}
+
 /* ------------------------------------------------------------------ Jira: paste a link, sign in with Atlassian */
 // Mirrors parse_jira_link() in integrations/atlassian_mcp.py, for the instant preview. The server parses again.
 function parseJiraLink(text) {
@@ -1505,6 +1584,7 @@ const INTEG_ICON = {
   zephyr: '<path d="M19 12a7 7 0 0 1-12.4 4.4M5 12a7 7 0 0 1 12.4-4.4"></path><path d="M17.6 4v3.8h-3.8M6.4 20v-3.8h3.8"></path>',
   aws: '<ellipse cx="12" cy="6.2" rx="7" ry="2.6"></ellipse><path d="M5 6.2l1.5 11.7c.2 1.5 2.6 2.6 5.5 2.6s5.3-1.1 5.5-2.6L19 6.2"></path><path d="M6 11.2c1.4.9 3.6 1.4 6 1.4s4.6-.5 6-1.4"></path>',
   azure: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5z"></path><path d="M4 9h16"></path><path d="M7.5 12.5h3.5v4H7.5zM13 12.5h3.5v2.2H13z"></path>',
+  mcp: '<path d="M9 3.5v4M15 3.5v4"></path><path d="M6.5 7.5h11v3.5a5.5 5.5 0 0 1-11 0z"></path><path d="M12 16.5v4"></path>',
   workflow: '<rect x="3.5" y="4" width="5" height="16" rx="1.2"></rect><rect x="9.5" y="4" width="5" height="10" rx="1.2"></rect><rect x="15.5" y="4" width="5" height="13" rx="1.2"></rect>',
 };
 function integTile(key, tint, mono, logo) {
@@ -1519,6 +1599,7 @@ const INTEG_GROUPS = [
   ['Project management', 'Where tickets come from, and where QA comments and moves go', ['jira-mcp', 'azure']],
   ['AI', 'Who does the work in each board step', ['claude']],
   ['Code', 'What Claude reads (read-only) to see the real change behind a ticket. Confluence is read through your Jira connection.', ['github']],
+  ['MCP servers', '', ['mcp-servers']],
   ['Test case management', 'Where passing checks become test cases, and runs are recorded', ['testrail', 'xray', 'zephyr']],
   ['Communication', 'Where run summaries are posted', ['slack', 'teams']],
   ['Testing board', 'How the board works for your project', ['workflow']],
@@ -1612,19 +1693,19 @@ function viewIntegrations() {
   const groups = [...INTEG_GROUPS, ['Other', '', I.cards.map((c) => c.key).filter((k) => !listed.has(k))]];
   // Off and closed: listed once at the bottom instead of a full row each. Jira always keeps its row.
   const isIdle = (k) => {
-    if (k === 'jira-mcp' || k === 'workflow') return false;
+    if (k === 'jira-mcp' || k === 'workflow' || k === 'mcp-servers') return false;
     if (k === 'azure') return !(S.azure.st && S.azure.st.connected) && !S.azure.changing && !integIsOpen('azure', 'off');
     const c = byKey[k]; return c && !I.enabled[k] && !integIsOpen(k, integStatus(c)[2]);
   };
   const idle = [];
   const html = groups.map(([name, , keys]) => {
-    const rows = keys.map((k) => { if (isIdle(k)) { idle.push(k); return ''; } return k === 'jira-mcp' ? jiraRow() : k === 'azure' ? azureRow() : byKey[k] ? integRow(byKey[k]) : ''; }).join('');
+    const rows = keys.map((k) => { if (isIdle(k)) { idle.push(k); return ''; } return k === 'jira-mcp' ? jiraRow() : k === 'azure' ? azureRow() : k === 'mcp-servers' ? mcpRows() : byKey[k] ? integRow(byKey[k]) : ''; }).join('');
     return rows ? `<section class="igroup" aria-label="${esc(name)}"><div class="igroup-head"><h2>${esc(name)}</h2></div><div class="igroup-rows">${rows}</div></section>` : '';
   }).join('');
   const avail = idle.map((k) => {
     const c = byKey[k] || { key: 'azure', name: 'Azure Boards', tint: '#0A6CBC', mono: 'AZ' };
     return `<button type="button" class="iavail-item" data-act="integSetup" data-key="${esc(k)}">${integTile(k, c.tint, c.mono, k === 'azure' ? integLogo('azure') : c.logo)}${esc(c.name)}</button>`;
-  }).join('');
+  }).join('') + (S.mcp.adding ? '' : `<button type="button" class="iavail-item" data-act="mcpAdd">${integTile('mcp', '#5B6170', 'M')}MCP server</button>`);
   return `<main class="main">
 <header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:36px">
 <div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">${sum.ok} connected${sum.err ? `, <span class="c-crit">${sum.err} with an error</span>` : ''}.</p></div>
@@ -1658,6 +1739,50 @@ async function saveIntegration(key, quiet) {
 /* ================================================================== events */
 const ACTS = {
   theme: (el) => { S.theme = el.dataset.v; store.set('theme', S.theme); },
+  // MCP servers
+  mcpAdd: () => { S.mcp.adding = true; S.mcp.err.add = ''; },
+  mcpCancel: () => { S.mcp.adding = false; S.mcp.form = { name: '', url: '', auth: 'oauth', token: '', header: '' }; },
+  mcpAuth: (el) => { S.mcp.form.auth = el.dataset.v; },
+  mcpReveal: () => { S.mcp.reveal = !S.mcp.reveal; },
+  mcpOpen: (el) => { const M = S.mcp, k = el.dataset.key, srv = (M.servers || []).find((x) => x.id === k); M.open[k] = !(M.open[k] != null ? M.open[k] : mcpState(srv)[0] !== 'ok'); },
+  mcpConnect: async () => {
+    const M = S.mcp; M.busy = 'add'; M.err.add = ''; schedule();
+    try {
+      const r = await api('POST', '/api/mcp', M.form);
+      M.adding = false; M.form = { name: '', url: '', auth: 'oauth', token: '', header: '' }; M.open[r.server.id] = true;
+      await loadMcp();
+      if (r.sign_in) location.href = r.sign_in;
+    } catch (e) { M.err.add = e.message; }
+    M.busy = '';
+  },
+  mcpSignIn: async (el) => {
+    try { const r = await api('POST', `/api/mcp/${encodeURIComponent(el.dataset.key)}/sign-in`); location.href = r.sign_in; }
+    catch (e) { S.mcp.err[el.dataset.key] = e.message; }
+  },
+  mcpTest: async (el) => {
+    const M = S.mcp, k = el.dataset.key; M.busy = 'test:' + k; M.err[k] = ''; schedule();
+    try { await api('POST', `/api/mcp/${encodeURIComponent(k)}/test`); delete M.draft[k]; await loadMcp(); toast('Tools listed again'); }
+    catch (e) { M.err[k] = e.message; }
+    M.busy = '';
+  },
+  mcpSave: async (el) => {
+    const M = S.mcp, k = el.dataset.key, d = M.draft[k]; M.busy = 'save'; M.err[k] = ''; schedule();
+    try { await api('POST', `/api/mcp/${encodeURIComponent(k)}/tools`, { read: [...(d ? d.read : [])], write: [...(d ? d.write : [])] }); delete M.draft[k]; M.open[k] = false; await loadMcp(); toast('MCP server saved'); }
+    catch (e) { M.err[k] = e.message; }
+    M.busy = '';
+  },
+  mcpRemove: async (el) => {
+    const M = S.mcp, k = el.dataset.key;
+    if (M.removeArm !== k) { M.removeArm = k; return; }
+    M.removeArm = '';
+    try { M.servers = (await api('DELETE', `/api/mcp/${encodeURIComponent(k)}`)).servers; delete M.draft[k]; toast('MCP server removed'); }
+    catch (e) { M.err[k] = e.message; }
+  },
+  chatDismiss: async (el) => {
+    const key = el.dataset.key;
+    try { const r = await api('POST', `/api/tickets/${encodeURIComponent(key)}/chat/dismiss`, { msg: +el.dataset.m, action: +el.dataset.a }); const B = S.board, i = B.data.tickets.findIndex((x) => x.key === key); if (i > -1 && r.ticket) B.data.tickets[i] = r.ticket; }
+    catch (e) { S.board.chatErr[key] = e.message; }
+  },
   dismissToast: () => { S.toast = ''; },
   // board
   sync: async () => {
@@ -1746,7 +1871,7 @@ const ACTS = {
   onbStudy: async () => {
     const O = S.onb, list = (v) => String(v || '').split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
     O.busy = true; O.err = ''; schedule();
-    try { O.data = { ...O.data, ...(await api('POST', '/api/onboarding/study', { projects: list(O.projects).map((x) => x.toUpperCase()), spaces: list(O.spaces), repo: (O.repo || '').trim() })) }; }
+    try { O.data = { ...O.data, ...(await api('POST', '/api/onboarding/study', { projects: list(O.projects).map((x) => x.toUpperCase()), spaces: list(O.spaces), repo: (O.repo || '').trim(), mcp: (O.data.connections.mcp || []).filter((m) => m.ready && O.mcp[m.id] !== false).map((m) => m.id) })) }; }
     catch (e) { O.err = e.message; }
     O.busy = false; schedule();
   },
@@ -1901,6 +2026,9 @@ const ACTS = {
 };
 
 const INPUTS = {
+  onbMcp: (el) => { S.onb.mcp[el.dataset.key] = el.checked; },
+  mcpForm: (el) => { S.mcp.form[el.dataset.v] = el.value; },
+  mcpTool: (el) => { const srv = (S.mcp.servers || []).find((x) => x.id === el.dataset.key); const d = mcpDraft(srv); const [k, n] = el.dataset.v.split(/:(.*)/s); if (el.checked) d[k].add(n); else d[k].delete(n); },
   boardQ: (el) => { S.board.q = el.value; },
   env: (el) => { S.board.env[el.dataset.key] = el.value; },
   comment: (el) => { S.board.comment[el.dataset.key] = el.value; saveDraft(el.dataset.key, { comment: el.value }); },
@@ -2023,7 +2151,7 @@ function route() {
   if (S.route === 'reports') loadReports();
   if (S.route === 'onboarding') loadOnboarding();
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
-  if (S.route === 'integrations') { loadJira(); loadAzure(); }
+  if (S.route === 'integrations') { loadJira(); loadAzure(); loadMcp(); }
   if (S.route === 'skills') {
     const p = new URLSearchParams(query || '');
     if (STEP_SKILL.includes(p.get('step'))) S.skills.sel = p.get('step');

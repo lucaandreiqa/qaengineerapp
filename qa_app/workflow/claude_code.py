@@ -184,6 +184,7 @@ def _describe(name: str, inp: dict) -> str:
 
 def fetch(model: str, system: str, prompt: str, *, key: str, domains: list[str], read_dirs: list[Path],
           on_event: Callable[[str, str], None], servers: Optional[list[str]] = None,
+          mcp_config: Optional[dict] = None, extra_allow: Optional[list[str]] = None,
           max_turns: int = FETCH_TURNS, timeout: int = FETCH_TIMEOUT) -> tuple[str, str, dict]:
     """Let Claude fetch data with read-only tools. on_event(kind, line): kind 'tool' for each action, 'denied' when Claude
     Code refused one, 'note' for status. Returns (findings markdown, model, usage)."""
@@ -197,8 +198,14 @@ def fetch(model: str, system: str, prompt: str, *, key: str, domains: list[str],
     sysfile.write_text(system, encoding="utf-8")
     cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--system-prompt-file", str(sysfile),
            "--permission-mode", "dontAsk", "--tools", BUILTIN_TOOLS,
-           "--allowedTools", *allow_rules(servers, domains), "--disallowedTools", *DENY,
+           "--allowedTools", *allow_rules(servers, domains), *(extra_allow or []), "--disallowedTools", *DENY,
            "--max-turns", str(max_turns), "--no-session-persistence", "--disable-slash-commands"]
+    mcpfile = None
+    if mcp_config:  # YourQA's own MCP servers; the file can hold a token, so owner-only and removed afterwards
+        mcpfile = APP_DIR / "claude-code" / f"mcp-{uuid.uuid4().hex}.json"
+        mcpfile.touch(mode=0o600)
+        mcpfile.write_text(json.dumps({"mcpServers": mcp_config}), encoding="utf-8")
+        cmd += ["--mcp-config", str(mcpfile)]
     for d in read_dirs:
         if Path(d).is_dir():
             cmd += ["--add-dir", str(d)]
@@ -237,6 +244,8 @@ def fetch(model: str, system: str, prompt: str, *, key: str, domains: list[str],
     finally:
         timer.cancel()
         sysfile.unlink(missing_ok=True)
+        if mcpfile:
+            mcpfile.unlink(missing_ok=True)
         if proc.poll() is None:
             proc.kill()
     if not final:

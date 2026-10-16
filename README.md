@@ -145,6 +145,15 @@ settings). Connected services are one-line rows with a green check; click one to
 up are listed once under *Add a service* at the bottom. Each has its own icon; to
 show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
 
+**MCP servers.** Connect any remote MCP server (GitLab, Notion, Linear, Sentry, your own…) from *Add a service* →
+*MCP server*: give it a name and its address, then sign in in the browser, paste a token, or choose none. YourQA lists
+the server's tools in two groups. **Read tools** are on by default: YourQA runs them when a step asks for data
+(gathering context, writing tests, reviewing results), Claude's fetching can use them, and onboarding can study the
+server. **Write tools** are off; if you switch one on, Claude can only *propose* it in the ticket chat, showing the
+exact call, and it runs only when you click **Run** (each one is logged in `<KEY>-mcp-writes.json`). Nothing is used
+until you confirm the lists with **Save**. Only remote servers are supported; YourQA never starts programs on your
+computer.
+
 **Board sync and filters.** The board pulls its column automatically every 5 minutes while a real board is connected
 (change or turn it off on Integrations → Testing board; a failed sync shows next to the sync button and waits a full
 interval before retrying). **Filter** opens views by what a ticket needs (waiting on me, at a review gate, needs

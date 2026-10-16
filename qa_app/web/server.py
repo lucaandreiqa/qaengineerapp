@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import integrations
+from ..integrations import mcp_servers
 from ..config import APP_DIR, DEFAULT_SETTINGS, SECRET_KEYS, WORKFLOW_DIR, ensure_dirs, load_settings, save_section
 from ..workflow import agent, seed
 from ..workflow.clients import MockJira, MockTestRail
@@ -139,6 +140,7 @@ class Services:
         self.workflow = Workflow(TicketStore(WORKFLOW_DIR / "tickets-demo.json"), TicketStore(WORKFLOW_DIR / "tickets.json"),
                                  MockJira(issues, late), MockTestRail())
         self.jira_pending: dict[str, dict] = {}  # Atlassian sign-ins in progress, by OAuth state
+        self.mcp_pending: dict[str, dict] = {}   # MCP server sign-ins in progress, by OAuth state
         from ..onboarding.run import Onboarding
         self.onboarding = Onboarding(_onboarding_sources)
 
@@ -442,6 +444,7 @@ class StudyIn(BaseModel):
     projects: list[str] = []
     spaces: list[str] = []
     repo: str = ""
+    mcp: list[str] = []
 
 
 @app.get("/api/onboarding")
@@ -458,7 +461,9 @@ def onboarding_state() -> dict:
                             "connected": src["tracker"] is not None, "demo": cfg.is_mock},
                 "testrail": {"name": "TestRail", "connected": bool(src["testrail"])},
                 "confluence": {"name": "Confluence", "connected": src["confluence"] is not None,
-                               "note": "through your Jira connection"}},
+                               "note": "through your Jira connection"},
+                "mcp": [{"id": m["id"], "name": m["name"], "ready": bool(m.get("confirmed") and m.get("read"))}
+                        for m in mcp_servers.servers()]},
             "defaults": {"projects": [p for p in [cfg.jira_project] if p], "spaces": [], "repo": ws}}
 
 
@@ -467,8 +472,8 @@ async def onboarding_study(body: StudyIn) -> dict:
     ob = S().onboarding
     if ob.state()["running"]:
         raise HTTPException(409, "A study is already running")
-    if not body.projects and not body.repo.strip():
-        raise HTTPException(422, "Choose at least one project or an automation repo to study")
+    if not body.projects and not body.repo.strip() and not body.mcp:
+        raise HTTPException(422, "Choose at least one project, an automation repo or an MCP server to study")
 
     async def go() -> None:
         try:
@@ -524,6 +529,16 @@ async def ticket_chat_apply(key: str, body: ChatApplyIn) -> dict:
     except Exception as e:
         raise HTTPException(502, str(e)[:400])
     return {"ticket": S().ticket_view(t)}
+
+
+class ChatDismissIn(BaseModel):
+    msg: int
+    action: int
+
+
+@app.post("/api/tickets/{key}/chat/dismiss")
+def ticket_chat_dismiss(key: str, body: ChatDismissIn) -> dict:
+    return {"ticket": S().ticket_view(S().workflow.chat_dismiss(key, body.msg, body.action))}
 
 
 @app.delete("/api/tickets/{key}/chat")
@@ -804,11 +819,114 @@ async def jira_oauth_callback(request: Request):
     return RedirectResponse(back + "?jira=connected", status_code=303)
 
 
-def _callback_page(ok: bool, text: str, back: str) -> HTMLResponse:
+# ------------------------------------------------------------------ MCP servers (remote, read tools; writes only on Run)
+class McpAddIn(BaseModel):
+    name: str = ""
+    url: str
+    auth: str = "none"
+    token: str = ""
+    header: str = ""
+
+
+class McpToolsIn(BaseModel):
+    read: list[str] = []
+    write: list[str] = []
+
+
+def _mcp_redirect(request: Request) -> str:
+    return f"http://localhost:{request.url.port or 8765}/api/mcp/oauth/callback"
+
+
+def _mcp_view(server_id: str) -> dict:
+    return next((x for x in mcp_servers.public() if x["id"] == server_id), {})
+
+
+async def _mcp_sign_in(server_id: str, request: Request) -> str:
+    srv = mcp_servers.get(server_id)
+    if not srv:
+        raise HTTPException(404, "That MCP server isn't connected")
+    redirect = _mcp_redirect(request)
+    flow = await asyncio.to_thread(mcp_servers.oauth(srv).start, redirect)
+    S().mcp_pending[flow["state"]] = {"id": server_id, "verifier": flow["verifier"], "redirect": redirect}
+    return flow["url"]
+
+
+@app.get("/api/mcp")
+def mcp_list() -> dict:
+    return {"servers": mcp_servers.public()}
+
+
+@app.get("/api/mcp/claude-code")
+async def mcp_claude_code() -> dict:
+    """The servers in your Claude Code setup (Claude's fetching can already use their read tools)."""
+    from ..workflow import claude_code
+    return {"servers": await asyncio.to_thread(claude_code.mcp_servers)}
+
+
+@app.post("/api/mcp")
+async def mcp_add(body: McpAddIn, request: Request) -> dict:
+    try:
+        srv = await asyncio.to_thread(mcp_servers.add, body.name, body.url, body.auth, body.token, body.header)
+        sign_in = await _mcp_sign_in(srv["id"], request) if srv["auth"] == "oauth" else ""
+    except mcp_servers.McpError as e:
+        raise HTTPException(422, str(e))
+    return {"server": _mcp_view(srv["id"]), "sign_in": sign_in}
+
+
+@app.post("/api/mcp/{server_id}/sign-in")
+async def mcp_sign_in(server_id: str, request: Request) -> dict:
+    try:
+        return {"sign_in": await _mcp_sign_in(server_id, request)}
+    except mcp_servers.McpError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/mcp/oauth/callback")
+async def mcp_oauth_callback(request: Request):
+    q = request.query_params
+    back = f"http://127.0.0.1:{request.url.port or 8765}/#/integrations"
+    p = S().mcp_pending.pop(q.get("state", ""), None)
+    if q.get("error") or not p:
+        return _callback_page(False, q.get("error_description") or q.get("error") or "This sign-in link has expired. Start again.", back, "MCP server")
+    srv = mcp_servers.get(p["id"])
+    try:
+        await asyncio.to_thread(mcp_servers.oauth(srv).finish, q.get("code", ""), p["verifier"], p["redirect"])
+        await asyncio.to_thread(mcp_servers.refresh_tools, p["id"])
+    except mcp_servers.McpError as e:
+        return _callback_page(False, str(e), back, "MCP server")
+    bus.publish({"type": "toast", "message": f"{srv['name']} connected. Check its tools and save."})
+    return RedirectResponse(back + "?mcp=" + p["id"], status_code=303)
+
+
+@app.post("/api/mcp/{server_id}/test")
+async def mcp_test(server_id: str) -> dict:
+    try:
+        await asyncio.to_thread(mcp_servers.refresh_tools, server_id)
+    except mcp_servers.McpError as e:
+        raise HTTPException(422, str(e))
+    return {"server": _mcp_view(server_id)}
+
+
+@app.post("/api/mcp/{server_id}/tools")
+def mcp_tools(server_id: str, body: McpToolsIn) -> dict:
+    try:
+        mcp_servers.save(server_id, body.read, body.write)
+    except mcp_servers.McpError as e:
+        raise HTTPException(422, str(e))
+    return {"server": _mcp_view(server_id)}
+
+
+@app.delete("/api/mcp/{server_id}")
+def mcp_remove(server_id: str) -> dict:
+    mcp_servers.remove(server_id)
+    return {"servers": mcp_servers.public()}
+
+
+def _callback_page(ok: bool, text: str, back: str, what: str = "Jira") -> HTMLResponse:
     import html
-    return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>Jira sign-in</title>
+    return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>{html.escape(what)} sign-in</title>
 <body style="font:15px system-ui;max-width:520px;margin:12vh auto;padding:0 16px;color:#17181B">
-<h1 style="font-size:20px">{'Jira connected' if ok else 'Jira sign-in did not finish'}</h1>
+<h1 style="font-size:20px">{html.escape(what) + (' connected' if ok else ' sign-in did not finish')}</h1>
 <p>{html.escape(text)}</p><p><a href="{html.escape(back)}">Back to YourQA</a></p></body>""", status_code=200 if ok else 400)
 
 

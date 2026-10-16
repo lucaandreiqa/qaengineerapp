@@ -100,3 +100,28 @@ def test_knowledge_reaches_every_step_prompt_and_the_profile_reaches_test_writin
     sys_text = agent.system("base", "gather", cfg)
     assert "<company_knowledge>" in sys_text and "OU = organization unit" in sys_text
     assert "Playwright" in agent.framework_note()
+
+
+def test_connected_mcp_servers_are_studied_with_read_tools_only(home, monkeypatch):
+    from qa_app.integrations import mcp_servers as ms
+    tmp, events, calls = home
+    ran = []
+
+    class Fake:
+        def __init__(self, srv): pass
+        def tools(self): return [{"name": "search_issues", "description": "Search"}, {"name": "create_note", "description": "Write"}]
+        def call(self, name, args):
+            ran.append(name)
+            return {"issues": [{"title": "QA checklist template lives in the wiki"}]}
+    monkeypatch.setattr(ms, "_session", lambda srv: Fake(srv))
+    ms.add("GitLab", "https://gitlab.example.com/api/mcp", auth="token", token="t")
+    ms.save("gitlab", read=["search_issues"], write=["create_note"])
+    factory, repo = _sources(tmp, with_repo=False)
+    o = ob.Onboarding(factory)
+    go(o.study({"projects": ["SCRUM"], "spaces": [], "repo": "", "mcp": ["gitlab"]}))
+    last = o.state()["last"]
+    assert ran == ["search_issues"], (ran, o.state()["last"]["sources"], o.lines)  # Claude also proposed create_note: never run
+    assert last["sources"]["mcp"].startswith("Read 1 result")
+    assert "mcp" in calls and "knowledge" in calls
+    saved = json.loads((tmp / "company" / "onboarding" / last["id"] / "collected" / "mcp.json").read_text())
+    assert "wiki" in saved["results"][0]["text"]

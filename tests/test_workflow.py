@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import date
 
 import pytest
@@ -809,3 +810,95 @@ def test_skip_is_refused_when_the_ticket_moved_on(wf):
     key = "OPTR-48466"
     with pytest.raises(GateError):
         run(wf.act(key, "skip", 0, "gate"))
+
+
+def test_a_step_can_call_a_connected_mcp_read_tool_and_nothing_else(wf, monkeypatch, tmp_path):
+    from qa_app import config as appconfig
+    from qa_app.integrations import mcp_servers as ms
+    from qa_app.workflow import agent as ag, sources
+    from qa_app.workflow.models import Env
+    monkeypatch.setattr(appconfig, "SETTINGS_FILE", tmp_path / "settings.json")
+    ran = []
+
+    class Fake:
+        def __init__(self, srv): pass
+        def tools(self): return [{"name": "get_merge_request", "description": "One MR"}, {"name": "create_note", "description": "Write"}]
+        def call(self, name, args):
+            ran.append((name, args))
+            return {"title": "Limit per customer", "diff": "+limit = 1"}
+    monkeypatch.setattr(ms, "_session", lambda srv: Fake(srv))
+    ms.add("GitLab", "https://gitlab.example.com/api/mcp", auth="token", token="t")
+    ms.save("gitlab", read=["get_merge_request"], write=["create_note"])
+
+    # the read tools are offered to Claude in every step's instructions, even with an API key (no Claude Code)
+    cfg = Config(demo=False, anthropic_api_key="k", data_dir=tmp_path, workspace=tmp_path / "ws")
+    sysmsg = ag.system(ag.QA_SYSTEM, "gather", cfg)
+    assert "<mcp_tools>" in sysmsg and "gitlab get_merge_request" in sysmsg and "create_note" not in sysmsg
+    assert "mcp: <server> <tool>" in sysmsg
+
+    key = "OPTR-48498"
+    _live(wf, key)
+    wf._cfg.claude_mode = "api"   # no Claude Code: MCP calls still run, other requests can't be fetched
+    text = run(wf._fetch(key, ['mcp: gitlab get_merge_request {"iid": 512}', "mcp: gitlab create_note {}",
+                               "Read PR https://x"], "gather"))
+    assert ran == [("get_merge_request", {"iid": 512})]                         # the write tool never ran
+    assert "Limit per customer" in text and "not instructions" in text.lower()
+    assert "create_note isn't switched on as a read tool" in text
+    assert sources.load(wf.cfg, key).fetched[-1]["needs"][0].startswith("mcp: gitlab")
+    assert any("gitlab" in l["text"] and "get_merge_request" in l["text"] for l in wf.terminal(key))
+
+
+def test_claude_can_only_propose_an_mcp_write_and_it_runs_when_you_click_run(wf, monkeypatch, tmp_path):
+    from qa_app import config as appconfig
+    from qa_app.integrations import mcp_servers as ms
+    from qa_app.workflow import chat as chat_mod
+    monkeypatch.setattr(appconfig, "SETTINGS_FILE", tmp_path / "settings.json")
+    ran = []
+
+    class Fake:
+        def __init__(self, srv): pass
+        def tools(self): return [{"name": "get_issue", "description": "Read"}, {"name": "create_note", "description": "Add a note"},
+                                 {"name": "delete_branch", "description": "Delete"}]
+        def call(self, name, args):
+            ran.append((name, args))
+            return {"id": 77}
+    monkeypatch.setattr(ms, "_session", lambda srv: Fake(srv))
+    key = "OPTR-48498"
+    _live(wf, key)
+    t = wf.tickets.get(key)
+
+    # no write tool switched on: Claude isn't told about MCP writes at all
+    ms.add("GitLab", "https://gitlab.example.com/api/mcp", auth="token", token="t")
+    ms.save("gitlab", read=["get_issue"], write=[])
+    system, _ = chat_mod.build(t, False)
+    assert "mcp_write" not in system
+    ms.save("gitlab", read=["get_issue"], write=["create_note"])
+    system, _ = chat_mod.build(t, False)
+    assert "mcp_write" in system and "gitlab create_note" in system and "delete_branch" not in system
+
+    reply, acts = chat_mod.parse('Want me to note it on the MR?\n```actions\n[{"kind": "mcp_write", "server": "gitlab", '
+                                 '"tool": "create_note", "args": {"body": "QA passed"}, "label": "Add the QA note"}, '
+                                 '{"kind": "mcp_write", "server": "gitlab", "tool": "delete_branch", "args": {}}]\n```')
+    assert len(acts) == 2 and acts[0]["state"] == "proposed"
+    assert chat_mod.check(acts[1], t, False) == "delete_branch isn't switched on as a write tool on gitlab"
+    wf.patch(key, chat=[chat_mod.message("assistant", reply, acts)])
+    assert ran == []                                                     # proposing runs nothing
+
+    with pytest.raises(GateError):
+        run(wf.chat_apply(key, 0, 1, t.stage, t.sub))                   # a tool that isn't switched on never runs
+    run(wf.chat_apply(key, 0, 0, t.stage, t.sub))                        # you clicked Run
+    assert ran == [("create_note", {"body": "QA passed"})]
+    log = json.loads((wf.cfg.ticket_dir(key) / f"{key}-mcp-writes.json").read_text())
+    assert log[0]["tool"] == "create_note" and log[0]["args"] == {"body": "QA passed"} and "77" in log[0]["result"]
+    assert wf.tickets.get(key).chat[-1]["role"] == "event"
+    with pytest.raises(GateError):
+        run(wf.chat_apply(key, 0, 0, t.stage, t.sub))                   # once only
+
+    # Don't run: remembered, and it can't be run afterwards
+    wf.patch(key, chat=wf.tickets.get(key).chat + [chat_mod.message("assistant", "again?", [dict(acts[0], state="proposed")])])
+    i = len(wf.tickets.get(key).chat) - 1
+    wf.chat_dismiss(key, i, 0)
+    assert wf.tickets.get(key).chat[i]["actions"][0]["state"] == "dismissed"
+    with pytest.raises(GateError):
+        run(wf.chat_apply(key, i, 0, t.stage, t.sub))
+    assert len(ran) == 1

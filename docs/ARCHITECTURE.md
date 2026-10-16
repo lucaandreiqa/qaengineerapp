@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (Design cleanup: one fact per place, secondary details folded away).
+Last updated: 2026-10-16 (MCP servers on the Integrations page: read tools in steps, fetching and onboarding; writes only on Run).
 
 
 ## 1. What it is
@@ -32,6 +32,7 @@ use, outside the board.
 | Claude | `agent.ask_claude`, `workflow/claude_code.py` | API mode (HTTPS, API key) or Claude Code mode (`claude -p` on the user's plan). |
 | Knowledge | `workflow/skills.py`, `qa_app/skills/` | The skill text each step sends to Claude. |
 | Lookups | `workflow/sources.py`, `integrations/github.py`, `confluence.py`, `testrail.py` | Read-only data from connected apps, and the gaps Claude is asked to fetch. |
+| MCP servers | `integrations/mcp_servers.py`, `mcp_client.py` | Remote MCP servers added on the Integrations page: tool lists sorted into read and write, read calls for steps, fetching and onboarding, write calls only after the user clicks Run. |
 | Running | `workflow/playwright_run.py`, `terminal.py` | Runs Playwright, streams its output, explains stalls. |
 | Records | `workflow/history.py`, `reports.py`, `store.py` | Ticket state, run history with evidence, reports. |
 | Onboarding | `onboarding/collect.py`, `analyze.py`, `apply.py`, `run.py` | Studies a company's tools and applies skills, settings, a framework profile and a knowledge base, with Undo. |
@@ -124,6 +125,36 @@ step answer says "need": [...]  ────────────────
   says what it couldn't check.
 
 
+## 5b. MCP servers (Integrations page)
+
+Any remote MCP server (Streamable HTTP) can be added on the Integrations page. Spec:
+`docs/superpowers/specs/2026-10-16-mcp-servers-design.md`.
+
+- **Adding**: name, address (https, or http on localhost), and sign-in: in the browser (OAuth 2.1 with PKCE and
+  dynamic registration, the flow Jira uses; callback `/api/mcp/oauth/callback`), a token the user pastes (sent as
+  `Authorization: Bearer …` or a header they name), or none. YourQA never starts local servers or runs commands.
+- **Tools**: `mcp_servers.classify` sorts each tool: the server's `readOnlyHint`/`destructiveHint` first, then a
+  read-sounding name (get, list, search, read, find, query, fetch, …). Read tools start on, write tools off. Nothing
+  runs until the user confirms the lists with Save (`confirmed`). Test connection lists the tools again; a dropped tool
+  leaves the lists, a new one stays off.
+- **Steps**: every step's instructions list the confirmed read tools in `<mcp_tools>` (both Claude modes). Claude asks
+  with a `need` entry `mcp: <server> <tool> {json}`; `Workflow._fetch` runs it through `mcp_servers.call_read` (which
+  refuses anything not confirmed as a read tool), up to 10 calls per request, each result trimmed to 20,000
+  characters, shown in the terminal, saved in `Sources.fetched` and given back wrapped in `<mcp_results>` as data.
+  Other requests still go to Claude's fetching.
+- **Claude's fetching** (Claude Code mode): the confirmed servers go to `claude -p` in a temporary `--mcp-config`
+  (owner-only, deleted after the run) with only `mcp__yq_<server>__<tool>` read tools allowed.
+- **Onboarding**: a server with confirmed read tools can be ticked on the Connect step. Claude picks up to 10 read
+  calls from the catalog (`analyze.plan_mcp`, unknown tools dropped), YourQA runs them, and the results feed the
+  knowledge base (`collected/mcp.json`).
+- **Write tools**: only ones the user switched on. Claude can only propose one in the ticket chat (`mcp_write`
+  suggestion showing server, tool and exact arguments). It runs when the user clicks Run (`Workflow._run_mcp_write`,
+  checked again first), is logged in `<KEY>-mcp-writes.json`, and Don't run marks it so it can't run later. Steps never
+  call write tools.
+- Servers set up in Claude Code are listed under the group for reference; Claude's fetching already uses their read
+  tools.
+
+
 ## 5a. Onboarding
 
 The first thing a company does: connect its tools; YourQA studies a recent sample of each and sets itself up their way.
@@ -188,6 +219,7 @@ Under the app folder (`~/.qa_app`):
 |---|---|
 | `settings.json` | All settings (Integrations screen); secrets included, local only |
 | `atlassian-mcp.json` | Atlassian OAuth tokens and client registration |
+| `mcp-servers.json` | OAuth tokens and client registrations for MCP servers added on the Integrations page (owner-only); the server list itself is `mcp.servers` in `settings.json` |
 | `workflow/tickets.json`, `tickets-demo.json` | Ticket state |
 | `workflow/history/live/<run-id>/` | One run: `run.json`, config, reporter, `events.jsonl`, `results.json`, `terminal.log`, evidence, spec copy |
 | `workflow/history/live/_reports/` | Saved reports (HTML, PDF) |
@@ -197,7 +229,8 @@ Under the app folder (`~/.qa_app`):
 | `workspace/` (or the configured repo) | The Playwright workspace; ticket files in `tests/tickets/<KEY>/` |
 
 Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-checklist.md`, `.spec.ts`,
-`.serial.spec.ts`, `-report.md`, `-testrail-cases.md`, `-sources.json`, `-errors.json`, `-cleanup.jsonl`.
+`.serial.spec.ts`, `-report.md`, `-testrail-cases.md`, `-sources.json`, `-errors.json`, `-cleanup.jsonl`,
+`-mcp-writes.json` (MCP write calls you ran from the chat).
 
 
 ## 9. Safety rules
@@ -210,6 +243,9 @@ Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-
   posted twice.
 - YourQA never runs shell commands supplied by a remote server; sending a report to Jira over MCP posts a summary
   comment instead of uploading a file.
+- MCP servers: only remote servers at addresses the user typed; read tools run only once confirmed; write tools only
+  when switched on, proposed by Claude in the chat and run on the user's Run click; tool descriptions and results are
+  data, never instructions.
 - Secrets are entered by the user on the Integrations screen and stay in the local settings file.
 
 ### Connection setup helpers
@@ -236,6 +272,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: MCP servers on the Integrations page: remote only; read tools used by steps (`mcp:` needs), Claude's fetching and onboarding; write tools only behind the user's Run click in the chat. Spec: `2026-10-16-mcp-servers-design.md`.
 - 2026-10-16: Design cleanup across every screen: board header reduced to a sentence, search, filter and sync; cards show key, type, state and the action; drawer folds ticket details, runs, cost and files; gate notes move into the approve button's tooltip; History rows, run page, Reports and Skills trimmed; Integrations lists services that are off as one "Add a service" row.
 - 2026-10-16: Onboarding (collect → analyse → apply with Undo) as the first of three projects for selling to companies (then framework adapters, then continuous learning).
 - 2026-10-15: Every lane can be skipped (working, failed or at its gate); skipping never writes to Jira or TestRail and is recorded in History.

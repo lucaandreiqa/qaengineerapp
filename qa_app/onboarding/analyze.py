@@ -77,9 +77,33 @@ async def _testrail(cfg, testrail: dict, on_event) -> dict:
             "section_map": dict(data.get("section_map") or {}), "evidence": [str(e) for e in data.get("evidence") or []][:20]}
 
 
-async def _knowledge(cfg, pages: list[dict], tracker: Optional[dict], on_event) -> dict:
-    on_event("line", f"Building the knowledge base from {len(pages)} pages" + (" and the tickets" if tracker else ""))
+async def plan_mcp(cfg, catalog: list[dict], context: str, on_event) -> list[tuple[str, str, dict]]:
+    """Claude picks up to 10 read calls on the connected MCP servers that show how the company works. Only calls to
+    tools in the catalog (confirmed read tools) are kept."""
+    if not catalog:
+        return []
+    on_event("line", f"Choosing what to read from {len({c['server'] for c in catalog})} MCP server(s)")
+    tools = "\n".join(f"- {c['server']} {c['tool']}: {c['description'][:200]} (arguments: "
+                      f"{json.dumps((c.get('schema') or {}).get('properties') or {}, ensure_ascii=False)[:400]})" for c in catalog)
+    data = await _ask(cfg, "mcp", f"Read-only tools available:\n{tools}\n\nWhat we know so far:\n{context[:4000]}\n\n"
+                      "Pick at most 10 calls whose results would show how this company builds, documents and tests its "
+                      "product (conventions, environments, product areas, recurring problems). Return JSON: {\"calls\": "
+                      "[{\"server\": str, \"tool\": str, \"args\": object}]}.", 3000)
+    allowed = {(c["server"], c["tool"]) for c in catalog}
+    out = []
+    for c in data.get("calls") or []:
+        if isinstance(c, dict) and (c.get("server"), c.get("tool")) in allowed and isinstance(c.get("args", {}), dict):
+            out.append((c["server"], c["tool"], c.get("args") or {}))
+    return out[:10]
+
+
+async def _knowledge(cfg, pages: list[dict], tracker: Optional[dict], on_event, mcp: Optional[dict] = None) -> dict:
+    results = (mcp or {}).get("results") or []
+    on_event("line", f"Building the knowledge base from {len(pages)} pages" + (" and the tickets" if tracker else "")
+             + (f" and {len(results)} MCP results" if results else ""))
     docs = "\n\n".join(f"## {p.get('title')}\n{p.get('text')}" for p in pages)[:60000]
+    if results:
+        docs += "\n\n" + "\n\n".join(f"## {r['server']} {r['tool']}\n{r['text'][:8000]}" for r in results)[:30000]
     titles = "\n".join(f"- [{','.join(t.get('components') or [])}] {t.get('title')}" for t in (tracker or {}).get("tickets", [])[:200])
     data = await _ask(cfg, "knowledge", (f"Pages:\n{docs}\n\n" if docs else "") + (f"Ticket titles:\n{titles}\n\n" if titles else "") +
                       "Write the company knowledge base a QA engineer would want before testing: product areas, a glossary "
@@ -108,11 +132,11 @@ async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None], on
     """{tickets, testrail, knowledge, repo, failed}. A missing source gives None for its area; a failing call is in failed.
     on_area(area, result) is awaited as each area finishes, so its results can be applied straight away."""
     out: dict = {"tickets": None, "testrail": None, "knowledge": None, "repo": None, "failed": {}}
-    tracker, testrail, confluence, repo = (collected.get(k) for k in ("tracker", "testrail", "confluence", "repo"))
+    tracker, testrail, confluence, repo, mcp = (collected.get(k) for k in ("tracker", "testrail", "confluence", "repo", "mcp"))
     jobs = [("tickets", tracker and tracker.get("tickets"), lambda: _tickets(cfg, tracker, on_event)),
             ("testrail", testrail and testrail.get("cases"), lambda: _testrail(cfg, testrail, on_event)),
-            ("knowledge", (confluence and confluence.get("pages")) or (tracker and tracker.get("tickets")),
-             lambda: _knowledge(cfg, (confluence or {}).get("pages") or [], tracker, on_event)),
+            ("knowledge", (confluence and confluence.get("pages")) or (tracker and tracker.get("tickets")) or (mcp and mcp.get("results")),
+             lambda: _knowledge(cfg, (confluence or {}).get("pages") or [], tracker, on_event, mcp)),
             ("repo", repo and repo.get("files"), lambda: _repo(cfg, repo, on_event))]
     for area, have, job in jobs:
         if not have:

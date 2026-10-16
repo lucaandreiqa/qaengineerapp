@@ -112,10 +112,11 @@ def _get_json(http: requests.Session, urls: list[str]) -> Optional[dict]:
 
 
 class OAuth:
-    def __init__(self, server_url: str, store: TokenStore, http: Optional[requests.Session] = None) -> None:
+    def __init__(self, server_url: str, store: TokenStore, http: Optional[requests.Session] = None, label: str = "Atlassian") -> None:
         self.server = server_url
         self.store = store
         self.http = http or requests.Session()
+        self.label = label  # the service named in messages
 
     # ---- discovery
     def metadata(self) -> dict:
@@ -152,7 +153,7 @@ class OAuth:
                 "response_types": ["code"], "token_endpoint_auth_method": "none"}
         r = self.http.post(meta["registration_endpoint"], json=body, timeout=TIMEOUT)
         if not r.ok:
-            raise McpError(f"Registering the app with Atlassian failed (HTTP {r.status_code}): {r.text[:200]}")
+            raise McpError(f"Registering the app with {self.label} failed (HTTP {r.status_code}): {r.text[:200]}")
         reg = {**r.json(), "redirect_uris": [redirect_uri]}
         self.store.put(self.server, client=reg)
         return reg
@@ -180,23 +181,23 @@ class OAuth:
         entry = self.store.get(self.server)
         tokens, reg = entry.get("tokens") or {}, entry.get("client") or {}
         if not tokens.get("refresh_token") or not reg.get("client_id"):
-            raise McpAuthRequired("Signed out of Atlassian. Sign in again.")
+            raise McpAuthRequired(f"Signed out of {self.label}. Sign in again.")
         meta = self.metadata()
         data = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": reg["client_id"],
                 "resource": meta["resource"]}
         try:
             return self._token_request(meta, reg, data, keep_refresh=tokens["refresh_token"])
         except McpError as e:
-            raise McpAuthRequired(f"Atlassian sign-in expired. Sign in again. ({e})") from e
+            raise McpAuthRequired(f"{self.label} sign-in expired. Sign in again. ({e})") from e
 
     def _token_request(self, meta: dict, reg: dict, data: dict, keep_refresh: str = "") -> dict:
         auth = (reg["client_id"], reg["client_secret"]) if reg.get("client_secret") else None
         r = self.http.post(meta["token_endpoint"], data=data, auth=auth, timeout=TIMEOUT, headers={"Accept": "application/json"})
         if not r.ok:
-            raise McpError(f"Atlassian sign-in failed (HTTP {r.status_code}): {r.text[:200]}")
+            raise McpError(f"{self.label} sign-in failed (HTTP {r.status_code}): {r.text[:200]}")
         t = r.json()
         if not t.get("access_token"):
-            raise McpError("Atlassian sign-in returned no access token.")
+            raise McpError(f"{self.label} sign-in returned no access token.")
         tokens = {"access_token": t["access_token"], "refresh_token": t.get("refresh_token") or keep_refresh,
                   "expires_at": time.time() + float(t.get("expires_in") or 3600), "scope": t.get("scope", "")}
         self.store.put(self.server, tokens=tokens)
@@ -205,7 +206,7 @@ class OAuth:
     def access_token(self) -> str:
         tokens = self.store.get(self.server).get("tokens") or {}
         if not tokens.get("access_token"):
-            raise McpAuthRequired("Not signed in to Atlassian yet.")
+            raise McpAuthRequired(f"Not signed in to {self.label} yet.")
         if tokens.get("expires_at", 0) - 60 < time.time():
             tokens = self.refresh()
         return tokens["access_token"]
@@ -235,8 +236,10 @@ class McpSession:
     """JSON-RPC over Streamable HTTP. One session per object; initialize() runs on first use."""
 
     def __init__(self, server_url: str, token: Callable[[], str], refresh: Optional[Callable[[], Any]] = None,
-                 http: Optional[requests.Session] = None) -> None:
+                 http: Optional[requests.Session] = None, label: str = "Atlassian", headers: Optional[dict] = None) -> None:
         self.server = server_url
+        self.label = label
+        self.extra_headers = dict(headers or {})  # e.g. a token header the user pasted, instead of OAuth
         self.token = token
         self.refresh = refresh
         self.http = http or requests.Session()
@@ -246,7 +249,8 @@ class McpSession:
         self._tools: Optional[list[dict]] = None
 
     def _post(self, payload: dict, retry: bool = True) -> Optional[dict]:
-        headers = {"Authorization": f"Bearer {self.token()}", "Content-Type": "application/json",
+        tok = self.token() if self.token else ""
+        headers = {**({"Authorization": f"Bearer {tok}"} if tok else {}), **self.extra_headers, "Content-Type": "application/json",
                    "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL_VERSION}
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
@@ -258,13 +262,13 @@ class McpSession:
             self.refresh()
             return self._post(payload, retry=False)
         if r.status_code == 401:
-            raise McpAuthRequired("Atlassian rejected the sign-in. Sign in again.")
+            raise McpAuthRequired(f"{self.label} rejected the sign-in. Sign in again.")
         if r.status_code == 404 and self.session_id and retry:  # session expired on the server: start a new one
             self.session_id, self._ready = "", False
             self.initialize()
             return self._post(payload, retry=False)
         if r.status_code == 403:
-            raise McpError(f"Atlassian refused the request (HTTP 403). An admin may need to allow this app: {r.text[:200]}")
+            raise McpError(f"{self.label} refused the request (HTTP 403). An admin may need to allow this app: {r.text[:200]}")
         if not r.ok:
             raise McpError(f"MCP server error (HTTP {r.status_code}): {r.text[:200]}")
         self.session_id = r.headers.get("Mcp-Session-Id", self.session_id)

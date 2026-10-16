@@ -39,9 +39,13 @@ ANSWERS = {
 }
 
 
+ANSWERS["mcp"] = {"calls": [{"server": "gitlab", "tool": "search_issues", "args": {"q": "qa"}},
+                            {"server": "gitlab", "tool": "create_note", "args": {}}]}
+
+
 def fake_claude(calls, bad=()):
     async def ask(cfg, system, prompt, max_tokens=4000, step=None):
-        area = next(a for a in ("batch", "combine", "testrail", "knowledge", "repo") if f"[onboarding:{a}]" in system)
+        area = next(a for a in ("batch", "combine", "testrail", "knowledge", "repo", "mcp") if f"[onboarding:{a}]" in system)
         calls.append(area)
         return "not json at all" if area in bad else json.dumps(ANSWERS[area])
     return ask

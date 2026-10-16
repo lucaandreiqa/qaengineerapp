@@ -136,6 +136,9 @@ class Onboarding:
                            lambda d: f"Read the automation repo: {len(d['tree'])} files, {len(d['files'])} studied")
             else:
                 summary["sources"]["repo"] = "not given"
+            servers = [x for x in choices.get("mcp") or [] if x]
+            if servers:
+                await self._study_mcp(cfg, servers, collected, summary, run_dir)
 
             async def apply_area(area: str, result: dict) -> None:
                 changes = apply.plan({area: result}, projects)
@@ -158,6 +161,37 @@ class Onboarding:
             self._save_summary(run_dir, summary)
             self._emit("done", status=summary["status"], id=run_id)
         return run_id
+
+    async def _study_mcp(self, cfg, servers: list[str], collected: dict, summary: dict, run_dir: Path) -> None:
+        """Claude picks read calls on the chosen MCP servers; YourQA runs them (confirmed read tools only)."""
+        from ..integrations import mcp_servers
+        catalog = [c for c in mcp_servers.catalog() if c["server"] in servers]
+        if not catalog:
+            summary["sources"]["mcp"] = "failed: no confirmed read tools on the chosen servers"
+            self._emit("line", text="MCP servers: " + summary["sources"]["mcp"])
+            return
+        self._emit("progress", source="mcp", status="reading", text="Reading the MCP servers")
+        tickets = (collected.get("tracker") or {}).get("tickets") or []
+        context = "\n".join(f"- {t.get('title')}" for t in tickets[:40])
+        try:
+            calls = await analyze.plan_mcp(cfg, catalog, context, lambda kind, text: self._emit("line", text=text))
+        except Exception as e:
+            summary["sources"]["mcp"] = f"failed: {(str(e).splitlines() or ['error'])[0][:240]}"
+            return
+        results = []
+        for server, tool, args in calls:
+            try:
+                text = await asyncio.to_thread(mcp_servers.call_read, server, tool, args)
+                results.append({"server": server, "tool": tool, "args": args, "text": text})
+                self._emit("line", text=f"Read {tool} on {server}")
+            except Exception as e:
+                self._emit("line", text=f"{server} {tool}: {(str(e).splitlines() or ['error'])[0][:200]}")
+        collected["mcp"] = {"results": results}
+        (run_dir / "collected").mkdir(parents=True, exist_ok=True)
+        (run_dir / "collected" / "mcp.json").write_text(json.dumps(collected["mcp"], ensure_ascii=False, indent=1), encoding="utf-8")
+        summary["sources"]["mcp"] = f"Read {len(results)} result{'s' if len(results) != 1 else ''} from {', '.join(servers)}"
+        self._emit("line", text=summary["sources"]["mcp"])
+        self._save_summary(run_dir, summary)
 
     # ---------------------------------------------------------------------- undo
     def undo(self, change_id: str) -> str:
