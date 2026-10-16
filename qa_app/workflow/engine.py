@@ -436,7 +436,7 @@ class Workflow:
         if t:
             self.patch(key, chat=(t.chat + [msg])[-chat_mod.MAX_MESSAGES:], chat_busy=False)
 
-    async def chat_apply(self, key: str, msg_i: int, act_i: int, stage: int, sub: str) -> Ticket:
+    async def chat_apply(self, key: str, msg_i: int, act_i: int, stage: int, sub: str, who: str = "") -> Ticket:
         """Run one action Claude suggested, after checking it against where the ticket is now."""
         t = self.tickets.get(key)
         if not t:
@@ -450,7 +450,7 @@ class Workflow:
         if a.get("kind") in ("learn_move", "skip_learn"):  # YourQA's own question: about the skill, not the ticket's state
             return self._answer_learn(t, msg_i, act_i, a)
         if a.get("kind") == "mcp_write":  # a write on a connected MCP server: runs only on this click
-            return await self._run_mcp_write(t, msg_i, act_i, a)
+            return await self._run_mcp_write(t, msg_i, act_i, a, who)
         if (t.stage, t.sub) != (stage, sub):
             raise GateError(f"{key} has moved on (now lane {t.stage + 1} · {t.sub}). Ask Claude again.")
         why = chat_mod.check(a, t, self.can_redo_gather(t))
@@ -485,7 +485,7 @@ class Workflow:
         self.toast(f"{key}: {a['label']}")
         return self.patch(key, chat=chat[-chat_mod.MAX_MESSAGES:])
 
-    async def _run_mcp_write(self, t: Ticket, msg_i: int, act_i: int, a: dict) -> Ticket:
+    async def _run_mcp_write(self, t: Ticket, msg_i: int, act_i: int, a: dict, who: str = "") -> Ticket:
         from ..integrations import mcp_servers
         why = chat_mod.check(a, t, self.can_redo_gather(t))
         if why:
@@ -501,7 +501,7 @@ class Workflow:
             log = json.loads(log_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             log = []
-        log.append({"at": time.time(), "approved_by": "you (clicked Run in the chat)", "server": server, "tool": tool,
+        log.append({"at": time.time(), "approved_by": f"{who or 'you'} (clicked Run in the chat)", "server": server, "tool": tool,
                     "args": args, "result": result[:4000]})
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(json.dumps(log, indent=1, ensure_ascii=False), encoding="utf-8")

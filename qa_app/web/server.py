@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .. import integrations
+from .. import auth, integrations
 from ..integrations import mcp_servers
 from ..config import APP_DIR, DEFAULT_SETTINGS, SECRET_KEYS, WORKFLOW_DIR, ensure_dirs, load_settings, save_section
 from ..workflow import agent, seed
@@ -141,6 +141,7 @@ class Services:
                                  MockJira(issues, late), MockTestRail())
         self.jira_pending: dict[str, dict] = {}  # Atlassian sign-ins in progress, by OAuth state
         self.mcp_pending: dict[str, dict] = {}   # MCP server sign-ins in progress, by OAuth state
+        self.auth_pending: dict[str, dict] = {}  # Google sign-ins in progress, by OAuth state
         from ..onboarding.run import Onboarding
         self.onboarding = Onboarding(_onboarding_sources)
 
@@ -229,6 +230,88 @@ def S() -> Services:
 @app.exception_handler(GateError)
 async def gate_error(_: Request, e: GateError):
     return JSONResponse({"detail": str(e), **e.extra}, status_code=e.status)
+
+
+# ------------------------------------------------------------------ sign-in (Google) and sessions
+@app.middleware("http")
+async def require_session(request: Request, call_next):
+    """Every API route needs a signed-in session, except sign-in itself and the OAuth callbacks (one-time state)."""
+    user = auth.session_user(request.cookies.get(auth.COOKIE, ""))
+    if auth.needs_session(request.url.path) and not user:
+        return JSONResponse({"detail": "Sign in first", "login": True}, status_code=401)
+    request.state.user = user or {}
+    return await call_next(request)
+
+
+def _base(request: Request) -> str:
+    # Google allows loopback redirects on 127.0.0.1; the session cookie is set there, so the app continues there.
+    return f"http://127.0.0.1:{request.url.port or 8765}"
+
+
+def _with_session(resp, token: str):
+    resp.set_cookie(auth.COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax", path="/")
+    return resp
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request) -> dict:
+    user = auth.session_user(request.cookies.get(auth.COOKIE, ""))
+    return {**auth.status(), "user": user if auth.enabled() else {"email": "", "name": "You", "guest": True}}
+
+
+@app.get("/api/auth/google/start")
+def auth_google_start(request: Request):
+    try:
+        url = auth.start(_base(request) + "/api/auth/google/callback", S().auth_pending)
+    except auth.AuthError as e:
+        return RedirectResponse(_base(request) + "/#/login?error=" + _q(str(e)), status_code=303)
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/api/auth/google/callback")
+async def auth_google_callback(request: Request):
+    q = request.query_params
+    if q.get("error"):
+        return RedirectResponse(_base(request) + "/#/login?error=" + _q("Sign-in was cancelled."), status_code=303)
+    try:
+        user = await asyncio.to_thread(auth.finish, q.get("code", ""), q.get("state", ""), S().auth_pending)
+    except auth.AuthError as e:
+        return RedirectResponse(_base(request) + "/#/login?error=" + _q(str(e)), status_code=303)
+    return _with_session(RedirectResponse(_base(request) + "/#/", status_code=303), auth.create_session(user))
+
+
+@app.post("/api/auth/guest")
+def auth_guest() -> JSONResponse:
+    try:
+        token = auth.guest_session()
+    except auth.AuthError as e:
+        raise HTTPException(403, str(e))
+    return _with_session(JSONResponse({"ok": True}), token)
+
+
+@app.post("/api/auth/sign-out")
+def auth_sign_out(request: Request) -> JSONResponse:
+    auth.end_session(request.cookies.get(auth.COOKIE, ""))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
+
+
+def _q(text: str) -> str:
+    from urllib.parse import quote
+    return quote(text[:200])
+
+
+# ------------------------------------------------------------------ first-run setup
+@app.get("/api/setup")
+def setup_state() -> dict:
+    return {"done": bool(load_settings().get("app", {}).get("setup_done"))}
+
+
+@app.post("/api/setup/done")
+def setup_done(body: dict = Body(default={})) -> dict:
+    save_section("app", {"setup_done": bool((body or {}).get("done", True))})
+    return setup_state()
 
 
 # ------------------------------------------------------------------ board
@@ -521,9 +604,10 @@ class ChatApplyIn(BaseModel):
 
 
 @app.post("/api/tickets/{key}/chat/apply")
-async def ticket_chat_apply(key: str, body: ChatApplyIn) -> dict:
+async def ticket_chat_apply(key: str, body: ChatApplyIn, request: Request) -> dict:
+    who = (getattr(request.state, "user", None) or {}).get("email", "")
     try:
-        t = await S().workflow.chat_apply(key, body.msg, body.action, body.stage, body.sub)
+        t = await S().workflow.chat_apply(key, body.msg, body.action, body.stage, body.sub, who=who)
     except GateError:
         raise
     except Exception as e:

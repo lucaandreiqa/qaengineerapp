@@ -150,7 +150,7 @@ const CHECK_INFO = [
   ['performance', 'Performance', 'Timing, page weight and Lighthouse', IC.perf],
 ];
 const SEVL = { critical: 'Critical', major: 'Major', minor: 'Minor', info: 'Info' };
-const ROUTES = ['onboarding', 'board', 'history', 'reports', 'integrations', 'skills'];
+const ROUTES = ['onboarding', 'board', 'history', 'reports', 'integrations', 'skills', 'setup', 'login'];
 const STEP_SKILL = ['gather', 'create-tests', 'run-tests', 'jira-comment', 'testrail'];  // board lane i → its skill
 
 
@@ -168,6 +168,8 @@ const S = {
   integ: { cards: null, vals: {}, enabled: {}, reveal: {}, results: {}, saved: {}, testing: {}, open: {} },
   jira: { st: null, link: '', busy: '', err: '', col: '', method: store.get('jiraMethod', 'atlassian'), email: '', token: '' },
   azure: { st: null, link: '', pat: '', busy: '', err: '', col: '', changing: false },
+  auth: { status: null, err: '' },
+  setup: { tab: {}, busy: false, err: '' },
   mcp: { servers: null, adding: false, form: { name: '', url: '', auth: 'oauth', token: '', header: '' }, draft: {}, open: {}, busy: '', err: {}, cc: null, reveal: false },
   skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
 };
@@ -177,6 +179,7 @@ async function api(method, path, body) {
   const r = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
   let data = null;
   try { data = await r.json(); } catch (e) { /* empty body */ }
+  if (r.status === 401 && data && data.login && S.route !== 'login') { S.auth.status = { ...(S.auth.status || {}), user: null }; S.route = 'login'; schedule(); }
   if (!r.ok) {
     const err = new Error((data && (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail))) || r.statusText);
     err.data = data; err.status = r.status;
@@ -282,9 +285,12 @@ function render() {
   });
   $app.dataset.theme = S.theme;
   document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
-  const screen = { onboarding: viewOnboarding, board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
   const next = document.createElement('div');
-  next.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewReportModal() + viewToast();
+  if (S.route === 'login' || S.route === 'setup') next.innerHTML = (S.route === 'login' ? viewLogin() : viewSetup()) + viewToast();
+  else {
+    const screen = { onboarding: viewOnboarding, board: viewBoard, history: viewHistory, reports: viewReports, integrations: viewIntegrations, skills: viewSkills }[S.route]();
+    next.innerHTML = viewSide() + screen + (S.route === 'board' ? viewDrawer() : '') + viewReportModal() + viewToast();
+  }
   morphChildren($app, next);
   document.querySelectorAll('[data-keep]').forEach((el) => {
     const v = scrolls[el.dataset.keep];
@@ -307,7 +313,7 @@ function viewSide() {
 <a class="nav-link" href="#/onboarding" ${S.route === 'onboarding' ? 'aria-current="page"' : ''}>${svg(IC.spark || IC.skill)}Onboarding</a>
 ${link('board', 'Board', IC.board, 1)}${link('history', 'History', IC.history, 2)}${link('reports', 'Reports', IC.report, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
-<div class="seg" role="group" aria-label="Theme">
+${viewWho()}<div class="seg" role="group" aria-label="Theme">
 <button type="button" aria-pressed="${S.theme === 'light'}" data-act="theme" data-v="light">${svg(IC.sun, 'ic', 'style="width:14px;height:14px"')}Light</button>
 <button type="button" aria-pressed="${S.theme === 'dark'}" data-act="theme" data-v="dark">${svg(IC.moon, 'ic', 'style="width:14px;height:14px"')}Dark</button>
 </div></div></nav>`;
@@ -833,6 +839,118 @@ ${viewChat(t)}</section>` : ''}
 </div></aside>`;
 }
 
+/* ------------------------------------------------------------------ sign-in and first-run setup */
+async function boot() {
+  try { S.auth.status = await api('GET', '/api/auth/status'); } catch (e) { S.auth.status = { required: true, google: false, user: null }; }
+  const st = S.auth.status;
+  if (st.required && !st.user) { route(); if (S.route !== 'login') { S.route = 'login'; } schedule(); return; }
+  loadBoard();
+  connect();
+  route();
+  if (S.route === 'login') location.hash = '#/';
+  try {
+    const setup = await api('GET', '/api/setup');
+    if (!setup.done && S.route !== 'setup' && !/[?&](jira=connected|mcp=)/.test(location.hash)) location.hash = '#/setup/' + SETUP[0].id;
+  } catch (e) { /* setup state unknown: stay where we are */ }
+}
+
+const GOOGLE_G = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.7v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8z"/><path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z"/><path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.3a12 12 0 0 0 0 10.8z"/><path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z"/></svg>';
+
+function viewLogin() {
+  const st = S.auth.status || {};
+  return `<main class="signin"><section class="signin-card" aria-labelledby="login-title">
+<div class="signin-brand">${LOGO}<span>YourQA</span></div>
+<h1 id="login-title">Sign in</h1>
+<p class="signin-lead">Test every ticket with Claude, with you approving each step.</p>
+${st.google === false ? `<div class="callout c-info">${svg(IC.info)}<span>Google sign-in isn't set up in this copy of YourQA yet. You can continue without signing in.</span></div>
+<button type="button" class="btn btn-primary signin-btn" data-act="authGuest">Continue without signing in</button>`
+    : `<a class="signin-google" href="/api/auth/google/start">${GOOGLE_G}<span>Sign in with Google</span></a>`}
+${S.auth.err ? `<p class="signin-err" role="alert">${esc(S.auth.err)}</p>` : ''}
+<p class="signin-fine">Signing in tells YourQA who is testing. Your tickets and keys stay on this computer.</p>
+</section></main>`;
+}
+
+function viewWho() {
+  const u = S.auth.status && S.auth.status.user;
+  if (!u || !S.auth.status.required) return '';
+  const name = u.guest ? 'Not signed in' : (u.name || u.email);
+  return `<div class="who">${u.picture ? `<img src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="who-i" aria-hidden="true">${esc((name || '?').slice(0, 1).toUpperCase())}</span>`}
+<span class="who-t"><span class="trunc">${esc(name)}</span>${u.email ? `<span class="trunc who-e">${esc(u.email)}</span>` : ''}</span>
+<button type="button" class="btn btn-quiet btn-sm" data-act="authSignOut">${u.guest ? 'Sign in' : 'Sign out'}</button></div>`;
+}
+
+/* Setup: one page per connection, each skippable. Pages reuse the Integrations forms. */
+const SETUP = [
+  { id: 'claude', name: 'Claude', title: 'Connect Claude', lead: 'Claude reads each ticket, writes the checklist and the tests, and reviews the results. Use Claude Code on this computer (your Claude plan) or an API key.', tabs: [['claude', 'Claude']] },
+  { id: 'tracker', name: 'Tickets', title: 'Where your tickets are', lead: 'YourQA takes tickets from one board column and, when you approve, comments and moves them.', tabs: [['jira-mcp', 'Jira'], ['azure', 'Azure Boards']] },
+  { id: 'cases', name: 'Test cases', title: 'Test cases', lead: 'Where passing checks become test cases. YourQA checks for duplicates and pushes only when you say so.', tabs: [['testrail', 'TestRail'], ['zephyr', 'Zephyr Scale'], ['xray', 'Xray']] },
+  { id: 'code', name: 'Code and tools', title: 'Code and other tools', lead: 'Read-only access so Claude can see the real change behind a ticket. Add other tools, like GitLab or Notion, as MCP servers.', tabs: [['github', 'GitHub'], ['mcp', 'MCP servers']] },
+  { id: 'repo', name: 'Test automation', title: 'Your test automation', lead: 'Point YourQA at your automation so it learns how your team writes tests. It is only read.', tabs: [] },
+  { id: 'notify', name: 'Run summaries', title: 'Run summaries', lead: 'Post a short summary of each run to a channel.', tabs: [['slack', 'Slack'], ['teams', 'Microsoft Teams']] },
+  { id: 'finish', title: 'Ready to study', lead: 'YourQA studies a recent sample from what you connected and sets itself up to work your team\'s way. Everything it changes can be undone.', tabs: [] },
+];
+
+function loadSetup() {
+  if (!S.integ.cards) loadIntegrations();
+  loadJira(); loadAzure(); loadMcp();
+  if (!S.onb.data) loadOnboarding();
+}
+
+function setupConnected(key) {
+  if (key === 'jira-mcp') return !!(S.jira.st && S.jira.st.connected);
+  if (key === 'azure') return !!(S.azure.st && S.azure.st.connected);
+  if (key === 'mcp') return (S.mcp.servers || []).some((m) => m.confirmed);
+  const c = (S.integ.cards || []).find((x) => x.key === key);
+  return !!(c && integStatus(c)[2] === 'ok');
+}
+
+function setupBody(page, key) {
+  if (page.id === 'repo') {
+    const O = S.onb;
+    return `<label class="onb-field"><span>Folder on this computer, or a repo link</span><input class="inp" id="setup-repo" data-in="onbRepo" value="${esc(O.repo || '')}" placeholder="~/work/web-tests or https://github.com/acme/web-tests"></label>
+<p class="setup-note">A link is cloned read-only into YourQA's folder. You can change it later on the Onboarding screen.</p>`;
+  }
+  if (page.id === 'finish') {
+    const rows = SETUP.filter((p) => p.tabs.length).map((p) => {
+      const on = p.tabs.filter(([k]) => setupConnected(k)).map(([, l]) => l);
+      return `<li class="${on.length ? 'is-on' : ''}"><span class="setup-dot" aria-hidden="true"></span><span>${esc(p.name)}</span><span class="setup-v">${on.length ? esc(on.join(', ')) : 'Skipped'}</span><a href="#/setup/${p.id}">Change</a></li>`;
+    }).join('') + `<li class="${(S.onb.repo || '').trim() ? 'is-on' : ''}"><span class="setup-dot" aria-hidden="true"></span><span>Test automation</span><span class="setup-v">${esc((S.onb.repo || '').trim() || 'Skipped')}</span><a href="#/setup/repo">Change</a></li>`;
+    return `<ul class="setup-sum">${rows}</ul>
+<label class="onb-field"><span>Projects to study</span><input class="inp" id="setup-projects" data-in="onbProjects" value="${esc(S.onb.projects || '')}" placeholder="e.g. SCRUM, OPTR"></label>
+${S.setup.err ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(S.setup.err)}</span></div>` : ''}`;
+  }
+  if (key === 'jira-mcp') return S.jira.st ? `<div class="irow is-open irow-jira">${viewJiraConnect()}</div>` : '<p class="setup-note">Loading…</p>';
+  if (key === 'azure') return S.azure.st ? `<div class="irow is-open irow-jira">${viewAzureConnect()}</div>` : '<p class="setup-note">Loading…</p>';
+  if (key === 'mcp') return (S.mcp.servers ? mcpRows() : '') + (S.mcp.adding ? '' : `<button type="button" class="btn" data-act="mcpAdd">${svg(INTEG_ICON.mcp, 'ic ic-s')}Add an MCP server</button>`);
+  const c = (S.integ.cards || []).find((x) => x.key === key);
+  if (!c) return '<p class="setup-note">Loading…</p>';
+  S.integ.open[key] = true;
+  return integRow(c);
+}
+
+function viewSetup() {
+  const i = Math.max(0, SETUP.findIndex((p) => p.id === S.routeArg)), page = SETUP[i];
+  const key = S.setup.tab[page.id] || (page.tabs[0] && page.tabs[0][0]);
+  const tabs = page.tabs.length > 1 ? `<div class="seg setup-tabs" role="tablist" aria-label="Choose one">${page.tabs.map(([k, l]) => `<button type="button" role="tab" aria-pressed="${k === key}" data-act="setupTab" data-key="${page.id}" data-v="${k}">${esc(l)}${setupConnected(k) ? svg(IC.check, 'ic ic-s') : ''}</button>`).join('')}</div>` : '';
+  const last = i === SETUP.length - 1;
+  const done = page.tabs.some(([k]) => setupConnected(k)) || (page.id === 'repo' && (S.onb.repo || '').trim());
+  const canStudy = (S.onb.projects || '').trim() || (S.onb.repo || '').trim();
+  return `<main class="setup">
+<header class="setup-top">${LOGO}<span class="setup-name">Set up YourQA</span><span class="setup-count">Step ${i + 1} of ${SETUP.length}</span>
+<button type="button" class="btn btn-quiet btn-sm" data-act="setupLater">Finish later</button></header>
+<div class="setup-bar" aria-hidden="true"><i style="width:${Math.round(((i + 1) / SETUP.length) * 100)}%"></i></div>
+<section class="setup-page" aria-labelledby="setup-title">
+<h1 id="setup-title">${esc(page.title)}</h1><p class="setup-lead">${esc(page.lead)}</p>
+${tabs}<div class="setup-body">${setupBody(page, key)}</div>
+</section>
+<footer class="setup-foot">
+${i > 0 ? `<a class="btn btn-quiet" href="#/setup/${SETUP[i - 1].id}">Back</a>` : ''}<span style="flex:1"></span>
+${last ? `<button type="button" class="btn btn-quiet" data-act="setupFinish" data-v="skip">Skip the study</button>
+<button type="button" class="btn btn-primary" data-act="setupFinish" data-v="study" ${canStudy && !S.setup.busy ? '' : 'disabled'}>${S.setup.busy ? svg(IC.spin, 'ic spin') : ''}Start studying</button>`
+    : `${done ? '' : `<a class="btn btn-quiet" href="#/setup/${SETUP[i + 1].id}">Skip</a>`}<a class="btn btn-primary" href="#/setup/${SETUP[i + 1].id}">Continue</a>`}
+</footer></main>`;
+}
+
 /* ------------------------------------------------------------------ onboarding: one clean screen, four steps */
 async function loadOnboarding() {
   const O = S.onb;
@@ -850,7 +968,7 @@ const ONB_AREA = { tickets: 'From your tickets', testrail: 'From TestRail', know
 function viewOnboarding() {
   const O = S.onb, d = O.data;
   const head = `<header><h1 style="margin:0;font-size:18px;font-weight:600">Onboarding</h1>
-<p style="margin:4px 0 0;color:var(--muted)">Connect your tools. YourQA studies how your team works and sets itself up to match.</p></header>`;
+<p style="margin:4px 0 0;color:var(--muted)">Connect your tools. YourQA studies how your team works and sets itself up to match. <button type="button" class="linkish" data-act="setupAgain">Go through setup again</button></p></header>`;
   if (!d) return `<main class="main onb">${head}<p style="color:var(--muted)">${O.err ? esc(O.err) : 'Loading…'}</p></main>`;
   const c = d.connections, running = d.running, last = d.last;
   const row = (label, item, extra = '') => `<div class="onb-row"><span class="onb-dot ${item.connected ? 'on' : ''}"></span><span class="onb-k">${esc(label)}</span>
@@ -1285,7 +1403,7 @@ async function loadMcp() {
   const M = S.mcp;
   try { M.servers = (await api('GET', '/api/mcp')).servers; } catch (e) { M.servers = []; }
   const m = /[?&]mcp=([\w-]+)/.exec(location.hash);
-  if (m) { M.open[m[1]] = true; history.replaceState(null, '', '#/integrations'); }
+  if (m) { M.open[m[1]] = true; const back = store.get('returnTo', ''); store.set('returnTo', ''); if (back) location.hash = back; else history.replaceState(null, '', '#/integrations'); }
   if (M.cc == null) { M.cc = []; api('GET', '/api/mcp/claude-code').then((r) => { M.cc = r.servers || []; schedule(); }).catch(() => {}); }
   schedule();
 }
@@ -1452,6 +1570,7 @@ function jiraBugs(st) {
 
 async function loadJira() {
   try { S.jira.st = await api('GET', '/api/jira'); S.jira.col = ''; } catch (e) { S.jira.err = 'Could not read the Jira connection: ' + e.message; }
+  if (/[?&]jira=connected/.test(location.hash) && store.get('returnTo', '')) { const back = store.get('returnTo', ''); store.set('returnTo', ''); location.hash = back; }
   if (/[?&]jira=connected/.test(location.hash)) { history.replaceState(null, '', '#/integrations'); S.integ.open['jira-mcp'] = true; if (S.jira.st && S.jira.st.connected) toast(`Jira connected: ${S.jira.st.connection.board.name}. Pick the QA column.`); }
   schedule();
 }
@@ -1463,7 +1582,7 @@ async function jiraConnect() {
       ? await api('POST', '/api/jira/connect-token', { link: J.link, email: J.email.trim(), api_token: J.token.trim() })
       : await api('POST', '/api/jira/connect', { link: J.link });
     if (r.connected) J.token = '';
-    if (r.authorize_url) { location.href = r.authorize_url; return; } // Atlassian sends the browser back to /api/jira/oauth/callback
+    if (r.authorize_url) { store.set('returnTo', S.route === 'setup' ? location.hash : ''); location.href = r.authorize_url; return; } // Atlassian sends the browser back to /api/jira/oauth/callback
     J.changing = false; S.integ.open['jira-mcp'] = true; await loadJira(); toast(`Jira connected: ${r.connected.board.name}. Pick the QA column.`);
   } catch (e) { J.err = e.message; }
   J.busy = ''; schedule();
@@ -1739,6 +1858,34 @@ async function saveIntegration(key, quiet) {
 /* ================================================================== events */
 const ACTS = {
   theme: (el) => { S.theme = el.dataset.v; store.set('theme', S.theme); },
+  // sign-in and setup
+  authGuest: async () => {
+    try { await api('POST', '/api/auth/guest'); S.auth.err = ''; location.hash = '#/'; await boot(); } catch (e) { S.auth.err = e.message; }
+  },
+  authSignOut: async () => {
+    try { await api('POST', '/api/auth/sign-out'); } catch (e) { /* signed out anyway */ }
+    S.auth.status = { ...(S.auth.status || {}), user: null }; S.auth.err = ''; location.hash = '#/login';
+  },
+  setupTab: (el) => { S.setup.tab[el.dataset.key] = el.dataset.v; },
+  setupLater: async () => {
+    try { await api('POST', '/api/setup/done', { done: true }); } catch (e) { /* asked again next time */ }
+    location.hash = '#/board';
+  },
+  setupFinish: async (el) => {
+    const O = S.onb, Z = S.setup, list = (v) => String(v || '').split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+    Z.busy = true; Z.err = ''; schedule();
+    try {
+      if (el.dataset.v === 'study') {
+        const mcp = (S.mcp.servers || []).filter((m) => m.confirmed && (m.read || []).length).map((m) => m.id);
+        await api('POST', '/api/onboarding/study', { projects: list(O.projects).map((x) => x.toUpperCase()), spaces: list(O.spaces), repo: (O.repo || '').trim(), mcp });
+        toast('Studying your tools. Follow it on the Onboarding screen.');
+      }
+      await api('POST', '/api/setup/done', { done: true });
+      location.hash = '#/board';
+    } catch (e) { Z.err = e.message; }
+    Z.busy = false; schedule();
+  },
+  setupAgain: async () => { try { await api('POST', '/api/setup/done', { done: false }); } catch (e) { /* the page opens anyway */ } location.hash = '#/setup/' + SETUP[0].id; },
   // MCP servers
   mcpAdd: () => { S.mcp.adding = true; S.mcp.err.add = ''; },
   mcpCancel: () => { S.mcp.adding = false; S.mcp.form = { name: '', url: '', auth: 'oauth', token: '', header: '' }; },
@@ -1751,7 +1898,7 @@ const ACTS = {
       const r = await api('POST', '/api/mcp', M.form);
       M.adding = false; M.form = { name: '', url: '', auth: 'oauth', token: '', header: '' }; M.open[r.server.id] = true;
       await loadMcp();
-      if (r.sign_in) location.href = r.sign_in;
+      if (r.sign_in) { store.set('returnTo', S.route === 'setup' ? location.hash : ''); location.href = r.sign_in; }
     } catch (e) { M.err.add = e.message; }
     M.busy = '';
   },
@@ -2156,6 +2303,8 @@ function route() {
   }
   if (S.route === 'reports') loadReports();
   if (S.route === 'onboarding') loadOnboarding();
+  if (S.route === 'setup') { if (!SETUP.some((x) => x.id === S.routeArg)) S.routeArg = SETUP[0].id; loadSetup(); }
+  if (S.route === 'login') { const e = new URLSearchParams(query || '').get('error'); if (e) S.auth.err = e; }
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
   if (S.route === 'integrations') { loadJira(); loadAzure(); loadMcp(); }
   if (S.route === 'skills') {
@@ -2176,12 +2325,4 @@ setInterval(() => {
   }
 }, 1000);
 
-loadBoard();
-connect();
-route();
-if (!location.hash) {  // first run: start with onboarding until something has been studied
-  api('GET', '/api/onboarding').then((d) => {
-    S.onb.data = d;
-    if (!d.last && !location.hash) location.hash = '#/onboarding';
-  }).catch(() => {});
-}
+boot();

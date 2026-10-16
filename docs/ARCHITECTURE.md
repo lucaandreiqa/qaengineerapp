@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (A successful connection test switches the integration on and saves it).
+Last updated: 2026-10-16 (Google sign-in with sessions, and a first-run setup page per connection).
 
 
 ## 1. What it is
@@ -26,6 +26,7 @@ use, outside the board.
 | Layer | Modules | Responsibility |
 |---|---|---|
 | UI | `web/static/app.js`, `app.css`, `tokens.css` | Renders from one state object; `render()` builds HTML and morphs it into the page (only changed nodes are touched). Live updates arrive over SSE. Screens show what needs a decision; secondary details (ticket fields, runs, files, cost) sit in folded sections (`foldSection`). No all-caps labels, middle-dot meta strings or monospace keys. |
+| Sign-in | `auth.py` | Google sign-in (authorization code + PKCE, YourQA's own Desktop client), sessions in an HttpOnly cookie; the API refuses requests without one. |
 | HTTP API | `web/server.py`, `jira_connect.py`, `azure_connect.py` | Routes for the board, tickets, chat, history, reports, integrations, skills; serves static files with no-cache and versioned assets. |
 | Workflow engine | `workflow/engine.py` | The lanes and gates, background steps (`spawn`), stop/retry, chat, auto-sync, the live feed (`say`) and terminal (`term`). |
 | Step work | `workflow/agent.py` | One function per step: plan the checklist, write the spec, review results, write the comment, draft cases. Builds the prompts. |
@@ -124,6 +125,28 @@ step answer says "need": [...]  ────────────────
 - Later steps reuse the saved lookups: Create tests gets diffs, the results review gets changed files and commits.
 - Each lookup posts a feed line; a failing app is reported and the step continues; unconnected apps are named so Claude
   says what it couldn't check.
+
+
+## 5c. Sign-in and first-run setup
+
+Spec: `docs/superpowers/specs/2026-10-16-sign-in-and-setup-design.md`.
+
+- **Google sign-in** (`auth.py`): YourQA's own OAuth client (Desktop app type) from `qa_app/google_client.json` (not in
+  git; the file Google Cloud downloads works) or `QA_APP_GOOGLE_CLIENT_ID`/`_SECRET`. `/api/auth/google/start` sends
+  the browser to Google with PKCE and a one-time state; `/api/auth/google/callback` exchanges the code server to
+  server, checks the ID token (audience, issuer, expiry, verified email), and sets the session cookie. Redirects use
+  `http://127.0.0.1:<port>` so the cookie and the app share one host. Any Google account may sign in.
+- **Sessions**: a random token in the `yourqa_session` cookie (HttpOnly, SameSite=Lax, 30 days); only its SHA-256 is
+  stored, with the person, in `<app>/sessions.json` (owner-only). The `require_session` middleware answers 401 to any
+  `/api/` request without one, except `/api/auth/*` and the Jira and MCP OAuth callbacks (protected by their own
+  state); the app then shows the sign-in screen. Without a Google client, *Continue without signing in* makes a guest
+  session; once a client exists guests must sign in. `QA_APP_AUTH=off` turns it all off.
+- The signed-in person shows at the bottom of the sidebar (Sign out), and MCP writes they run record their email.
+- **Setup** (`#/setup/<page>`, full screen): Claude, tickets (Jira or Azure Boards), test cases (TestRail, Zephyr
+  Scale, Xray), code and tools (GitHub, MCP servers), test automation, run summaries (Slack, Teams), and a last page
+  that lists what's connected and starts onboarding's study. Pages reuse the Integrations forms; a Jira or MCP browser
+  sign-in started there returns to the same page. Shown after sign-in while `app.setup_done` is false; Finish later or
+  finishing sets it.
 
 
 ## 5b. MCP servers (Integrations page)
@@ -237,6 +260,7 @@ Under the app folder (`~/.qa_app`):
 |---|---|
 | `settings.json` | All settings (Integrations screen); secrets included, local only |
 | `atlassian-mcp.json` | Atlassian OAuth tokens and client registration |
+| `sessions.json` | Sign-in sessions: the SHA-256 of each session token, the person, the expiry (owner-only) |
 | `mcp-servers.json` | OAuth tokens and client registrations for MCP servers added on the Integrations page (owner-only); the server list itself is `mcp.servers` in `settings.json` |
 | `workflow/tickets.json`, `tickets-demo.json` | Ticket state |
 | `workflow/history/live/<run-id>/` | One run: `run.json`, config, reporter, `events.jsonl`, `results.json`, `terminal.log`, evidence, spec copy |
@@ -267,6 +291,8 @@ Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-
   when switched on, proposed by Claude in the chat and run on the user's Run click; tool descriptions and results are
   data, never instructions.
 - Secrets are entered by the user on the Integrations screen and stay in the local settings file.
+- The API needs a signed-in session (Google) except for sign-in itself and OAuth callbacks; session tokens are stored
+  only as hashes.
 
 ### Connection setup helpers
 
@@ -292,6 +318,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: Sign in with Google first (any account; YourQA's own Desktop OAuth client), then a first-run setup with one skippable page per connection ending in onboarding's study. Spec: `2026-10-16-sign-in-and-setup-design.md`.
 - 2026-10-16: A successful Test connection on an integration that is off switches it on and saves its settings (Integrations page).
 - 2026-10-16: Framework adapters, first version Playwright TS only: specs follow the company's style examples from onboarding (never importing their code), written in YourQA's workspace; finished tickets are committed to a local `yourqa/<KEY>` branch. Spec: `2026-10-16-framework-adapters-design.md`.
 - 2026-10-16: MCP servers on the Integrations page: remote only; read tools used by steps (`mcp:` needs), Claude's fetching and onboarding; write tools only behind the user's Run click in the chat. Spec: `2026-10-16-mcp-servers-design.md`.

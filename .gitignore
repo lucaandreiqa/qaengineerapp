@@ -4,3 +4,6 @@ __pycache__/
 qa-results/
 settings.json
 .env
+
+# YourQA's Google OAuth client (shipped with builds, not in git)
+qa_app/google_client.json

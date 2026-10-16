@@ -63,9 +63,24 @@ then **Open** again (only needed the first time). If a script won't start, run `
 Or manually: `python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`,
 `.venv/bin/python -m playwright install chromium`, `.venv/bin/python -m qa_app`.
 
+## Sign-in and first-run setup
+
+When YourQA opens, you **sign in with Google** (any Google account; it tells YourQA who is testing, and your tickets
+and keys stay on your computer). On first use a **setup** follows, one page per connection: Claude, where your tickets
+are (Jira or Azure Boards), test cases (TestRail, Zephyr Scale or Xray), code and other tools (GitHub, MCP servers),
+your test automation, and run summaries (Slack or Teams). Each page can be skipped, or set up right there with the
+same forms as the Integrations screen. The last page lists what's connected and **Start studying** runs onboarding's
+study, then opens the board. **Finish later** leaves setup; *Go through setup again* on the Onboarding screen reopens it.
+Sign out from the bottom of the sidebar.
+
+Google sign-in uses YourQA's own Google OAuth client, shipped with the app: in Google Cloud create an OAuth client of
+type **Desktop app**, download its JSON and save it as `qa_app/google_client.json` (it's not in git), or set
+`QA_APP_GOOGLE_CLIENT_ID` and `QA_APP_GOOGLE_CLIENT_SECRET`. Without a client the sign-in screen offers *Continue
+without signing in*. `QA_APP_AUTH=off` turns sign-in off (CI).
+
 ## Onboarding
 
-The first screen on a fresh install (and in the sidebar). Connect the tools your team uses (Jira or Azure Boards,
+On the Onboarding screen (also reached from setup's last page), connect the tools your team uses (Jira or Azure Boards,
 TestRail, Confluence through your Jira connection, and your automation as a folder or a repo link), choose the
 projects, and press **Study**. YourQA reads a recent sample of each (about 200 tickets per project, 150 test cases,
 30 docs pages and your automation repo; read-only) and Claude works out how your team does things. It then sets
