@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (Framework adapters: specs in the company's style; finished tickets kept on a local branch).
+Last updated: 2026-10-16 (A successful connection test switches the integration on and saves it).
 
 
 ## 1. What it is
@@ -292,6 +292,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: A successful Test connection on an integration that is off switches it on and saves its settings (Integrations page).
 - 2026-10-16: Framework adapters, first version Playwright TS only: specs follow the company's style examples from onboarding (never importing their code), written in YourQA's workspace; finished tickets are committed to a local `yourqa/<KEY>` branch. Spec: `2026-10-16-framework-adapters-design.md`.
 - 2026-10-16: MCP servers on the Integrations page: remote only; read tools used by steps (`mcp:` needs), Claude's fetching and onboarding; write tools only behind the user's Run click in the chat. Spec: `2026-10-16-mcp-servers-design.md`.
 - 2026-10-16: Design cleanup across every screen: board header reduced to a sentence, search, filter and sync; cards show key, type, state and the action; drawer folds ticket details, runs, cost and files; gate notes move into the approve button's tooltip; History rows, run page, Reports and Skills trimmed; Integrations lists services that are off as one "Add a service" row.

@@ -153,7 +153,8 @@ the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back t
 
 **Integrations page.** Grouped by purpose (project management, AI, test case management, communication, board
 settings). Connected services are one-line rows with a green check; click one to change it. Services you haven't set
-up are listed once under *Add a service* at the bottom. Each has its own icon; to
+up are listed once under *Add a service* at the bottom. When **Test connection** succeeds for a service that
+is off, YourQA switches it on and saves it. Each has its own icon; to
 show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
 
 **MCP servers.** Connect any remote MCP server (GitLab, Notion, Linear, Sentry, your own…) from *Add a service* →

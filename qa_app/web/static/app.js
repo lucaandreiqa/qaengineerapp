@@ -2020,6 +2020,12 @@ const ACTS = {
     try {
       I.results[k] = await api('POST', `/api/integrations/${k}/test`, I.vals[k]);
       if (I.results[k].values) I.vals[k] = { ...I.vals[k], ...I.results[k].values };  // e.g. TestRail project taken from the link
+      if (I.results[k].ok && !I.enabled[k] && k !== 'workflow') {  // a working connection is switched on and saved
+        I.enabled[k] = true;
+        await saveIntegration(k);
+        const c = (I.cards || []).find((x) => x.key === k);
+        toast(`${c ? c.name : k} connected and turned on`);
+      }
     } catch (e) { I.results[k] = { ok: false, text: e.message }; }
     I.testing[k] = false;
   },
