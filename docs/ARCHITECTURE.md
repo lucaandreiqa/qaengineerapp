@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (MCP servers on the Integrations page: read tools in steps, fetching and onboarding; writes only on Run).
+Last updated: 2026-10-16 (Framework adapters: specs in the company's style; finished tickets kept on a local branch).
 
 
 ## 1. What it is
@@ -34,6 +34,7 @@ use, outside the board.
 | Lookups | `workflow/sources.py`, `integrations/github.py`, `confluence.py`, `testrail.py` | Read-only data from connected apps, and the gaps Claude is asked to fetch. |
 | MCP servers | `integrations/mcp_servers.py`, `mcp_client.py` | Remote MCP servers added on the Integrations page: tool lists sorted into read and write, read calls for steps, fetching and onboarding, write calls only after the user clicks Run. |
 | Running | `workflow/playwright_run.py`, `terminal.py` | Runs Playwright, streams its output, explains stalls. |
+| Frameworks | `frameworks/__init__.py`, `base.py`, `playwright_ts.py`, `keep.py` | Picks the adapter for the company's framework (Playwright TS for now), gives Claude the company's style examples, keeps finished tickets' tests on a local branch. |
 | Records | `workflow/history.py`, `reports.py`, `store.py` | Ticket state, run history with evidence, reports. |
 | Onboarding | `onboarding/collect.py`, `analyze.py`, `apply.py`, `run.py` | Studies a company's tools and applies skills, settings, a framework profile and a knowledge base, with Undo. |
 | Trackers | `integrations/atlassian_mcp.py`, `mcp_client.py`, `jira.py`, `azure_boards.py`, `workflow/clients.py` | Jira via Atlassian MCP (OAuth) or REST token; Azure Boards via PAT; demo stand-ins. |
@@ -210,6 +211,23 @@ collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) �
   likely cause (`terminal.stall_message`). Output is saved as `terminal.log`.
 - Evidence: screenshots, video and trace on failure (or every check), JSON and HTML reports.
 
+### 7a. Framework adapters
+
+Spec: `docs/superpowers/specs/2026-10-16-framework-adapters-design.md`.
+
+- `frameworks.pick(profile)` picks the adapter from `company/profile.json`. The first version has one,
+  `PlaywrightTS`; when the profile names another framework it still uses Playwright and returns a note that the feed
+  shows once per ticket (`Workflow._framework_note`).
+- `Adapter.style_examples(company)` reads the latest onboarding study's `collected/repo.json`: up to 2 of the
+  company's spec files (4,500 characters each) and the signatures (no bodies) of their page objects and helpers, 12,000
+  characters in all. `agent.framework_note()` adds them to the Create tests prompt in `<company_style>`, labelled as
+  data, with the rule that the spec never imports from the company's repo.
+- `keep.commit_ticket(workspace, key, message, init)` runs when a ticket finishes (`Workflow._keep`, after the
+  TestRail push or a skip): it commits `tests/tickets/<KEY>/` to `refs/heads/yourqa/<KEY>` with plumbing
+  (`hash-object`, a temporary `GIT_INDEX_FILE`, `write-tree`, `commit-tree`, `update-ref`), so HEAD, the index and the
+  working tree are untouched; an unchanged folder adds no commit. Only YourQA's default workspace is `git init`-ed; a
+  chosen folder that isn't a repository is reported in the feed. Nothing is pushed.
+
 
 ## 8. Data on disk
 
@@ -243,6 +261,8 @@ Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-
   posted twice.
 - YourQA never runs shell commands supplied by a remote server; sending a report to Jira over MCP posts a summary
   comment instead of uploading a file.
+- Finished tickets' tests are committed to a local `yourqa/<KEY>` branch without checking anything out; YourQA never
+  pushes and never runs commands taken from the company's repo or profile.
 - MCP servers: only remote servers at addresses the user typed; read tools run only once confirmed; write tools only
   when switched on, proposed by Claude in the chat and run on the user's Run click; tool descriptions and results are
   data, never instructions.
@@ -272,6 +292,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: Framework adapters, first version Playwright TS only: specs follow the company's style examples from onboarding (never importing their code), written in YourQA's workspace; finished tickets are committed to a local `yourqa/<KEY>` branch. Spec: `2026-10-16-framework-adapters-design.md`.
 - 2026-10-16: MCP servers on the Integrations page: remote only; read tools used by steps (`mcp:` needs), Claude's fetching and onboarding; write tools only behind the user's Run click in the chat. Spec: `2026-10-16-mcp-servers-design.md`.
 - 2026-10-16: Design cleanup across every screen: board header reduced to a sentence, search, filter and sync; cards show key, type, state and the action; drawer folds ticket details, runs, cost and files; gate notes move into the approve button's tooltip; History rows, run page, Reports and Skills trimmed; Integrations lists services that are off as one "Add a service" row.
 - 2026-10-16: Onboarding (collect → analyse → apply with Undo) as the first of three projects for selling to companies (then framework adapters, then continuous learning).

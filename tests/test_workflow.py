@@ -902,3 +902,38 @@ def test_claude_can_only_propose_an_mcp_write_and_it_runs_when_you_click_run(wf,
     with pytest.raises(GateError):
         run(wf.chat_apply(key, i, 0, t.stage, t.sub))
     assert len(ran) == 1
+
+
+def test_a_finished_ticket_keeps_its_tests_on_a_local_branch(wf, tmp_path, monkeypatch):
+    import subprocess
+    key = "OPTR-48498"
+    _live(wf, key)
+    ws = wf.cfg.workspace
+    d = wf.cfg.ticket_dir(key)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{key}.spec.ts").write_text("test('[1] a', async () => {})\n")
+
+    # a folder you chose that isn't a git repository: left alone, and the feed says so
+    run(wf._keep(key))
+    assert not (ws / ".git").exists()
+    assert any("weren't kept on a branch" in m["text"] for m in wf.tickets.get(key).chat)
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=ws, check=True)
+    run(wf._keep(key))
+    out = subprocess.run(["git", "log", "--format=%s", f"yourqa/{key}"], cwd=ws, capture_output=True, text=True).stdout
+    assert out.startswith(f"QA {key}: ")
+    assert any(f"yourqa/{key}" in m["text"] for m in wf.tickets.get(key).chat)
+
+
+def test_another_framework_is_named_once_in_the_feed(wf, tmp_path, monkeypatch):
+    from qa_app import config as appconfig
+    key = "OPTR-48498"
+    _live(wf, key)
+    company = tmp_path / "company"
+    company.mkdir()
+    (company / "profile.json").write_text('{"framework": "Cypress", "language": "JavaScript"}')
+    monkeypatch.setattr(appconfig, "company_dir", lambda: company)
+    wf._framework_note(key)
+    wf._framework_note(key)
+    notes = [m for m in wf.tickets.get(key).chat if "Cypress" in m.get("text", "")]
+    assert len(notes) == 1 and "Playwright" in notes[0]["text"]

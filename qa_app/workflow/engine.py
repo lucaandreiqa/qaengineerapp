@@ -353,6 +353,7 @@ class Workflow:
             self.say(key, f"Skipped the move: {key} stays {t.status or 'where it is'} in the tracker. Drafting TestRail cases.", "jira")
         else:
             self.say(key, "Skipped TestRail cases: nothing was pushed. Ticket finished.", "testrail")
+            await self._keep(key)
             self.tickets.finish(key)
             self.toast(f"{key} finished · TestRail skipped")
             return t
@@ -713,10 +714,44 @@ class Workflow:
             self.patch(t.key, error=f"Verification with get_cases found {len(t.cases) - len(missing)} of {len(t.cases)} cases. "
                                     f"Pushing again will only add the missing ones.")
             raise GateError(f"Push not verified: {len(missing)} cases missing in TestRail")
+        await self._keep(t.key)
         self.tickets.finish(t.key)
         self.history().annotate(t.run_id, cases=[{"title": c.title} for c in t.cases], testrail_section=t.section)
         self.toast(f"{t.key} cases pushed to TestRail and verified · ticket done")
         return t
+
+    # ---------------------------------------------------------------- framework adapters
+    def _framework_note(self, key: str) -> None:
+        """Say once per ticket when the company's automation uses a framework YourQA doesn't write yet."""
+        if self.cfg.is_mock:
+            return
+        from .. import frameworks
+        from ..config import company_dir
+        _, note = frameworks.pick(frameworks.profile(company_dir()))
+        t = self.tickets.get(key)
+        if note and t and not any(m.get("text") == note for m in t.chat):
+            self.say(key, note, "build")
+
+    async def _keep(self, key: str) -> None:
+        """When a ticket is done, keep its tests on the local branch yourqa/<KEY> (never pushed, checkout untouched)."""
+        t = self.tickets.get(key)
+        if self.cfg.is_mock or not t:
+            return
+        from ..config import APP_DIR
+        from ..frameworks import keep
+        items = t.items()
+        passed = sum(1 for i in items if i.result == "pass")
+        failed = sum(1 for i in items if i.result in ("fail", "blocked", "partial"))
+        msg = f"QA {key}: {t.title} ({passed} passed, {failed} failed)"
+        ws = self.cfg.workspace
+        own = ws.resolve() == (APP_DIR / "workspace").resolve()
+        try:
+            sha = await asyncio.to_thread(keep.commit_ticket, ws, key, msg, own)
+            self.say(key, f"Kept the tests on the local branch {keep.branch_name(key)} ({sha[:7]}). Nothing was pushed.", "testrail")
+        except keep.KeepError as e:
+            self.say(key, f"The tests weren't kept on a branch: {e}.", "testrail")
+        except Exception as e:  # never block finishing a ticket
+            self.say(key, f"The tests weren't kept on a branch: {(str(e).splitlines() or ['error'])[0][:200]}.", "testrail")
 
     # ---------------------------------------------------------------- connected apps (read-only lookups)
     def _source_clients(self) -> dict:
@@ -953,6 +988,8 @@ class Workflow:
             return
         self.patch(key, stage=1, sub="working", doing=f"Building {key}.spec.ts" + (" and .serial.spec.ts" if t.serial else ""))
         self.say(key, f"Building the Playwright spec for {len(t.items())} checks.", "build")
+        self._framework_note(key)
+
         async def more_for_spec(needs: list[str]) -> str:
             return await self._fetch(key, needs, "build")
         await agent.build_spec(self.cfg, t, sources_md=sources.load(self.cfg, key).markdown("create-tests"), on_need=more_for_spec)

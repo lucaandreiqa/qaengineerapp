@@ -1,6 +1,6 @@
 # Framework adapters: tests in the company's style
 
-Status: proposed 2026-10-16, waiting for approval. Project 2 of 3 for selling YourQA to companies (after onboarding,
+Status: approved 2026-10-16 ("yes") and built. Project 2 of 3 for selling YourQA to companies (after onboarding,
 before continuous learning).
 
 ## Decisions (from the conversation)

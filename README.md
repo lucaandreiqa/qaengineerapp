@@ -80,6 +80,17 @@ YourQA up to match, straight away:
 **What changed** lists every change with what it was based on, each with **Undo** (and **Undo all**). Undo leaves a
 change alone if you edited it yourself afterwards. **Study again** refreshes everything.
 
+**Tests in your style.** After onboarding has studied your automation repo, *Create tests* writes each ticket's
+Playwright spec the way your team writes tests: Claude sees up to two of your own spec files and the signatures of your
+page objects and helpers, and copies the patterns (naming, structure, tags, locators, test data). The spec stays in
+YourQA's workspace and never imports your code. If your automation uses another framework (Cypress, pytest, Selenium),
+YourQA still writes Playwright and says so once in the ticket's updates.
+
+**Tests kept on a branch.** When a ticket is done, its folder (`tests/tickets/<KEY>/`) is committed to the local
+branch `yourqa/<KEY>` in the workspace, for example *QA OPTR-48498: Device list filter (5 passed, 0 failed)*. Your
+checked-out branch and files aren't touched, and nothing is pushed: push and open a PR yourself when you want. YourQA's
+default workspace becomes a git repository on first use; a folder you chose that isn't one is left alone.
+
 ## Testing board (ticket workflow)
 
 Each ticket in the Jira column goes through five lanes. Nothing reaches Jira or TestRail until you approve it in the ticket drawer.
