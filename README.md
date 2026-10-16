@@ -109,7 +109,7 @@ Linked tickets and attachments are listed, not opened.
 
 **Skills.** Each board column has a skill: Markdown instructions Claude gets every time it does that step
 (Gather requirements, Create tests, Run tests, Jira comment, TestRail cases). The app ships a general skill for
-each (`qa_app/skills/*.md`). On the **Skills** screen (⌘5, or *Skill* on a board lane) you can:
+each (`qa_app/skills/*.md`). On the **Skills** screen (⌘5, or the skill icon on a board lane) you can:
 - edit the general skill for everyone (saved in `~/.qa_app/skills/general/`, *Reset to default* any time);
 - add a version for a Jira project that **adds to** the general skill (default) or **replaces** it
   (`~/.qa_app/skills/projects/<KEY>/`), e.g. "our API is GraphQL", "always test the mobile viewport".
@@ -141,11 +141,12 @@ With a Claude API key every step uses Claude and its skill: checklist, spec, bug
 the Jira comment, and the TestRail cases. Without a key, steps 3–5 fall back to the built-in templates.
 
 **Integrations page.** Grouped by purpose (project management, AI, test case management, communication, board
-settings). Connected services are one-line rows with a green check; click one to change it. Each has its own icon; to
+settings). Connected services are one-line rows with a green check; click one to change it. Services you haven't set
+up are listed once under *Add a service* at the bottom. Each has its own icon; to
 show an official logo instead, put it in `qa_app/web/static/logos/<key>.svg` (see the README there).
 
 **Board sync and filters.** The board pulls its column automatically every 5 minutes while a real board is connected
-(change or turn it off on Integrations → Testing board; a failed sync shows on the board's status pill and waits a full
+(change or turn it off on Integrations → Testing board; a failed sync shows next to the sync button and waits a full
 interval before retrying). **Filter** opens views by what a ticket needs (waiting on me, at a review gate, needs
 attention, blocked, failing checks, Claude working) plus FE / BE, issue type and priority; active filters show as
 removable pills.

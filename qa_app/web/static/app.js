@@ -64,11 +64,11 @@ const LOGO = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"
 
 /* ------------------------------------------------------------------ constants */
 const LANES = [
-  { name: 'Gather requirements', desc: 'Reads the whole ticket (fields, comments, labels, links, attachments), FE, BE or both, target environment, scenarios and the QA checklist.', gate: 'Gate 1 · you review the checklist', empty: 'New tickets from Jira land here' },
-  { name: 'Create tests', desc: 'Builds the spec, plus a serial spec for multi-user scenarios, from the approved checklist.', gate: 'No gate · runs straight on', empty: 'Nothing to build' },
-  { name: 'Run tests', desc: 'Runs against the resolved environment, fills in the checklist, writes the report and reverts every setting.', gate: 'Gate 2 · you review the results', empty: 'No runs in progress' },
-  { name: 'Comment & move Jira ticket', desc: 'Posts the QA summary comment, then moves the ticket. Each one is approved on its own.', gate: 'Gate 3 · comment, then transition', empty: 'Nothing to report' },
-  { name: 'Update TestRail tests', desc: 'Drafts cases from the passing items. Pushes only when you say so.', gate: 'Gate 4 · draft review, then push', empty: 'TestRail is up to date' },
+  { name: 'Gather requirements', desc: 'Reads the whole ticket (fields, comments, labels, links, attachments), FE, BE or both, target environment, scenarios and the QA checklist.', gate: 'You review the checklist', empty: 'New tickets from Jira land here' },
+  { name: 'Create tests', desc: 'Builds the spec, plus a serial spec for multi-user scenarios, from the approved checklist.', gate: 'Runs straight on, no review', empty: 'Nothing to build' },
+  { name: 'Run tests', desc: 'Runs against the resolved environment, fills in the checklist, writes the report and reverts every setting.', gate: 'You review the results', empty: 'No runs in progress' },
+  { name: 'Comment & move Jira ticket', desc: 'Posts the QA summary comment, then moves the ticket. Each one is approved on its own.', gate: 'You approve the comment, then the move', empty: 'Nothing to report' },
+  { name: 'Update TestRail tests', desc: 'Drafts cases from the passing items. Pushes only when you say so.', gate: 'You review the draft, then push', empty: 'TestRail is up to date' },
 ];
 /* ------------------------------------------------------------------ Jira look: issue types, priorities, status lozenges */
 // Jira's own colours: Story green, Bug red, Task blue, Epic purple; priority arrows red → green; status lozenges by category.
@@ -126,8 +126,8 @@ function viewCost(t) {
   }).join('');
   const total = c ? `<div class="brow cost-row cost-total"><span class="cost-step"><span>Total</span></span><span class="cost-n">${c.calls}×</span><span class="cost-n">${fmtTok(c.input)} in</span><span class="cost-n">${fmtTok(c.output)} out</span><span class="cost-v">${fmtUsd(c.cost)}</span></div>` : '';
   const note = c ? `${onPlan(c) ? 'Made through Claude Code on your Claude plan, so nothing is billed per call: amounts are what the same tokens would cost at API prices.' : c.plan_calls ? `${c.plan_calls} of ${c.calls} calls went through your Claude plan (their amounts are API-price equivalents).` : "Exact token counts from each Claude reply, priced at Anthropic's list prices."} Redos add to the total.${c.unpriced ? ` ${c.unpriced} call${c.unpriced === 1 ? '' : 's'} used a model without a known price and count as $0.` : ''}` : '';
-  return `<div><div class="lbl">Claude's work · skills and cost</div><div class="box">${rows}${total}</div>
-${note ? `<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">${note}</p>` : ''}</div>`;
+  return `<div class="box">${rows}${total}</div>
+${note ? `<p style="margin:6px 0 0;color:var(--faint);font-size:11.5px">${note}</p>` : ''}`;
 }
 
 /* Ticket type from the Jira components: FE, BE, FE+BE, or '' when no component is mapped. */
@@ -300,13 +300,12 @@ function render() {
 }
 
 function viewSide() {
-  const link = (r, label, icon, n) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}<span class="kbd">⌘${n}</span></a>`;
+  const link = (r, label, icon) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}</a>`;
   return `<nav class="side" aria-label="Main">
 <div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">YourQA</span></div>
 <a class="nav-link" href="#/onboarding" ${S.route === 'onboarding' ? 'aria-current="page"' : ''}>${svg(IC.spark || IC.skill)}Onboarding</a>
 ${link('board', 'Board', IC.board, 1)}${link('history', 'History', IC.history, 2)}${link('reports', 'Reports', IC.report, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
-${S.board.data && S.board.data.config.mode !== 'live' ? '<div style="padding:0 4px 10px"><a class="mode" href="#/integrations" title="The Testing board uses sample tickets and simulated Jira and TestRail. Turn it off on the Integrations screen.">Demo data</a></div>' : ''}
 <div class="seg" role="group" aria-label="Theme">
 <button type="button" aria-pressed="${S.theme === 'light'}" data-act="theme" data-v="light">${svg(IC.sun, 'ic', 'style="width:14px;height:14px"')}Light</button>
 <button type="button" aria-pressed="${S.theme === 'dark'}" data-act="theme" data-v="dark">${svg(IC.moon, 'ic', 'style="width:14px;height:14px"')}Dark</button>
@@ -338,19 +337,19 @@ function deco(t) {
   const st = t.stage, sub = t.sub;
   const d = { stateLabel: '', summary: '', act: 'Review', cls: 'state state-you', note: '', primary: '', disabled: false, counts, items, passes };
   if (st === 0 && sub === 'working') { d.stateLabel = 'Gathering'; d.summary = t.doing; }
-  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; const sug = (t.env_candidates || []).find((c) => c.suggested); if (sug && S.board.env[t.key] == null) S.board.env[t.key] = sug.url; const nl = (t.env_candidates || []).length; d.summary = sug ? `Suggested ${sug.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}${nl > 1 ? ` · ${nl} links found` : ''}` : nl ? `${nl} link${nl === 1 ? '' : 's'} found, none looks like an environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Confirm the suggested link, pick another, or type the address.'; d.primary = 'Use this environment'; d.disabled = !envUrl(S.board.env[t.key]); }
-  if (st === 0 && sub === 'gate') { d.stateLabel = 'Gate 1 · your review'; d.summary = `Checklist ready · ${items.length} items in ${t.checklist.length} sections`; d.act = 'Review checklist'; d.note = 'Gate 1 of 4. Approving builds and runs the spec.'; d.primary = 'Approve checklist'; }
+  if (st === 0 && sub === 'blocked') { d.stateLabel = 'Needs environment'; d.cls = 'state state-warn'; const sug = (t.env_candidates || []).find((c) => c.suggested); if (sug && S.board.env[t.key] == null) S.board.env[t.key] = sug.url; const nl = (t.env_candidates || []).length; d.summary = sug ? `Suggested ${sug.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}` : nl ? `${nl} link${nl === 1 ? '' : 's'} found, none looks like an environment` : 'No test environment link on the ticket'; d.act = 'Add environment'; d.note = 'Confirm the suggested link, pick another, or type the address.'; d.primary = 'Use this environment'; d.disabled = !envUrl(S.board.env[t.key]); }
+  if (st === 0 && sub === 'gate') { d.stateLabel = 'Your review'; d.summary = `Checklist ready, ${items.length} checks`; d.act = 'Review checklist'; d.note = 'Gate 1 of 4. Approving builds and runs the spec.'; d.primary = 'Approve checklist'; }
   if (st === 1) { d.stateLabel = 'Building'; d.summary = t.doing || `Building ${t.key}.spec.ts`; }
   if (st === 2 && sub === 'sso') { d.stateLabel = 'SSO login needed'; d.cls = 'state state-warn'; d.summary = 'Waiting for you to sign in'; d.act = 'Sign in'; d.note = 'The run continues once the session is ready.'; d.primary = "I've signed in"; }
   if (st === 2 && sub === 'working') { d.stateLabel = 'Running'; d.summary = t.doing || `Running ${t.key}.spec.ts`; }
-  if (st === 2 && sub === 'gate') { d.stateLabel = 'Gate 2 · your review'; d.summary = `${counts.pass}/${items.length} pass${counts.fail ? ' · ' + counts.fail + ' fail' : ''} · ${t.cleanup.length ? t.cleanup.length + ' settings reverted' : 'no settings changed'}`; d.act = 'Review results'; d.note = 'Gate 2 of 4. Jira stays untouched until you approve.'; d.primary = 'Approve results'; }
-  if (st === 3 && sub === 'comment') { d.stateLabel = 'Gate 3 · comment'; d.summary = 'Comment ready · then ' + (t.target ? 'move to ' + t.target : 'choose a target state'); d.act = 'Review comment'; d.note = 'Gate 3, part 1. Posting does not approve the move.'; d.primary = 'Post comment'; d.disabled = !((S.board.comment[t.key] != null ? S.board.comment[t.key] : t.comment) || '').trim(); }
-  if (st === 3 && sub === 'transition') { d.stateLabel = 'Gate 3 · move ticket'; d.summary = `Comment posted · ${t.status} → ${t.target || 'target not set'}`; d.act = 'Review move'; d.note = 'Gate 3, part 2. A separate approval from the comment.'; d.primary = t.target ? 'Move to ' + t.target : 'Choose a state first'; d.disabled = !t.target; }
-  if (st === 4 && sub === 'drafting') { d.stateLabel = 'Drafting cases'; d.summary = 'Checking section and duplicates (read-only)'; }
-  if (st === 4 && sub === 'gate') { d.stateLabel = 'Gate 4 · your review'; d.summary = `${t.cases.length} cases drafted · ${t.section}`; d.act = 'Review draft'; d.note = 'Gate 4 of 4. Approving does not push anything.'; d.primary = 'Approve draft'; }
-  if (st === 4 && sub === 'approved') { d.stateLabel = 'Draft approved'; d.cls = 'state state-ok'; d.summary = 'Not pushed · waiting for your go-ahead'; d.act = 'Push'; d.note = 'Pushes only on this explicit go-ahead, then verifies with get_cases.'; d.primary = `Push ${t.cases.length} cases to TestRail`; }
+  if (st === 2 && sub === 'gate') { d.stateLabel = 'Your review'; d.summary = `${counts.pass} of ${items.length} passed${counts.fail ? ', ' + counts.fail + ' failed' : ''}`; d.act = 'Review results'; d.note = 'Gate 2 of 4. Jira stays untouched until you approve.'; d.primary = 'Approve results'; }
+  if (st === 3 && sub === 'comment') { d.stateLabel = 'Your review'; d.summary = 'Comment ready to post'; d.act = 'Review comment'; d.note = 'Gate 3, part 1. Posting does not approve the move.'; d.primary = 'Post comment'; d.disabled = !((S.board.comment[t.key] != null ? S.board.comment[t.key] : t.comment) || '').trim(); }
+  if (st === 3 && sub === 'transition') { d.stateLabel = 'Your review'; d.summary = t.target ? `Move to ${t.target}` : 'Choose where the ticket goes'; d.act = 'Review move'; d.note = 'Gate 3, part 2. A separate approval from the comment.'; d.primary = t.target ? 'Move to ' + t.target : 'Choose a state first'; d.disabled = !t.target; }
+  if (st === 4 && sub === 'drafting') { d.stateLabel = 'Drafting cases'; d.summary = 'Checking the section and existing cases'; }
+  if (st === 4 && sub === 'gate') { d.stateLabel = 'Your review'; d.summary = `${t.cases.length} cases drafted`; d.act = 'Review draft'; d.note = 'Gate 4 of 4. Approving does not push anything.'; d.primary = 'Approve draft'; }
+  if (st === 4 && sub === 'approved') { d.stateLabel = 'Draft approved'; d.cls = 'state state-ok'; d.summary = 'Ready to push when you are'; d.act = 'Push'; d.note = 'Pushes only on this explicit go-ahead, then verifies with get_cases.'; d.primary = `Push ${t.cases.length} cases to TestRail`; }
   if (working) d.cls = 'state state-work';
-  if (t.error) { d.cls = 'state state-warn'; d.stateLabel = 'Stopped · needs you'; d.summary = t.error; d.act = 'See error'; }
+  if (t.error) { d.cls = 'state state-warn'; d.stateLabel = 'Stopped'; d.summary = t.error; d.act = 'See error'; }
   d.working = working;
   d.you = !working;
   return d;
@@ -432,34 +431,28 @@ function viewBoard() {
     return `<section class="lane" role="listitem" aria-labelledby="lane-${i + 1}">
 <div class="lane-head">
 <div style="display:flex;align-items:center;gap:8px"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" style="margin:0;font-size:13px;font-weight:600">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span>
-<button type="button" class="lane-info" data-tip="${i}" aria-label="What ${esc(l.name)} does" aria-describedby="lane-tip-${i + 1}">${svg(IC.info, 'ic ic-s')}</button></div>
-<p class="lane-tip${B.tip === i ? ' is-open' : ''}" id="lane-tip-${i + 1}" role="tooltip">${l.desc}</p>
-<div class="gate-line${i === 1 ? '' : ' has-gate'}">${svg(IC.lock, 'ic ic-s')}${l.gate}<a class="lane-skill" href="#/skills?step=${STEP_SKILL[i]}" title="How Claude does this step">${svg(IC.skill, 'ic ic-s')}Skill</a></div>
+<button type="button" class="lane-info" data-tip="${i}" aria-label="What ${esc(l.name)} does" aria-describedby="lane-tip-${i + 1}">${svg(IC.info, 'ic ic-s')}</button>
+<a class="lane-info" style="margin-left:auto" href="#/skills?step=${STEP_SKILL[i]}" title="How Claude does this step (its skill)" aria-label="${esc(l.name)} skill">${svg(IC.skill, 'ic ic-s')}</a></div>
+<p class="lane-tip${B.tip === i ? ' is-open' : ''}" id="lane-tip-${i + 1}" role="tooltip">${l.desc} ${l.gate}.</p>
 </div>
 <div class="lane-body">${cards.map(viewCard).join('') || `<div class="lane-empty">${F.active || B.q.trim() ? 'No tickets here match the filters' : l.empty}</div>`}</div>
 </section>`;
   }).join('');
+  const syncTip = `${c.tracker || 'Jira'} ${c.project}, column ${c.column}. `
+    + (data.syncError ? 'Automatic sync failed: ' + data.syncError : data.autoSync ? `Syncs automatically every ${data.autoSync} min.` : 'Automatic sync is off.') + ' Click to sync now.';
   return `<main class="main">
-<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+<header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
 <div style="min-width:0">
 <h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Testing board</h1>
-<p style="margin:2px 0 0;color:var(--muted)">Tickets in the Jira <strong style="color:var(--fg);font-weight:500">${esc(c.column)}</strong> column of ${esc(c.project)}, taken through the test-ticket workflow. <button type="button" class="linkish" data-act="fview" data-v="you">${waiting} waiting on you</button>${attention ? ` · <button type="button" class="linkish linkish-warn" data-act="fview" data-v="attention">${attention} need${attention === 1 ? 's' : ''} attention</button>` : ''} · ${data.finishedToday} finished today.</p>
+<p style="margin:2px 0 0;color:var(--muted)">${esc(c.project)}, ${esc(c.column)} column. <button type="button" class="linkish" data-act="fview" data-v="you">${waiting} waiting on you</button>${attention ? `, <button type="button" class="linkish linkish-warn" data-act="fview" data-v="attention">${attention} need${attention === 1 ? 's' : ''} attention</button>` : ''}.</p>
 </div>
-<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-${data.claude && data.claude.calls ? `<span class="pill" title="${esc(costTip(data.claude))}">${svg(IC.bolt, 'ic ic-s')}Claude ${onPlan(data.claude) ? '≈' : ''}${fmtUsd(data.claude.cost)} on this board${onPlan(data.claude) ? ' · your plan' : ''}</span>` : ''}
-<span class="pill" title="Gated mode: Claude runs each step on its own, but stops at the 4 review gates for your approval">${svg(IC.lock, 'ic ic-s')}Gated mode</span>
-<span class="pill" role="status" title="${esc(`${c.tracker || 'Jira'} · ${c.project} · ${c.column}\n`
-  + (data.syncError ? 'Automatic sync failed: ' + data.syncError : data.autoSync ? `Syncs automatically every ${data.autoSync} min` : 'Automatic sync is off')
-  + ' (Integrations → Testing board)')}"><span class="d ${data.syncError ? 'd-err' : 'd-ok'}"></span>${data.syncError ? 'Sync failed' : ago(data.lastSync).replace(/^s/, 'S')}</span>
-<button type="button" class="btn" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic spin' : 'ic')}Sync now</button>
+<div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+<label class="search" style="width:220px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search tickets</span><input id="board-q" type="search" placeholder="Search" value="${esc(B.q)}" data-in="boardQ"></label>
+${viewFilters(B, F)}
+<button type="button" class="sync-btn" data-act="sync" title="${esc(syncTip)}" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic ic-s spin' : 'ic ic-s')}${data.syncError ? '<span class="c-crit">Sync failed</span>' : esc(ago(data.lastSync).replace(/^s/, 'S'))}</button>
 </div>
 </header>
-<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-<label class="search" style="flex:0 1 260px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search tickets</span><input id="board-q" type="search" placeholder="Search key or title" value="${esc(B.q)}" data-in="boardQ"></label>
-${viewFilters(B, F)}
-${c.account ? `<span class="mono" style="margin-left:auto;color:var(--muted);font-size:12px">Tests as ${esc(c.account)}${c.ou ? ` · ${esc(c.ou)}` : ''}</span>` : ''}
-</div>
-${c.mode !== 'live' ? `<div class="notice jc-banner">${svg(IC.info)}<span>These are sample tickets. Paste your Jira board link to test real tickets.</span><a class="btn btn-sm btn-primary" href="#/integrations" style="margin-left:auto">Connect Jira${svg(IC.arrow, 'ic ic-s')}</a></div>` : ''}
+${c.mode !== 'live' ? `<div class="notice jc-banner">${svg(IC.info)}<span>Sample tickets. Connect Jira or Azure Boards to test your own.</span><a class="btn btn-sm btn-primary" href="#/integrations" style="margin-left:auto">Connect</a></div>` : ''}
 <div class="board" role="list" aria-label="QA workflow steps" data-keep="board">${lanes}</div>
 </main>`;
 }
@@ -475,16 +468,14 @@ function viewCard(t) {
   const cls = 'tk' + (d.you ? ' is-you' : '') + (S.board.sel === t.key ? ' is-sel' : '');
   return `<article class="${cls}">
 <button type="button" class="tk-open" data-act="open" data-key="${esc(t.key)}" aria-label="${esc(t.key + ', ' + (t.type || 'no type') + ', ' + t.title + ', ' + d.stateLabel)}">
-<span class="tk-meta">${issueTypeIcon(t.issue_type)}<span class="mono">${esc(t.key)}</span>${typeBadge(t)}<span class="tk-jira">${priorityIcon(t.priority)}${statusTag(t)}</span></span>
+<span class="tk-meta">${issueTypeIcon(t.issue_type)}<span class="tkey">${esc(t.key)}</span>${typeBadge(t)}<span class="tk-jira">${isHighPrio(t) ? priorityIcon(t.priority) : ''}${statusTag(t)}</span></span>
 <span class="tk-title">${esc(t.title)}</span>
 </button>
 <div class="tk-stage">
 <span class="${d.cls}">${d.working ? svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"') : ''}${d.you && d.cls.includes('state-you') ? svg(IC.person, 'ic ic-s') : ''}${esc(d.stateLabel)}</span>
 <span class="trunc" style="white-space:normal">${esc(d.summary)}</span>
-${d.working ? '<div class="bar" aria-hidden="true"><i></i></div>' : ''}
 </div>
-<div class="tk-foot"><span class="trunc mono" style="font-size:11px">${esc(t.env ? t.envShort : 'no environment yet')}</span><span style="margin-left:auto"></span>${costChip(t.cost)}
-${d.you ? `<button type="button" class="btn btn-sm" data-act="open" data-key="${esc(t.key)}">${esc(d.act)}${svg(IC.arrow, 'ic ic-s')}</button>` : ''}</div>
+${d.you ? `<div class="tk-foot"><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="open" data-key="${esc(t.key)}">${esc(d.act)}</button></div>` : ''}
 </article>`;
 }
 
@@ -500,6 +491,12 @@ function gateTracker(t) {
   return g.map((x) => `<div class="gate${x[1] ? ' g-done' : x[2] ? ' g-now' : ''}"><span></span><span class="trunc">${x[0]}</span></div>`).join('');
 }
 
+/* A section that stays folded until opened; what was opened is remembered per ticket. */
+function foldSection(id, label, n, inner, dflt = false) {
+  const B = S.board, open = B.clOpen['fold|' + id] != null ? B.clOpen['fold|' + id] : dflt;
+  return `<div><button type="button" class="fold" data-act="caseFold" data-key="${esc('fold|' + id)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s')}${esc(label)}${n != null ? ` <span class="fold-n">${n}</span>` : ''}</button>${open ? `<div style="margin-top:8px">${inner}</div>` : ''}</div>`;
+}
+
 /* What step 1 read from the ticket. The full text is in <KEY>-context.md (Files below). */
 function viewTicketContext(t) {
   const c = t.context;
@@ -513,7 +510,7 @@ function viewTicketContext(t) {
   ].join('');
   const rows = [];
   const row = (label, html) => rows.push(`<div class="brow ctx-row"><span class="ctx-k">${label}</span><span class="ctx-v">${html}</span></div>`);
-  const ref = (r) => `<span class="mono">${esc(r.key)}</span> ${esc(r.title)}${r.status ? ` <span style="color:var(--faint)">· ${esc(r.status)}</span>` : ''}`;
+  const ref = (r) => `<span class="tkey">${esc(r.key)}</span> ${esc(r.title)}${r.status ? ` <span style="color:var(--faint)">(${esc(r.status)})</span>` : ''}`;
   if (c.parent) row('Parent', ref(c.parent));
   if (c.links.length) row('Linked', c.links.map((l) => `${esc(l.relation)} ${ref(l)}`).join('<br>'));
   if (c.subtasks.length) row('Subtasks', c.subtasks.map(ref).join('<br>'));
@@ -523,7 +520,8 @@ function viewTicketContext(t) {
   const warn = !c.has_description && !c.has_acceptance
     ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<span>No description or acceptance criteria: the checklist is based on the title and comments.</span></div>` : '';
   if (!tags && !rows.length && !warn) return '';
-  return `<div><div class="lbl">From the ticket</div>${tags ? `<div class="ctx-tags">${tags}</div>` : ''}${rows.length ? `<div class="box">${rows.join('')}</div>` : ''}${warn}</div>`;
+  const inner = `${tags ? `<div class="ctx-tags">${tags}</div>` : ''}${rows.length ? `<div class="box" style="margin-top:8px">${rows.join('')}</div>` : ''}`;
+  return (tags || rows.length ? foldSection(t.key + '|ctx', 'Ticket details', null, inner) : '') + warn;
 }
 
 /* ------------------------------------------------------------------ Skills: how Claude does each board step */
@@ -544,15 +542,16 @@ function viewSkills() {
     const badge = x.project ? `<span class="tag sk-badge">${x.project.mode === 'replace' ? `${esc(proj)} replaces` : `+ ${esc(proj)}`}</span>` : '';
     return `<button type="button" class="sk-step" aria-current="${x.id === step.id}" data-act="skSel" data-v="${x.id}">
 <span class="step" aria-hidden="true">${i + 1}</span><span style="flex:1;min-width:0"><span class="sk-name">${esc(x.name)}</span>
-<span class="sk-sub">${x.general.customised ? 'General · edited' : 'General · default'}</span></span>${badge}</button>`;
+${x.general.customised ? '<span class="sk-sub">Edited</span>' : ''}</span>${badge}</button>`;
   }).join('');
   const projects = [...new Set([proj, ...d.projects].filter(Boolean))];
   const projSel = `<label class="lbl" for="sk-proj" style="margin:0">Project</label>
 <select id="sk-proj" class="inp" style="width:auto;min-width:120px" data-in="skProject">
 ${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}>${esc(p)}</option>`).join('')}
 <option value="" ${!proj ? 'selected' : ''}>${projects.length ? 'No project' : 'Choose…'}</option></select>
-<input class="inp mono" style="width:120px" placeholder="Add key" value="${esc(K.newKey)}" data-in="skNewKey" aria-label="Add a Jira project key" maxlength="20">
-<button type="button" class="btn btn-sm" data-act="skAddProject" ${/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(K.newKey) ? '' : 'disabled'}>Add</button>`;
+${K.adding ? `<input class="inp" style="width:120px" placeholder="Project key" value="${esc(K.newKey)}" data-in="skNewKey" aria-label="Jira project key" maxlength="20">
+<button type="button" class="btn btn-sm" data-act="skAddProject" ${/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(K.newKey) ? '' : 'disabled'}>Add</button>`
+  : '<button type="button" class="btn btn-quiet btn-sm" data-act="skAdding">Add project</button>'}`;
   const tabs = `<div class="seg" role="tablist" aria-label="Skill version">
 <button type="button" role="tab" aria-pressed="${!isProject}" data-act="skTab" data-v="general">General</button>
 <button type="button" role="tab" aria-pressed="${!!isProject}" data-act="skTab" data-v="project" ${proj ? '' : 'disabled title="Choose a project first"'}>Project ${esc(proj || '')}</button></div>`;
@@ -563,15 +562,15 @@ ${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}
     ? `What's different in ${proj}? For example:\n- The API is GraphQL at /graphql; check errors in the "errors" array.\n- Always add an item for the mobile viewport.\n- Test data lives in the "QA-Store" tenant.`
     : '';
   const status = isProject
-    ? (step.project ? `${step.project.shipped ? 'Built-in version · ' : ''}${step.project.mode === 'replace' ? 'Replaces' : 'Adds to'} the general skill for ${esc(proj)}` : `${esc(proj)} uses the general skill as is`)
-    : (step.general.customised ? 'Edited · applies to every project' : 'Default that ships with the app · applies to every project');
+    ? (step.project ? `${step.project.shipped ? 'Built-in version. ' : ''}${step.project.mode === 'replace' ? 'Replaces' : 'Adds to'} the general skill for ${esc(proj)}` : `${esc(proj)} uses the general skill as is`)
+    : (step.general.customised ? 'Edited, used for every project' : 'Built in, used for every project');
   const actions = isProject
     ? `${step.project && !step.project.shipped ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDelete" ${K.busy ? 'disabled' : ''}>${(K.data.builtin || []).includes(proj) ? `Reset to the built-in ${esc(proj)} version` : `Remove ${esc(proj)} version`}</button>` : ''}`
     : `${step.general.customised ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skReset" ${K.busy ? 'disabled' : ''}>Reset to default</button>` : ''}`;
   return `<main class="main">
 <header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
 <div style="min-width:0;flex:1"><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Skills</h1>
-<p style="margin:2px 0 0;color:var(--muted);max-width:760px">How Claude does each step of the board. Every time Claude works on a step it gets that step's skill: the general one, plus what you add for the ticket's Jira project.</p></div>
+<p style="margin:2px 0 0;color:var(--muted);max-width:760px">How Claude does each board step: the general skill, plus anything you add for a project.</p></div>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${projSel}</div>
 </header>
 <div class="sk-wrap">
@@ -582,9 +581,9 @@ ${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}
 <div class="sk-body">
 ${modeCtl}
 <label class="sr-only" for="sk-text">Skill text</label>
-<textarea id="sk-text" class="inp mono sk-text" spellcheck="true" data-in="skText" data-keep="sk-text" placeholder="${esc(ph)}">${esc(text)}</textarea>
+<textarea id="sk-text" class="inp sk-text" spellcheck="true" data-in="skText" data-keep="sk-text" placeholder="${esc(ph)}">${esc(text)}</textarea>
 ${K.err ? `<div class="callout c-err" role="alert">${svg(IC.err)}<span>${esc(K.err)}</span></div>` : ''}
-<details class="sk-preview" ${K.preview ? 'open' : ''} data-act="skPreview"><summary>What Claude gets for this step${proj ? ` in ${esc(proj)}` : ''} <span style="color:var(--faint)">· ${esc(step.source)}</span></summary>
+<details class="sk-preview" ${K.preview ? 'open' : ''} data-act="skPreview"><summary>What Claude gets for this step${proj ? ` in ${esc(proj)}` : ''}</summary>
 <pre class="mono" data-keep="sk-prev">${esc(step.effective)}</pre></details>
 </div>
 <div class="sk-foot">${actions}<span style="flex:1"></span>
@@ -626,7 +625,7 @@ function envPicker(t, mode) {
   if (B.env[key] == null && mode === 'blocked' && sug) B.env[key] = sug.url;
   const act = mode === 'blocked' ? 'pickEnv' : 'envChange';
   const row = (c) => `<div class="brow env-cand${c.suggested ? ' is-sug' : ''}">
-<div style="min-width:0;flex:1"><div class="mono trunc">${esc(c.url)}</div><div style="color:var(--faint);font-size:11.5px">${esc(c.source)}${c.why && c.why.length ? ' · ' + esc(c.why.join(', ')) : ''}</div></div>
+<div style="min-width:0;flex:1"><div class="mono trunc">${esc(c.url)}</div><div style="color:var(--faint);font-size:11.5px">${esc(c.source)}${c.why && c.why.length ? ', ' + esc(c.why.join(', ')) : ''}</div></div>
 ${c.suggested ? '<span class="env-tag env-sug">Suggested</span>' : ''}${c.api ? '<span class="env-tag">API</span>' : ''}${c.prod ? '<span class="env-tag env-prod">Production?</span>' : ''}
 <button type="button" class="btn btn-sm${c.suggested ? ' btn-primary' : ''}" data-act="${act}" data-key="${esc(key)}" data-v="${esc(c.url)}" ${B.busy ? 'disabled' : ''}>Use</button></div>`;
   const likely = cands.filter((c) => !c.other), other = cands.filter((c) => c.other);
@@ -634,7 +633,7 @@ ${c.suggested ? '<span class="env-tag env-sug">Suggested</span>' : ''}${c.api ? 
   if (likely.length) h += `<div class="lbl" style="margin-top:12px">${likely.length === 1 ? 'Link on the ticket' : `Links on the ticket (${likely.length})`}</div><div class="box">${likely.map(row).join('')}</div>`;
   if (other.length) {
     const open = !!B.envOther[key];
-    h += `<button type="button" class="env-more" data-act="envOther" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s', open ? '' : 'style="transform:rotate(-90deg)"')}Other links (${other.length}) · usually not an environment</button>`;
+    h += `<button type="button" class="env-more" data-act="envOther" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s', open ? '' : 'style="transform:rotate(-90deg)"')}Other links (${other.length}), usually not environments</button>`;
     if (open) h += `<div class="box">${other.map(row).join('')}</div>`;
   }
   if (!cands.length && mode === 'change') h += `<p style="margin:10px 0 0;color:var(--muted);font-size:12px">No other links on the ticket.</p>`;
@@ -708,10 +707,10 @@ ${o.key && !o.readonly ? `<div class="cl-acts"><button type="button" class="btn 
     }).join('');
     if (!rows) return '';
     const sc = sec.items.map(res), sp = sc.filter((x) => x === 'pass').length;
-    return `<section class="clsec"><header><h3>${esc(sec.name)}</h3><span>${sp}/${sec.items.length} passed</span></header><div class="clsec-bar"><i style="width:${Math.round((sp / Math.max(1, sec.items.length)) * 100)}%"></i></div><ol>${rows}</ol></section>`;
+    return `<section class="clsec"><header><h3>${esc(sec.name)}</h3><span>${sp} of ${sec.items.length}</span></header><ol>${rows}</ol></section>`;
   }).join('');
   return `<div class="qacl">
-<div class="qacl-head"><div class="qacl-counts">${chip('pass')}${chip('fail')}${c.partial ? chip('partial') : ''}${c.blocked ? chip('blocked') : ''}${chip('nt')}</div>
+<div class="qacl-head"><div class="qacl-counts">${chip('pass')}${c.fail ? chip('fail') : ''}${c.partial ? chip('partial') : ''}${c.blocked ? chip('blocked') : ''}${c.nt ? chip('nt') : ''}</div>
 <div class="seg seg-sm" role="group" aria-label="Show checks">${fbtn('all', 'All')}${fbtn('failed', 'Failed')}${fbtn('passed', 'Passed')}</div></div>
 ${countBar(c).replace('class="cbar"', 'class="cbar cbar-lg"')}
 ${!o.ran && !o.live ? `<p class="qacl-note">${svg(IC.info, 'ic ic-s')}Nothing has run yet. This is the plan, not a result.</p>` : o.live ? `<p class="qacl-note">${svg(IC.spin, 'ic ic-s spin')}Running: ${done} of ${flat.length} checks done</p>` : ''}
@@ -743,7 +742,7 @@ function viewDrawer() {
   }
 
   if (st === 0 && sub !== 'gate') {
-    const steps = ['Read the whole ticket', sub === 'blocked' ? `Classified ${t.type || 'without FE/BE'} · no environment found` : `Classified ${t.type || 'without FE/BE'} · environment resolved`, 'Scenarios', 'QA checklist'];
+    const steps = ['Read the whole ticket', sub === 'blocked' ? `Classified ${t.type || 'without FE/BE'}, no environment found` : `Classified ${t.type || 'without FE/BE'}, environment found`, 'Scenarios', 'QA checklist'];
     body += `<div><div class="lbl">Phase 1 progress</div><div class="box">${steps.map((x, i) => {
       const doneN = sub === 'blocked' ? 1 : t.p1 + 1;
       const done = i < doneN - 1;
@@ -757,22 +756,22 @@ function viewDrawer() {
   if (t.checklist.length && st === 4) {  // lane 5 is about the cases: the checklist folds away
     const items = t.checklist.flatMap((x) => x.items), passed = items.filter((i) => i.result === 'pass').length;
     const open = !!B.clOpen['lane5|' + t.key];
-    body += `<div><button type="button" class="lbl fold-head" data-act="clFold" data-key="${esc(t.key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}QA checklist · ${items.length} check${items.length === 1 ? '' : 's'}, ${passed} passed</button>
+    body += `<div><button type="button" class="lbl fold-head" data-act="clFold" data-key="${esc(t.key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}QA checklist, ${passed} of ${items.length} passed</button>
 ${open ? qaChecklist({ key: t.key, sections: t.checklist, ran, running: t.running_item, runId: t.run_id, evidence: t.evidence || {}, live: false }) : ''}</div>`;
   } else if (t.checklist.length && !(st === 0 && sub !== 'gate')) {
     body += `<div><div class="lbl">QA checklist</div>${qaChecklist({ key: t.key, sections: t.checklist, ran, running: t.running_item, runId: t.run_id, evidence: t.evidence || {}, live: st === 2 && sub === 'working' })}</div>`;
   }
   body += viewTerminal(t);
   if ((t.runs || []).length) {
-    body += `<div><div class="lbl" style="display:flex;align-items:center">Runs (${t.runs.length})<a class="btn btn-quiet btn-sm" style="margin-left:auto" href="#/history?key=${encodeURIComponent(t.key)}">All in History${svg(IC.arrow, 'ic ic-s')}</a></div><div class="box">${t.runs.slice().reverse().map((r) => `<a class="brow run-row" href="#/history/${encodeURIComponent(r.id)}"><span class="rstat rs-${esc(r.status)}">${esc(RUN_STATUS[r.status] || r.status)}</span><span>Run ${r.run_no}</span><span style="color:var(--muted)">${esc(TRIGGER[r.trigger] || '')}</span>${countBar(r.counts)}<span style="margin-left:auto;color:var(--faint);white-space:nowrap">${when(r.started)}</span></a>`).join('')}</div></div>`;
+    body += foldSection(t.key + '|runs', 'Runs', t.runs.length, `<div class="box">${t.runs.slice().reverse().map((r) => `<a class="brow run-row" href="#/history/${encodeURIComponent(r.id)}"><span class="rstat rs-${esc(r.status)}">${esc(RUN_STATUS[r.status] || r.status)}</span><span>Run ${r.run_no}</span>${countBar(r.counts)}<span style="margin-left:auto;color:var(--faint);white-space:nowrap">${when(r.started)}</span></a>`).join('')}</div>`);
   }
   if (st === 2 && sub === 'gate') {
-    body += `<div><div class="lbl">Cleanup</div><div class="box">${t.cleanup.map((c) => `<div class="brow"><span class="fdot ${c.reread ? 'f-yes' : 'f-no'}">${svg(c.reread ? IC.check : IC.warn, 'ic ic-s')}</span><span class="mono trunc">${esc(c.name)}</span><span style="margin-left:auto;color:var(--muted);white-space:nowrap">reverted to ${esc(c.value)} · ${c.reread ? 're-read ✓' : 'not re-read'}</span></div>`).join('') || '<div class="brow" style="color:var(--muted)">No settings were changed.</div>'}</div>
+    body += `<div><div class="lbl">Cleanup</div><div class="box">${t.cleanup.map((c) => `<div class="brow"><span class="fdot ${c.reread ? 'f-yes' : 'f-no'}">${svg(c.reread ? IC.check : IC.warn, 'ic ic-s')}</span><span class="trunc">${esc(c.name)}</span><span style="margin-left:auto;color:var(--muted);white-space:nowrap">reverted to ${esc(c.value)}${c.reread ? '' : ', not checked again'}</span></div>`).join('') || '<div class="brow" style="color:var(--muted)">No settings were changed.</div>'}</div>
 ${t.left ? `<div class="callout c-warn" style="margin-top:8px">${svg(IC.warn)}<span>Left behind: ${esc(t.left)}</span></div>` : ''}</div>`;
   }
   if (st === 3 && sub === 'comment') {
     const val = B.comment[t.key] != null ? B.comment[t.key] : (t.comment || '');
-    body += `<div><label class="lbl" for="jira-comment">QA summary comment · exact text that will be posted</label><textarea id="jira-comment" class="inp mono" data-in="comment" data-key="${esc(t.key)}">${esc(val)}</textarea></div>
+    body += `<div><label class="lbl" for="jira-comment">Comment to post</label><textarea id="jira-comment" class="inp mono" data-in="comment" data-key="${esc(t.key)}">${esc(val)}</textarea></div>
 <div><label class="lbl" for="jira-pre-target">Planned target state <span style="color:var(--faint)">(moved only after its own approval)</span></label><input id="jira-pre-target" class="inp" value="${esc(t.target)}" data-in="target" data-key="${esc(t.key)}" placeholder="e.g. Docs"></div>`;
   }
   if (st === 3 && sub === 'transition') {
@@ -793,20 +792,22 @@ ${open ? `<div class="tc-body">${steps.length ? `<div class="tc-lbl">Steps</div>
 ${exp.length ? `<div class="tc-lbl">Expected result</div>${exp.length > 1 ? `<ul class="tc-exp">${exp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : `<p class="tc-exp1">${esc(exp[0])}</p>`}` : ''}</div>` : ''}</div>`;
     }).join('');
     const file = t.files.find((f) => f.ok && /testrail-cases\.md$/.test(f.name));
-    body += `<div><div class="lbl" style="display:flex;align-items:center;gap:8px"><span>TestRail cases · ${sub === 'gate' ? 'draft' : 'approved'}</span><span class="mono" style="color:var(--muted);font-weight:400">${t.cases.length} case${t.cases.length === 1 ? '' : 's'}</span>
+    body += `<div><div class="lbl" style="display:flex;align-items:center;gap:8px"><span>TestRail cases${sub === 'gate' ? '' : ', approved'}</span><span style="color:var(--faint);font-weight:400">${t.cases.length}</span>
 ${file ? `<a class="btn btn-quiet btn-sm" style="margin-left:auto" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(file.name)}" target="_blank" rel="noopener">${esc(file.name)}${svg(IC.ext, 'ic ic-s')}</a>` : ''}</div>
-<p style="margin:0 0 8px;color:var(--muted);font-size:12px">Section <span class="mono" style="color:var(--fg)">${esc(t.section)}</span> · ${t.dups ? t.dups + ' existing case' + (t.dups > 1 ? 's' : '') + ' matched and ' + (t.dups > 1 ? 'were' : 'was') + ' left out' : 'no duplicates found'} · only passed checks become cases.</p>
+<p style="margin:0 0 8px;color:var(--muted);font-size:12px">In ${esc(t.section)}.${t.dups ? ` ${t.dups} existing case${t.dups > 1 ? 's were' : ' was'} left out as duplicate${t.dups > 1 ? 's' : ''}.` : ''}</p>
 <div class="tc-list">${cards || '<div class="box"><div class="brow" style="color:var(--muted)">No cases: no check passed, or all of them already exist.</div></div>'}</div></div>`;
   }
-  body += viewCost(t);
-  body += `<div><div class="lbl">Files · tests/tickets/${esc(t.key)}/</div><div class="box">${t.files.map((f) => `<div class="brow"><span class="fdot ${f.ok ? 'f-yes' : 'f-no'}">${svg(f.ok ? IC.check : IC.dotc, 'ic ic-s')}</span>${f.ok ? `<a class="mono trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a>` : `<span class="mono trunc">${esc(f.name)}</span>`}</div>`).join('')}</div></div>`;
+  const cost = viewCost(t);
+  if (cost) body += foldSection(t.key + '|cost', 'Claude: skills and cost', t.cost && t.cost.calls ? fmtUsd(t.cost.cost) : null, cost);
+  const made = t.files.filter((f) => f.ok);
+  if (made.length) body += foldSection(t.key + '|files', 'Files', made.length, `<div class="box">${made.map((f) => `<div class="brow"><a class="trunc file-link" href="/api/tickets/${encodeURIComponent(t.key)}/files/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">${esc(f.name)}</a></div>`).join('')}</div>`);
 
   const canAct = d.primary && !t.error;
   const nChat = (t.chat || []).filter((m) => m.role === 'user').length;
   return `<aside class="drawer${B.full ? ' is-full' : ''}${B.chatOpen ? ' has-chat' : ''}" aria-label="Ticket details"><div class="drawer-in"><div class="drawer-main">
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
-${issueTypeIcon(t.issue_type)}<span class="mono" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${priorityIcon(t.priority)}${statusTag(t)}
+${issueTypeIcon(t.issue_type)}<span class="tkey" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${isHighPrio(t) ? priorityIcon(t.priority) : ''}${statusTag(t)}
 <a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
 ${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet btn-sm" data-act="chatToggle" title="Chat with Claude about this ticket">${svg(INTEG_ICON.claude, 'ic ic-s')}Ask Claude${nChat ? `<span class="seg-n">${nChat}</span>` : ''}${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}</button>`}
 <button type="button" class="btn btn-quiet btn-icon" aria-label="${B.full ? 'Exit full screen' : 'Full screen'}" title="${B.full ? 'Exit full screen' : 'Full screen'}" aria-pressed="${!!B.full}" data-act="drawerFull">${svg(B.full ? IC.shrink : IC.expand)}</button>
@@ -814,14 +815,14 @@ ${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet btn-sm" data-act
 </div>
 <h2 style="margin:0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em">${esc(t.title)}</h2>
 <div class="gates" aria-label="Review gates">${gateTracker(t)}</div>
-<div style="font-size:12px;color:var(--muted)">${LANES[st].name} · <strong style="color:var(--fg);font-weight:500">${esc(d.stateLabel)}</strong></div>
+<div style="font-size:12px;color:var(--muted)">Step ${st + 1}, ${esc(LANES[st].name)}: <strong style="color:var(--fg);font-weight:500">${esc(d.stateLabel.toLowerCase())}</strong></div>
 </div>
 <div class="drawer-body" data-keep="drawer-${esc(t.key)}">${body}</div>
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;background:var(--raised)">
 ${t.canRedo ? redoButton(t) : ''}
-<span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Fix the problem above and retry, or skip this step.' : d.note || 'Working. Nothing needs you yet.'))}</span>
+<span style="color:${B.actErr ? 'var(--crit)' : 'var(--muted)'};font-size:12px;flex:1;min-width:0">${esc(B.actErr || (t.error ? 'Retry or skip this step.' : canAct ? '' : 'Working. Nothing needs you yet.'))}</span>
 ${skipButton(t)}
-${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
+${canAct ? `<button type="button" class="btn btn-primary" data-act="primary" data-key="${esc(t.key)}" title="${esc(d.note)}" ${d.disabled || B.busy ? 'disabled' : ''}>${B.busy ? svg(IC.spin, 'ic spin') : ''}${esc(d.primary)}</button>` : ''}
 ${d.working ? `<span class="state state-work">${svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"')}Working</span>` : ''}
 </div>
 </div>${B.chatOpen ? `<section class="drawer-chat" aria-label="Chat with Claude about ${esc(t.key)}">
@@ -872,9 +873,9 @@ ${O.details ? `<div class="term onb-term">${lines.map((l) => `<div class="tl">${
     const live = (last.changes || []).filter((x) => !x.undone);
     const groups = Object.keys(ONB_AREA).map((a) => [a, (last.changes || []).filter((x) => x.area === a)]).filter(([, xs]) => xs.length);
     const when = new Date((last.finished || last.started) * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    const status = { done: '', stopped: ' · stopped', error: ' · failed' }[last.status] || '';
+    const status = { done: '', stopped: ' (stopped)', error: ' (failed)' }[last.status] || '';
     const problems = Object.entries(last.sources || {}).filter(([, v]) => /^failed/.test(v)).concat(Object.entries(last.failed || {}).map(([k, v]) => [k, 'failed: ' + v]));
-    changed = `<p class="onb-sum">Studied ${esc(when)}${status} · ${live.length} change${live.length === 1 ? '' : 's'} in use</p>
+    changed = `<p class="onb-sum">Studied ${esc(when)}${status}. ${live.length} change${live.length === 1 ? '' : 's'} in use</p>
 ${problems.length ? `<div class="callout c-warn">${svg(IC.warn)}<span>${problems.map(([k, v]) => `${esc(k)}: ${esc(v.replace(/^failed: /, ''))}`).join('<br>')}</span></div>` : ''}
 ${groups.map(([a, xs]) => `<div class="onb-group"><div class="onb-gh">${esc(ONB_AREA[a])}</div>${xs.map((x) => {
       const open = !!O.open[x.id];
@@ -1109,25 +1110,26 @@ function viewReports() {
   const R = S.reports, t = R.trends;
   const sel = (k, label, opts) => `<label class="hsel"><span class="sr-only">${label}</span><select class="inp" data-in="repF" data-v="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${R[k] === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   const head = `<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Reports</h1>
-<p style="margin:2px 0 0;color:var(--muted)">How testing is going, and reports to share: per run, per ticket or for a period.</p></div>
+<p style="margin:2px 0 0;color:var(--muted)">How testing is going, and reports to share.</p></div>
 <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">${sel('range', 'Period', [['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['all', 'All time']])}
 ${t && t.by_project.length > 1 ? sel('project', 'Project', [['', 'All projects'], ...t.by_project.map((x) => [x.name, x.name])]) : ''}
 ${sel('type', 'FE / BE', [['', 'FE and BE'], ['FE', 'FE'], ['BE', 'BE'], ['FE+BE', 'FE+BE']])}</div></header>`;
   if (!t) return `<main class="main">${head}<div class="${R.err ? 'callout c-err' : 'notice'}">${R.err ? esc(R.err) : 'Loading…'}</div></main>`;
   const tile = (v, l, sub) => `<div class="kpi"><b>${v == null ? '–' : v}</b><span>${l}</span>${sub ? `<small>${sub}</small>` : ''}</div>`;
   const kpis = `<div class="kpis">${tile(t.runs, 'runs', `${t.tickets} ticket${t.tickets === 1 ? '' : 's'}`)}${tile(t.pass_rate == null ? null : t.pass_rate + '%', 'of runs passed')}
-${tile(t.first_time_pass == null ? null : t.first_time_pass + '%', 'green on the first run')}${tile(t.avg_runs_to_green, 'runs to green, on average')}${tile(t.flaky.length, 'flaky checks')}</div>`;
+${tile(t.first_time_pass == null ? null : t.first_time_pass + '%', 'green on the first run')}${tile(t.flaky.length, 'flaky checks')}</div>`;
   const group = (title, rows) => (rows.length > 1 || (rows[0] && rows[0].name !== '—') ? `<section class="rcard"><h2>${title}</h2><table class="rtab"><thead><tr><th>${(t => t[0].toUpperCase() + t.slice(1))(title.replace('By ', ''))}</th><th>Runs</th><th>Tickets</th><th>Passed</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.runs}</td><td>${r.tickets}</td><td><span class="rpct"><i style="width:${r.pass_rate}%"></i></span>${r.pass_rate}%</td></tr>`).join('')}</tbody></table></section>` : '');
-  const flaky = t.flaky.length ? `<section class="rcard"><h2>Flaky checks</h2><p class="rnote">Same ticket, environment and spec, but the result went back and forth.</p><table class="rtab"><tbody>${t.flaky.map((f) => `<tr><td class="mono">${esc(f.key)}</td><td>${esc(f.text)}</td><td>${f.flips} flips</td><td><a class="btn btn-quiet btn-sm" href="#/history?key=${encodeURIComponent(f.key)}">Runs</a></td></tr>`).join('')}</tbody></table></section>` : '';
-  const tickets = t.per_ticket.length ? `<section class="rcard"><h2>Tickets</h2><table class="rtab"><thead><tr><th>Ticket</th><th>Runs</th><th>Latest</th><th>Time testing</th><th>Claude cost</th><th></th></tr></thead><tbody>${t.per_ticket.map((x) => `<tr><td><span class="mono">${esc(x.key)}</span> <span class="rmuted">${esc(x.title)}</span></td><td>${x.runs}</td><td>${runStatus(x.status)}</td><td>${fmtDur(x.time_s)}</td><td>${x.cost != null ? fmtUsd(x.cost) : '–'}</td><td><button type="button" class="btn btn-quiet btn-sm" data-act="makeReport" data-kind="ticket" data-v="${esc(x.key)}">Ticket report</button></td></tr>`).join('')}</tbody></table></section>` : '';
+  const flaky = t.flaky.length ? `<section class="rcard"><h2>Flaky checks</h2><p class="rnote">Same ticket, environment and spec, but the result went back and forth.</p><table class="rtab"><tbody>${t.flaky.map((f) => `<tr><td class="tkey">${esc(f.key)}</td><td>${esc(f.text)}</td><td>${f.flips} flips</td><td><a class="btn btn-quiet btn-sm" href="#/history?key=${encodeURIComponent(f.key)}">Runs</a></td></tr>`).join('')}</tbody></table></section>` : '';
+  const costs = t.per_ticket.some((x) => x.cost != null);
+  const tickets = t.per_ticket.length ? `<section class="rcard"><h2>Tickets</h2><table class="rtab"><thead><tr><th>Ticket</th><th>Runs</th><th>Latest</th><th>Time testing</th>${costs ? '<th>Claude cost</th>' : ''}<th></th></tr></thead><tbody>${t.per_ticket.map((x) => `<tr><td><span class="tkey">${esc(x.key)}</span> <span class="rmuted">${esc(x.title)}</span></td><td>${x.runs}</td><td>${runStatus(x.status)}</td><td>${fmtDur(x.time_s)}</td>${costs ? `<td>${x.cost != null ? fmtUsd(x.cost) : '–'}</td>` : ''}<td><button type="button" class="btn btn-quiet btn-sm" data-act="makeReport" data-kind="ticket" data-v="${esc(x.key)}">Ticket report</button></td></tr>`).join('')}</tbody></table></section>` : '';
   const P = R.period;
-  const make = `<section class="rcard"><h2>Make a period summary</h2><p class="rnote">Tickets tested, pass rate, bugs found by severity, failing areas, flaky checks, time and cost.</p>
+  const make = `<section class="rcard"><h2>Period summary</h2>
 <div class="rmake"><label>From <input type="date" class="inp" value="${esc(P.from)}" data-in="repDate" data-v="from"></label><label>To <input type="date" class="inp" value="${esc(P.to)}" data-in="repDate" data-v="to"></label>
 <button type="button" class="btn btn-primary" data-act="makeReport" data-kind="period" ${R.busy ? 'disabled' : ''}>${R.busy === 'period' ? svg(IC.spin, 'ic spin') : ''}${P.from || P.to ? 'Make summary' : `Make summary for ${esc(t.label)}`}</button>
 <a class="btn btn-quiet" href="/api/reports/csv/runs?range=${esc(R.range)}" download>Runs CSV</a><a class="btn btn-quiet" href="/api/reports/csv/checks?range=${esc(R.range)}" download>Checks CSV</a></div></section>`;
-  const saved = `<section class="rcard"><h2>Saved reports</h2>${(R.list || []).length ? `<table class="rtab"><tbody>${R.list.map((m) => `<tr><td><b>${esc(m.title)}</b><div class="rmuted">${esc(m.kind_name)} · ${esc(when(m.created))}</div></td>
+  const saved = !(R.list || []).length ? '' : `<section class="rcard"><h2>Saved reports</h2>${(R.list || []).length ? `<table class="rtab"><tbody>${R.list.map((m) => `<tr><td><b>${esc(m.title)}</b><div class="rmuted">${esc(m.kind_name)}, ${esc(when(m.created))}</div></td>
 <td class="ract"><a class="btn btn-quiet btn-sm" href="/api/reports/${encodeURIComponent(m.id)}.html" target="_blank" rel="noopener">Open</a><a class="btn btn-quiet btn-sm" href="/api/reports/${encodeURIComponent(m.id)}.pdf" target="_blank" rel="noopener">PDF</a><button type="button" class="btn btn-sm" data-act="repSend" data-v="${esc(m.id)}">Send…</button></td></tr>`).join('')}</tbody></table>` : '<p class="rnote">Reports you make appear here, ready to open, download as PDF or send. Make run and ticket reports from a run in History, or from the Tickets list below.</p>'}</section>`;
-  return `<main class="main">${head}${kpis}<section class="rcard"><h2>Runs per day · ${esc(t.label)}</h2>${trendChart(t.series)}</section>
+  return `<main class="main">${head}${kpis}<section class="rcard"><h2>Runs per day</h2>${trendChart(t.series)}</section>
 <div class="rgrid">${group('By project', t.by_project)}${group('By FE / BE', t.by_type)}${group('By issue type', t.by_issue_type)}</div>
 ${flaky}${make}${saved}${tickets}</main>`;
 }
@@ -1178,8 +1180,8 @@ function viewHistory() {
   if (S.routeArg) return viewRunPage();
   const d = H.data;
   const head = `<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">History</h1>
-<p style="margin:2px 0 0;color:var(--muted)">Every ticket test run, with its evidence. Open a run to see each check, or compare it with another run of the same ticket.</p></div>
-<button type="button" class="btn" style="margin-left:auto" data-act="histRefresh">${svg(IC.sync, 'ic')}Refresh</button></header>`;
+<p style="margin:2px 0 0;color:var(--muted)">Every test run, with its evidence.</p></div>
+<button type="button" class="sync-btn" style="margin-left:auto" data-act="histRefresh">${svg(IC.sync, 'ic ic-s')}Refresh</button></header>`;
   if (!d) return `<main class="main">${head}<div class="${H.err ? 'callout c-err' : 'notice'}">${H.err ? esc(H.err) : 'Loading runs…'}</div></main>`;
   const sel = (k, label, opts) => `<label class="hsel"><span class="sr-only">${label}</span><select class="inp" data-in="histF" data-v="${k}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${H[k] === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   const filters = `<div class="hfilters"><label class="search" style="flex:1 1 220px">${svg(IC.search, 'ic', 'style="width:14px;height:14px"')}<span class="sr-only">Search runs</span><input type="search" placeholder="Search key or title" value="${esc(H.q)}" data-in="histQ"></label>
@@ -1192,7 +1194,7 @@ ${H.key ? `<span class="fpill">${esc(H.key)}<button type="button" data-act="hist
   const t = d.totals;
   const strip = `<div class="hstrip"><div><b>${t.runs}</b><span>run${t.runs === 1 ? '' : 's'}</span></div><div><b>${t.pass_rate == null ? '–' : t.pass_rate + '%'}</b><span>of runs passed</span></div>
 <div style="flex:3 1 260px"><b class="${t.failing_now.length ? 'c-crit' : ''}">${t.failing_now.length}</b><span>ticket${t.failing_now.length === 1 ? '' : 's'} failing now${t.failing_now.length ? ': ' + t.failing_now.slice(0, 6).map((k) => `<button type="button" class="linkish" data-act="histKey" data-v="${esc(k)}">${esc(k)}</button>`).join(', ') : ''}</span></div>
-<div class="hstrip-note">${d.mode === 'demo' ? 'Demo runs' : 'Evidence'} · ${d.evidence_mb} MB</div></div>`;
+</div>`;
   let list = '';
   if (!d.runs.length) list = `<div class="notice">${svg(IC.info)}<span>${H.q || H.status || H.key || H.type || H.project || H.env || H.range !== 'all' ? 'No runs match these filters.' : 'No runs yet. Runs appear here as tickets go through step 2 on the board.'}</span></div>`;
   else {
@@ -1201,10 +1203,9 @@ ${H.key ? `<span class="fpill">${esc(H.key)}<button type="button" data-act="hist
       const dl = dayLabel(r.started);
       if (dl !== day) { if (day) list += '</div>'; day = dl; list += `<h2 class="hday">${esc(dl)}</h2><div class="hrows">`; }
       list += `<a class="hrow" href="#/history/${encodeURIComponent(r.id)}">${runStatus(r.status)}
-<span class="hrow-t"><span class="mono">${esc(r.key)}</span><span class="trunc">${esc(r.title || '')}</span></span>
-<span class="hrow-m">Run ${r.run_no} · ${esc(TRIGGER[r.trigger] || '')}</span>
-<span class="hrow-env mono trunc" title="${esc(r.env_url || '')}">${esc(hostOf(r.env_url))}</span>
-${countBar(r.counts)}<span class="hrow-d">${r.duration_s != null ? fmtDur(r.duration_s) : ''}</span><time>${when(r.started)}</time>${r.mode === 'demo' ? '<span class="mode">Demo</span>' : ''}</a>`;
+<span class="hrow-t"><span class="tkey">${esc(r.key)}</span><span class="trunc">${esc(r.title || '')}</span></span>
+<span class="hrow-m" title="${esc((TRIGGER[r.trigger] || '') + (r.env_url ? ', on ' + hostOf(r.env_url) : ''))}">Run ${r.run_no}</span>
+${countBar(r.counts)}<span class="hrow-d">${r.duration_s != null ? fmtDur(r.duration_s) : ''}</span><time>${new Date(r.started * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></a>`;
     });
     list += '</div>';
   }
@@ -1222,16 +1223,15 @@ function viewRunPage() {
   const back = `<a class="btn btn-quiet btn-sm" href="#/history" style="align-self:flex-start">${svg(IC.arrow, 'ic ic-s', 'style="transform:rotate(180deg)"')}History</a>`;
   if (!r || r.id !== S.routeArg) return `<main class="main">${back}<div class="${H.err ? 'callout c-err' : 'notice'}">${H.err ? esc(H.err) : 'Loading the run…'}</div></main>`;
   const env = r.env || {};
-  const facts = [['Environment', env.url ? `<span class="mono">${esc(env.url)}</span>${env.source ? `<span class="fact-sub">from ${esc(env.source)}</span>` : ''}` : 'not set'],
-    ['Account', esc(r.account || '–')], ['Started', esc(new Date(r.started * 1000).toLocaleString())],
-    ['Duration', r.duration_s != null ? fmtDur(r.duration_s) : '–'], ['Why it ran', esc(TRIGGER[r.trigger] || r.trigger || '')],
-    ['Claude cost', r.cost != null ? fmtUsd(r.cost) : '–']];
+  const facts = [['Environment', env.url ? `<a href="${esc(env.url)}" target="_blank" rel="noopener">${esc(hostOf(env.url))}</a>` : 'not set'],
+    ['Started', esc(when(r.started))], ['Duration', r.duration_s != null ? fmtDur(r.duration_s) : '–'],
+    ['Why it ran', esc(TRIGGER[r.trigger] || r.trigger || '')]]
+    .concat(r.account ? [['Account', esc(r.account)]] : []).concat(r.cost != null ? [['Claude cost', fmtUsd(r.cost)]] : []);
   const vs = H.cmp ? H.cmp.a.id : '';
-  const cmpSel = r.others.length ? `<label class="hsel"><span class="sr-only">Compare with</span><select class="inp" data-in="histCompare"><option value="">Compare with…</option>${r.others.slice().reverse().map((o) => `<option value="${esc(o.id)}" ${o.id === vs ? 'selected' : ''}>Run ${o.run_no} · ${esc(RUN_STATUS[o.status] || o.status)} · ${esc(when(o.started))}</option>`).join('')}</select></label>` : '';
+  const cmpSel = r.others.length ? `<label class="hsel"><span class="sr-only">Compare with</span><select class="inp" data-in="histCompare"><option value="">Compare with…</option>${r.others.slice().reverse().map((o) => `<option value="${esc(o.id)}" ${o.id === vs ? 'selected' : ''}>Run ${o.run_no}, ${esc((RUN_STATUS[o.status] || o.status).toLowerCase())}, ${esc(when(o.started))}</option>`).join('')}</select></label>` : '';
   const links = `<div class="hacts">${r.on_board ? `<button type="button" class="btn btn-sm" data-act="openOnBoard" data-key="${esc(r.key)}">Open on the board</button>` : ''}
 <a class="btn btn-sm" href="${esc(r.tracker_url)}" target="_blank" rel="noopener">Open in ${S.board.data && S.board.data.config.tracker === 'Azure Boards' ? 'Azure Boards' : 'Jira'}${svg(IC.ext, 'ic ic-s')}</a>
 ${r.has_report ? `<a class="btn btn-sm" href="${evidenceUrl(r.id, 'report/index.html')}" target="_blank" rel="noopener">Full Playwright report${svg(IC.ext, 'ic ic-s')}</a>` : ''}
-${r.spec_files.map((f) => `<a class="btn btn-quiet btn-sm" href="${evidenceUrl(r.id, 'spec/' + f)}" download>${esc(f)}</a>`).join('')}
 <button type="button" class="btn btn-quiet btn-sm" data-act="runFolder" data-v="${esc(r.id)}">Show files</button>
 <button type="button" class="btn btn-primary btn-sm" data-act="makeReport" data-kind="run" data-v="${esc(r.id)}">Run report</button>
 <button type="button" class="btn btn-sm" data-act="makeReport" data-kind="ticket" data-v="${esc(r.key)}">Ticket report</button></div>`;
@@ -1240,7 +1240,7 @@ ${r.spec_files.map((f) => `<a class="btn btn-quiet btn-sm" href="${evidenceUrl(r
   const body = H.cmp ? viewCompare(H.cmp) : `${r.error ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(r.error)}</span></div>` : ''}${!r.evidence_kept ? `<div class="notice">${svg(IC.info)}<span>Evidence for this run was removed to save space; the results are kept.</span></div>` : ''}
 ${qaChecklist({ key: r.key, sections: runSections(r), ran: r.status !== 'running', live: r.status === 'running', running: -1, runId: r.id, evidence, readonly: true })}`;
   return `<main class="main">${back}
-<header class="hhead"><div style="min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${runStatus(r.status)}<span class="mono" style="color:var(--muted)">${esc(r.key)}</span>${r.type ? `<span class="ttype tt-${r.type === 'FE+BE' ? 'both' : r.type.toLowerCase()}">${esc(r.type)}</span>` : ''}${r.mode === 'demo' ? '<span class="mode">Demo</span>' : ''}</div>
+<header class="hhead"><div style="min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${runStatus(r.status)}<span class="tkey" style="color:var(--muted)">${esc(r.key)}</span>${r.type ? `<span class="ttype tt-${r.type === 'FE+BE' ? 'both' : r.type.toLowerCase()}">${esc(r.type)}</span>` : ''}</div>
 <h1 style="margin:6px 0 0;font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(r.title)}</h1></div></header>
 <dl class="jc-facts hfacts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
 ${links}${nav}${body}</main>`;
@@ -1252,7 +1252,7 @@ function viewCompare(c) {
   const rows = c.rows.slice().sort((x, y) => order.indexOf(x.tag) - order.indexOf(y.tag));
   const badge = (r) => (r ? `<span class="cmpres clc-${r}">${svg(RES_GLYPH[r], 'ic ic-s')}${RES_WORD[r]}</span>` : '<span class="cmpres">—</span>');
   const t = c.tally;
-  const parts = [['fixed', t.fixed], ['newly_failing', t.newly_failing], ['still_failing', t.still_failing], ['added', t.added], ['removed', t.removed], ['unchanged', t.unchanged]].filter(([, n]) => n).map(([k, n]) => `${n} ${CMP_TAG[k][0].toLowerCase()}`).join(' · ');
+  const parts = [['fixed', t.fixed], ['newly_failing', t.newly_failing], ['still_failing', t.still_failing], ['added', t.added], ['removed', t.removed], ['unchanged', t.unchanged]].filter(([, n]) => n).map(([k, n]) => `${n} ${CMP_TAG[k][0].toLowerCase()}`).join(', ');
   return `<section class="cmp"><header class="cmp-head"><div><b>Run ${c.a.run_no}</b> → <b>Run ${c.b.run_no}</b></div><div class="cmp-sum">${esc(parts)}</div><button type="button" class="btn btn-quiet btn-sm" data-act="cmpClose">Close comparison</button></header>
 ${c.env_changed ? `<div class="callout c-warn">${svg(IC.warn)}<span>The environment changed: ${esc(hostOf(c.a.env_url))} → ${esc(hostOf(c.b.env_url))}. Differences may come from that.</span></div>` : ''}
 ${c.spec_changed ? `<div class="callout c-info">${svg(IC.info)}<span>The spec changed between these runs (step 1 or the tests were redone).</span></div>` : ''}
@@ -1348,7 +1348,7 @@ ${st.signedIn ? '' : `<div class="callout c-err" role="alert">${svg(IC.err, 'ic'
 ${c.columns.length ? `<div class="jc-cols" role="radiogroup" aria-labelledby="jc-col-l">${colChips}</div>` : `<div class="notice">${esc(c.project.key)} has no tickets yet, so its statuses can't be read. Create a ticket, then press Refresh.</div>`}
 ${byStatus && c.columns.length ? `<p class="jc-foot" style="margin-top:8px">Your Atlassian access doesn't include board settings, so these are the project's statuses. On a simple board each status is a column.</p>` : ''}</div>
 <div class="jc-row" style="align-items:center">
-${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}The Testing board shows ${esc(c.board.name)} · ${esc(col)}</span><a class="btn btn-sm" href="#/board" style="margin-left:4px">Open board${svg(IC.arrow, 'ic ic-s')}</a>`
+${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}The Testing board shows ${esc(c.board.name)}, ${esc(col)}</span><a class="btn btn-sm" href="#/board" style="margin-left:4px">Open board${svg(IC.arrow, 'ic ic-s')}</a>`
     : `<button type="button" class="btn btn-primary" data-act="jiraUse" ${col && !J.busy ? '' : 'disabled'}>${J.busy === 'use' ? svg(IC.spin, 'ic spin') : ''}${col ? `Show ${esc(col)} on the Testing board` : `Pick a ${byStatus ? 'status' : 'column'} first`}</button>`}
 </div>
 ${err}
@@ -1373,7 +1373,7 @@ function jiraBugs(st) {
 
 async function loadJira() {
   try { S.jira.st = await api('GET', '/api/jira'); S.jira.col = ''; } catch (e) { S.jira.err = 'Could not read the Jira connection: ' + e.message; }
-  if (/[?&]jira=connected/.test(location.hash)) { history.replaceState(null, '', '#/integrations'); S.integ.open['jira-mcp'] = true; if (S.jira.st && S.jira.st.connected) toast(`Jira connected · ${S.jira.st.connection.board.name}. Pick the QA column.`); }
+  if (/[?&]jira=connected/.test(location.hash)) { history.replaceState(null, '', '#/integrations'); S.integ.open['jira-mcp'] = true; if (S.jira.st && S.jira.st.connected) toast(`Jira connected: ${S.jira.st.connection.board.name}. Pick the QA column.`); }
   schedule();
 }
 
@@ -1385,7 +1385,7 @@ async function jiraConnect() {
       : await api('POST', '/api/jira/connect', { link: J.link });
     if (r.connected) J.token = '';
     if (r.authorize_url) { location.href = r.authorize_url; return; } // Atlassian sends the browser back to /api/jira/oauth/callback
-    J.changing = false; S.integ.open['jira-mcp'] = true; await loadJira(); toast(`Jira connected · ${r.connected.board.name}. Pick the QA column.`);
+    J.changing = false; S.integ.open['jira-mcp'] = true; await loadJira(); toast(`Jira connected: ${r.connected.board.name}. Pick the QA column.`);
   } catch (e) { J.err = e.message; }
   J.busy = ''; schedule();
 }
@@ -1449,7 +1449,7 @@ ${err}
 <div><div class="lbl" id="az-col-l">Which column holds the work items ready for QA?</div>
 ${c.columns.length ? `<div class="jc-cols" role="radiogroup" aria-labelledby="az-col-l">${colChips}</div>` : `<div class="notice">This board has no columns.</div>`}</div>
 <div class="jc-row" style="align-items:center">
-${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}The Testing board shows ${esc(c.board.name)} · ${esc(col)}</span><a class="btn btn-sm" href="#/board" style="margin-left:4px">Open board${svg(IC.arrow, 'ic ic-s')}</a>`
+${live ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}The Testing board shows ${esc(c.board.name)}, ${esc(col)}</span><a class="btn btn-sm" href="#/board" style="margin-left:4px">Open board${svg(IC.arrow, 'ic ic-s')}</a>`
     : `<button type="button" class="btn btn-primary" data-act="azUse" ${col && !A.busy ? '' : 'disabled'}>${A.busy === 'use' ? svg(IC.spin, 'ic spin') : ''}${col ? `Show ${esc(col)} on the Testing board` : 'Pick a column first'}</button>`}
 </div>
 ${err}
@@ -1469,7 +1469,7 @@ async function azureConnect() {
   const A = S.azure; A.busy = 'connect'; A.err = ''; schedule();
   try {
     const r = await api('POST', '/api/azure/connect', { link: A.link, pat: A.pat.trim() });
-    A.changing = false; A.pat = ''; S.integ.open.azure = true; await loadAzure(); toast(`Azure Boards connected · ${r.connected.board.name}. Pick the QA column.`);
+    A.changing = false; A.pat = ''; S.integ.open.azure = true; await loadAzure(); toast(`Azure Boards connected: ${r.connected.board.name}. Pick the QA column.`);
   } catch (e) { A.err = e.message; }
   A.busy = ''; schedule();
 }
@@ -1480,7 +1480,7 @@ function azureRow() {
   const kind = connected ? 'ok' : 'off';
   if (A.changing || integIsOpen('azure', kind)) return `<div class="irow is-open irow-jira">${viewAzureConnect()}</div>`;
   const c = connected ? st.connection : null;
-  const summary = c ? `${c.site} · ${c.project.name} · ${c.board.name}${st.column ? ' · ' + st.column : ''}` : 'Paste your board link and a personal access token';
+  const summary = c ? `${c.project.name}, ${c.board.name}${st.column ? ', ' + st.column : ''}` : 'Paste your board link and a personal access token';
   return `<section class="irow" aria-labelledby="int-azure"><div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="azure" aria-expanded="false">
 ${integTile('azure', '#0A6CBC', 'AZ', integLogo('azure'))}
@@ -1590,7 +1590,7 @@ function jiraRow() {
   const open = J.changing || integIsOpen('jira-mcp', kind);
   if (open) return `<div class="irow is-open irow-jira">${viewJiraConnect()}</div>`;
   const c = connected ? st.connection : null;
-  const summary = c ? `${c.site} · ${c.project.name} (${c.project.key}) · ${c.board.name}${st.column ? ' · ' + st.column : ''}` : 'Paste your board link and sign in with Atlassian';
+  const summary = c ? `${c.project.name}, ${c.board.name}${st.column ? ', ' + st.column : ''}` : 'Paste your board link and sign in with Atlassian';
   return `<section class="irow" aria-labelledby="int-jira-mcp"><div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="jira-mcp" aria-expanded="false">
 ${integTile('jira', '#2F64D6', 'J', jiraLogo())}
@@ -1610,17 +1610,26 @@ function viewIntegrations() {
   const byKey = Object.fromEntries(I.cards.map((c) => [c.key, c]));
   const listed = new Set(INTEG_GROUPS.flatMap((g) => g[2]));
   const groups = [...INTEG_GROUPS, ['Other', '', I.cards.map((c) => c.key).filter((k) => !listed.has(k))]];
-  const html = groups.map(([name, desc, keys]) => {
-    const rows = keys.map((k) => (k === 'jira-mcp' ? jiraRow() : k === 'azure' ? azureRow() : byKey[k] ? integRow(byKey[k]) : '')).join('');
-    return rows ? `<section class="igroup" aria-label="${esc(name)}"><div class="igroup-head"><h2>${esc(name)}</h2>${desc ? `<p>${esc(desc)}</p>` : ''}</div><div class="igroup-rows">${rows}</div></section>` : '';
+  // Off and closed: listed once at the bottom instead of a full row each. Jira always keeps its row.
+  const isIdle = (k) => {
+    if (k === 'jira-mcp' || k === 'workflow') return false;
+    if (k === 'azure') return !(S.azure.st && S.azure.st.connected) && !S.azure.changing && !integIsOpen('azure', 'off');
+    const c = byKey[k]; return c && !I.enabled[k] && !integIsOpen(k, integStatus(c)[2]);
+  };
+  const idle = [];
+  const html = groups.map(([name, , keys]) => {
+    const rows = keys.map((k) => { if (isIdle(k)) { idle.push(k); return ''; } return k === 'jira-mcp' ? jiraRow() : k === 'azure' ? azureRow() : byKey[k] ? integRow(byKey[k]) : ''; }).join('');
+    return rows ? `<section class="igroup" aria-label="${esc(name)}"><div class="igroup-head"><h2>${esc(name)}</h2></div><div class="igroup-rows">${rows}</div></section>` : '';
+  }).join('');
+  const avail = idle.map((k) => {
+    const c = byKey[k] || { key: 'azure', name: 'Azure Boards', tint: '#0A6CBC', mono: 'AZ' };
+    return `<button type="button" class="iavail-item" data-act="integSetup" data-key="${esc(k)}">${integTile(k, c.tint, c.mono, k === 'azure' ? integLogo('azure') : c.logo)}${esc(c.name)}</button>`;
   }).join('');
   return `<main class="main">
 <header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:36px">
-<div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">Connected services show a green check; click one to see or change its settings.</p></div>
-<div style="margin-left:auto;display:flex;gap:16px;flex-wrap:wrap"><span class="conn"><span class="d d-ok"></span>${sum.ok} connected</span><span class="conn"><span class="d d-err"></span>${sum.err} error</span><span class="conn"><span class="d d-off"></span>${sum.off} off</span></div>
+<div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">${sum.ok} connected${sum.err ? `, <span class="c-crit">${sum.err} with an error</span>` : ''}.</p></div>
 </header>
-${I.mode !== 'live' ? `<div class="notice">${svg(IC.info)}Demo data is on for the Testing board: it uses sample tickets and simulated Jira and TestRail. Connect Jira or Azure Boards below and pick a column to test your real tickets.</div>` : ''}
-${html}</main>`;
+${html}${avail ? `<section class="igroup" aria-label="Add a service"><div class="igroup-head"><h2>Add a service</h2></div><div class="iavail">${avail}</div></section>` : ''}</main>`;
 }
 
 async function loadIntegrations() {
@@ -1802,7 +1811,8 @@ const ACTS = {
   skTab: (el) => { S.skills.tab = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
   skPreview: (el, ev) => { if (ev.target.tagName === 'SUMMARY') { ev.preventDefault(); S.skills.preview = !S.skills.preview; } },
   skDiscard: () => { const K = S.skills; delete K.draft[skillKey(K)]; delete K.mode[K.sel + '|' + K.data.project]; },
-  skAddProject: () => { const K = S.skills; K.project = K.newKey.toUpperCase(); K.newKey = ''; K.tab = 'project'; loadSkills(); },
+  skAdding: () => { S.skills.adding = true; },
+  skAddProject: () => { const K = S.skills; K.project = K.newKey.toUpperCase(); K.newKey = ''; K.adding = false; K.tab = 'project'; loadSkills(); },
   skSave: async () => {
     const K = S.skills, step = K.data.steps.find((x) => x.id === K.sel), k = skillKey(K);
     const text = K.draft[k] != null ? K.draft[k] : (K.tab === 'project' ? (step.project ? step.project.text : '') : step.general.text);
@@ -1828,7 +1838,7 @@ const ACTS = {
     try {
       J.st = await api('POST', '/api/jira/column', { column: J.col || J.st.column, use_on_board: true }); J.col = '';
       S.board.data = null; S.board.sel = null; loadBoard(); S.integ.cards = null; loadIntegrations();
-      toast(`The Testing board now shows ${J.st.connection.board.name} · ${J.st.column}. Press Sync now on the board to pull tickets.`);
+      toast(`The Testing board now shows ${J.st.connection.board.name}, ${J.st.column}. Press Sync now on the board to pull tickets.`);
     } catch (e) { J.err = e.message; }
     J.busy = '';
   },
@@ -1852,7 +1862,7 @@ const ACTS = {
     try {
       A.st = await api('POST', '/api/azure/column', { column: A.col || A.st.column, use_on_board: true }); A.col = '';
       loadJira(); S.board.data = null; S.board.sel = null; loadBoard(); S.integ.cards = null; loadIntegrations();
-      toast(`The Testing board now shows ${A.st.connection.board.name} · ${A.st.column}. Press Sync now on the board to pull work items.`);
+      toast(`The Testing board now shows ${A.st.connection.board.name}, ${A.st.column}. Press Sync now on the board to pull work items.`);
     } catch (e) { A.err = e.message; }
     A.busy = '';
   },

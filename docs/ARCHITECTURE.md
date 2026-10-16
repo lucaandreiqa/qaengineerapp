@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (Onboarding: study a company's tools and set YourQA up their way).
+Last updated: 2026-10-16 (Design cleanup: one fact per place, secondary details folded away).
 
 
 ## 1. What it is
@@ -25,7 +25,7 @@ use, outside the board.
 
 | Layer | Modules | Responsibility |
 |---|---|---|
-| UI | `web/static/app.js`, `app.css`, `tokens.css` | Renders from one state object; `render()` builds HTML and morphs it into the page (only changed nodes are touched). Live updates arrive over SSE. |
+| UI | `web/static/app.js`, `app.css`, `tokens.css` | Renders from one state object; `render()` builds HTML and morphs it into the page (only changed nodes are touched). Live updates arrive over SSE. Screens show what needs a decision; secondary details (ticket fields, runs, files, cost) sit in folded sections (`foldSection`). No all-caps labels, middle-dot meta strings or monospace keys. |
 | HTTP API | `web/server.py`, `jira_connect.py`, `azure_connect.py` | Routes for the board, tickets, chat, history, reports, integrations, skills; serves static files with no-cache and versioned assets. |
 | Workflow engine | `workflow/engine.py` | The lanes and gates, background steps (`spawn`), stop/retry, chat, auto-sync, the live feed (`say`) and terminal (`term`). |
 | Step work | `workflow/agent.py` | One function per step: plan the checklist, write the spec, review results, write the comment, draft cases. Builds the prompts. |
@@ -236,6 +236,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: Design cleanup across every screen: board header reduced to a sentence, search, filter and sync; cards show key, type, state and the action; drawer folds ticket details, runs, cost and files; gate notes move into the approve button's tooltip; History rows, run page, Reports and Skills trimmed; Integrations lists services that are off as one "Add a service" row.
 - 2026-10-16: Onboarding (collect → analyse → apply with Undo) as the first of three projects for selling to companies (then framework adapters, then continuous learning).
 - 2026-10-15: Every lane can be skipped (working, failed or at its gate); skipping never writes to Jira or TestRail and is recorded in History.
 - 2026-10-15: Lane 5 shows the drafted TestRail cases in full (steps, expected) and folds the checklist away; `<KEY>-testrail-cases.md` includes steps and expected results.
