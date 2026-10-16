@@ -206,3 +206,41 @@ def search_cases(cfg: dict, text: str, limit: int = 30) -> list[dict]:
     data = _client(r).get(f"get_cases/{r['project_id']}{suite}&filter={requests.utils.quote(text)}&limit={limit}")
     cases = data.get("cases", []) if isinstance(data, dict) else data
     return [{"id": c.get("id"), "title": c.get("title", ""), "section_id": c.get("section_id")} for c in cases[:limit]]
+
+
+def _paths(secs: list[dict]) -> dict[int, str]:
+    by_id = {x["id"]: x for x in secs}
+
+    def path(x: dict) -> str:
+        parts = [x["name"]]
+        while x.get("parent_id") and x["parent_id"] in by_id:
+            x = by_id[x["parent_id"]]
+            parts.append(x["name"])
+        return " › ".join(reversed(parts))
+    return {x["id"]: path(x) for x in secs}
+
+
+def sample(cfg: dict, limit: int = 150) -> dict:
+    """Read-only, for onboarding: the section tree and the most recently updated cases with their steps."""
+    r = resolve(cfg)
+    tr = _client(r)
+    suite = f"&suite_id={r['suite_id']}" if str(r.get("suite_id") or "").strip() else ""
+    data = tr.get(f"get_sections/{r['project_id']}{suite}")
+    secs = data.get("sections", []) if isinstance(data, dict) else data
+    paths = _paths(secs)
+    data = tr.get(f"get_cases/{r['project_id']}{suite}&limit=250")
+    cases = data.get("cases", []) if isinstance(data, dict) else data
+    cases = sorted(cases, key=lambda c: c.get("updated_on") or 0, reverse=True)[:limit]
+
+    def steps_of(c: dict) -> tuple[str, str]:
+        sep = c.get("custom_steps_separated") or []
+        if sep:
+            return ("\n".join(f"{i}. {s.get('content', '')}" for i, s in enumerate(sep, 1)),
+                    "\n".join(s.get("expected", "") for s in sep if s.get("expected")))
+        return str(c.get("custom_steps") or ""), str(c.get("custom_expected") or "")
+    out = []
+    for c in cases:
+        steps, expected = steps_of(c)
+        out.append({"id": c.get("id"), "title": c.get("title", ""), "section": paths.get(c.get("section_id"), ""),
+                    "steps": steps[:1500], "expected": expected[:800], "type": c.get("type_id"), "priority": c.get("priority_id")})
+    return {"sections": sorted(paths.values()), "cases": out}
