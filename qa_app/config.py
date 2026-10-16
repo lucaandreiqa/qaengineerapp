@@ -30,7 +30,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
               "link": "", "connection": {}},
     "github": {"enabled": False, "token": "", "repos": ""},
     "testrail": {"enabled": False, "base_url": "", "username": "", "api_key": "",
-                 "project_id": "", "suite_id": ""},
+                 "project_id": "", "suite_id": "", "section_map": {}},
     "xray": {"enabled": False, "client_id": "", "client_secret": "", "project_key": ""},
     "zephyr": {"enabled": False, "api_token": "", "project_key": ""},
     "aws": {"enabled": False, "bucket": "", "prefix": "qa-reports/", "region": "eu-central-1",
