@@ -81,3 +81,19 @@ def test_replacing_your_own_project_skill_is_marked(home):
     assert c["replaced_edit"] is True
     ap.undo(run_dir, c["id"], home / "company")
     assert skills.project("SCRUM", "gather") == {"text": "My own SCRUM notes", "mode": "replace", "shipped": False}
+
+
+def test_each_change_is_kept_or_undone_before_finishing(home):
+    changes = ap.plan(FINDINGS, ["SCRUM"])
+    run_dir = home / "run"
+    ap.apply(changes, run_dir, home / "company")
+    assert ap.undecided(run_dir) == len(changes)
+    first, second = ap.load(run_dir)[:2]
+    assert ap.keep(run_dir, first["id"]) == "kept"
+    ap.undo(run_dir, second["id"], home / "company")
+    assert ap.undecided(run_dir) == len(changes) - 2
+    assert ap.keep(run_dir, second["id"]) == "already undone"       # an undone change can't be kept
+    ap.keep_all(run_dir)
+    assert ap.undecided(run_dir) == 0
+    kept = [c for c in ap.load(run_dir) if c.get("kept")]
+    assert len(kept) == len(changes) - 1

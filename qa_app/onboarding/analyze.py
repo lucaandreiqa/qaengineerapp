@@ -7,6 +7,8 @@ the knowledge base and the repo each get their own call. An area whose call fail
 from __future__ import annotations
 
 import json
+import math
+from contextvars import ContextVar
 from typing import Callable, Optional
 
 from ..workflow import agent
@@ -24,8 +26,17 @@ def _system(area: str) -> str:
     return f"[onboarding:{area}] {BASE}"
 
 
+ON_STEP: ContextVar = ContextVar("onboarding_on_step", default=None)
+
+
 async def _ask(cfg, area: str, prompt: str, max_tokens: int = 8000) -> dict:
-    data = agent._json_block(await agent.ask_claude(cfg, _system(area), prompt, max_tokens=max_tokens))
+    try:
+        raw = await agent.ask_claude(cfg, _system(area), prompt, max_tokens=max_tokens)
+    finally:
+        step = ON_STEP.get()
+        if step:
+            step()
+    data = agent._json_block(raw)
     if not isinstance(data, dict):
         raise ValueError("answer was not a JSON object")
     return data
@@ -128,9 +139,39 @@ async def _repo(cfg, repo: dict, on_event) -> dict:
             "evidence": [str(e) for e in data.get("evidence") or []][:20]}
 
 
-async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None], on_area=None) -> dict:
+def count_calls(collected: dict) -> int:
+    """How many Claude calls analyze() will make for what was collected (the progress bar's unit of work)."""
+    tracker, testrail, confluence, repo, mcp = (collected.get(k) or {} for k in ("tracker", "testrail", "confluence", "repo", "mcp"))
+    n_tickets = len(tracker.get("tickets") or [])
+    n = (math.ceil(n_tickets / BATCH) + 1) if n_tickets else 0
+    n += 1 if testrail.get("cases") else 0
+    n += 1 if (confluence.get("pages") or n_tickets or mcp.get("results")) else 0
+    n += 1 if repo.get("files") else 0
+    return n
+
+
+async def polish(cfg, step: str, general: str, learned: str, knowledge: str, profile: str) -> str:
+    """Finish onboarding: one clean project version of a step's skill from what was learned and accepted."""
+    data = await _ask(cfg, "polish", f"The general skill for this step (YourQA's, used for every company):\n{general[:20000]}\n\n"
+                      f"What onboarding learned about this company for this step (accepted by them):\n{learned[:12000]}\n\n"
+                      + (f"The company knowledge base:\n{knowledge[:8000]}\n\n" if knowledge else "")
+                      + (f"Their automation:\n{profile[:3000]}\n\n" if profile else "")
+                      + "Write the final project version of this skill: it ADDS to the general skill, so keep only what is "
+                      "specific to this company, merged into one clean, well-ordered document with no repetition, using "
+                      "their terms. Keep every concrete convention from what was learned. Return JSON: {\"markdown\": str "
+                      "(under 6,000 characters)}. " + SKILL_RULES, 8000)
+    text = str(data.get("markdown") or "").strip()
+    if not text:
+        raise ValueError("the answer had no skill text")
+    return text
+
+
+async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None], on_area=None, on_step=None) -> dict:
     """{tickets, testrail, knowledge, repo, failed}. A missing source gives None for its area; a failing call is in failed.
-    on_area(area, result) is awaited as each area finishes, so its results can be applied straight away."""
+    on_area(area, result) is awaited as each area finishes, so its results can be applied straight away. on_step() is
+    called after every Claude call (count_calls() says how many there will be)."""
+    if on_step:
+        ON_STEP.set(on_step)
     out: dict = {"tickets": None, "testrail": None, "knowledge": None, "repo": None, "failed": {}}
     tracker, testrail, confluence, repo, mcp = (collected.get(k) for k in ("tracker", "testrail", "confluence", "repo", "mcp"))
     jobs = [("tickets", tracker and tracker.get("tickets"), lambda: _tickets(cfg, tracker, on_event)),

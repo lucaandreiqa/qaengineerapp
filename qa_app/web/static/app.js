@@ -169,6 +169,7 @@ const S = {
   jira: { st: null, link: '', busy: '', err: '', col: '', method: store.get('jiraMethod', 'atlassian'), email: '', token: '' },
   azure: { st: null, link: '', pat: '', busy: '', err: '', col: '', changing: false },
   auth: { status: null, err: '' },
+  app: { onboarding_done: false },
   setup: { tab: {}, busy: false, err: '' },
   mcp: { servers: null, adding: false, form: { name: '', url: '', auth: 'oauth', token: '', header: '' }, draft: {}, open: {}, busy: '', err: {}, cc: null, reveal: false },
   skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
@@ -213,7 +214,13 @@ function connect() {
     } else if (ev.type === 'onboarding') {
       const O = S.onb;
       if (O.data && ev.event === 'line') O.data.lines = [...(O.data.lines || []), ev.text].slice(-200);
-      if (ev.event === 'done') loadOnboarding();
+      if (O.data && ev.event === 'progress' && ev.percent != null) O.data.progress = { ...(O.data.progress || {}), percent: ev.percent, text: ev.text || '' };
+      if (ev.event === 'done') {
+        loadOnboarding();
+        if (ev.status === 'finished') { S.app.onboarding_done = true; toast('Onboarding finished. Your skills are set up.'); }
+        else if (ev.status === 'done') toast('Study finished. Keep or undo each change on the Onboarding screen.');
+      }
+      if (ev.event === 'progress' && S.route !== 'onboarding' && S.route !== 'board') return;
       if (S.route !== 'onboarding') return;
     } else if (ev.type === 'term') {
       if (ev.reset) S.term[ev.key] = [];
@@ -310,7 +317,7 @@ function viewSide() {
   const link = (r, label, icon) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}</a>`;
   return `<nav class="side" aria-label="Main">
 <div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">YourQA</span></div>
-<a class="nav-link" href="#/onboarding" ${S.route === 'onboarding' ? 'aria-current="page"' : ''}>${svg(IC.spark || IC.skill)}Onboarding</a>
+${S.app.onboarding_done && S.route !== 'onboarding' ? '' : `<a class="nav-link" href="#/onboarding" ${S.route === 'onboarding' ? 'aria-current="page"' : ''}>${svg(IC.spark || IC.skill)}Onboarding${onbBadge()}</a>`}
 ${link('board', 'Board', IC.board, 1)}${link('history', 'History', IC.history, 2)}${link('reports', 'Reports', IC.report, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
 ${viewWho()}<div class="seg" role="group" aria-label="Theme">
@@ -850,6 +857,8 @@ async function boot() {
   if (S.route === 'login') location.hash = '#/';
   try {
     const setup = await api('GET', '/api/setup');
+    S.app.onboarding_done = !!setup.onboarding_done;
+    loadOnboarding();
     if (!setup.done && S.route !== 'setup' && !/[?&](jira=connected|mcp=)/.test(location.hash)) location.hash = '#/setup/' + SETUP[0].id;
   } catch (e) { /* setup state unknown: stay where we are */ }
 }
@@ -963,6 +972,24 @@ async function loadOnboarding() {
   schedule();
 }
 
+function onbProgress(p, phase) {
+  p = p || {};
+  const pct = Math.max(0, Math.min(100, p.percent || 0));
+  let eta = '';
+  if (p.started && pct >= 5 && pct < 100) {
+    const left = ((Date.now() / 1000 - p.started) / pct) * (100 - pct);
+    eta = left < 90 ? 'about a minute left' : `about ${Math.round(left / 60)} min left`;
+  }
+  return `<div class="onb-prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${phase === 'finish' ? 'Finishing onboarding' : 'Studying your tools'}">
+<div class="onb-prog-top"><b>${pct}%</b><span>${esc(eta)}</span></div><div class="onb-prog-bar"><i style="width:${pct}%"></i></div></div>`;
+}
+function onbBadge() {
+  const d = S.onb.data;
+  if (!d) return '';
+  if (d.running || d.finishing) return `<span class="nav-pct">${(d.progress && d.progress.percent) || 0}%</span>`;
+  return d.undecided ? `<span class="nav-pct">${d.undecided}</span>` : '';
+}
+
 const ONB_AREA = { tickets: 'From your tickets', testrail: 'From TestRail', knowledge: 'Knowledge base', repo: 'From your automation' };
 
 function viewOnboarding() {
@@ -985,12 +1012,13 @@ ${m.ready ? `<label class="cb"><input type="checkbox" ${O.mcp[m.id] !== false ? 
 ${c.confluence.connected ? `<label class="onb-field"><span>Confluence spaces <i>(optional)</i></span><input class="inp" id="onb-spaces" data-in="onbSpaces" value="${esc(O.spaces || '')}" placeholder="e.g. QA, PROD" ${running ? 'disabled' : ''}></label>` : ''}`;
   const lines = d.lines || [];
   const study = running
-    ? `<div class="onb-live">${svg(IC.spin, 'ic ic-s spin')}<span>${esc(lines[lines.length - 1] || 'Starting…')}</span><button type="button" class="btn btn-sm" data-act="onbStop">Stop</button></div>
+    ? `${onbProgress(d.progress, 'study')}<div class="onb-live"><span>${esc((d.progress && d.progress.text) || lines[lines.length - 1] || 'Starting…')}</span><button type="button" class="btn btn-sm" data-act="onbStop">Stop</button></div>
 <button type="button" class="btn btn-quiet btn-sm onb-tog" data-act="onbDetails" aria-expanded="${O.details}">${O.details ? 'Hide' : 'Show'} details</button>
 ${O.details ? `<div class="term onb-term">${lines.map((l) => `<div class="tl">${esc(l)}</div>`).join('')}</div>` : ''}`
     : `<p class="onb-hint">Reads a recent sample: about 200 tickets per project, 150 test cases, 30 docs pages, your automation and up to 10 reads per MCP server. Read-only.</p>
 <button type="button" class="btn btn-primary" data-act="onbStudy" ${O.busy ? 'disabled' : ''}>${last ? 'Study again' : 'Study'}</button>${O.err ? `<p class="onb-err">${esc(O.err)}</p>` : ''}`;
-  let changed = '<p class="onb-hint">Nothing yet. Results appear here, applied straight away, each with Undo.</p>';
+  let changed = '<p class="onb-hint">Nothing yet. Results appear here as they are learned, each with Keep or Undo.</p>';
+  const finished = last && last.status === 'finished';
   if (last && !running) {
     const live = (last.changes || []).filter((x) => !x.undone);
     const groups = Object.keys(ONB_AREA).map((a) => [a, (last.changes || []).filter((x) => x.area === a)]).filter(([, xs]) => xs.length);
@@ -1002,12 +1030,27 @@ ${problems.length ? `<div class="callout c-warn">${svg(IC.warn)}<span>${problems
 ${groups.map(([a, xs]) => `<div class="onb-group"><div class="onb-gh">${esc(ONB_AREA[a])}</div>${xs.map((x) => {
       const open = !!O.open[x.id];
       return `<div class="onb-ch${x.undone ? ' is-undone' : ''}"><button type="button" class="onb-chh" data-act="onbOpen" data-key="${esc(x.id)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}<span>${esc(x.label)}</span>${x.replaced_edit ? '<span class="onb-tag">replaced your edit</span>' : ''}</button>
-${x.undone ? '<span class="onb-undone">Undone</span>' : `<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndo" data-key="${esc(x.id)}">Undo</button>`}
+${x.undone ? '<span class="onb-undone">Undone</span>' : finished ? '<span class="onb-kept">Kept</span>'
+        : `${x.kept ? `<span class="onb-kept">${svg(IC.check, 'ic ic-s')}Kept</span>` : `<button type="button" class="btn btn-sm" data-act="onbKeep" data-key="${esc(x.id)}">Keep</button>`}<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndo" data-key="${esc(x.id)}">Undo</button>`}
 ${open ? `<ul class="onb-ev">${(x.evidence || []).map((e) => `<li>${esc(e)}</li>`).join('') || '<li>No evidence recorded.</li>'}</ul>` : ''}</div>`;
     }).join('')}</div>`).join('')}
-${live.length ? '<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndoAll">Undo all</button>' : ''}`;
+${finished ? '' : d.finishing ? `<div class="onb-finish">${onbProgress(d.progress, 'finish')}<p class="onb-hint">${esc((d.progress && d.progress.text) || 'Polishing your skills')}</p></div>`
+      : `<div class="onb-finish">
+<div class="onb-acts">${d.undecided ? `<button type="button" class="btn btn-sm" data-act="onbKeepAll">Keep all ${d.undecided}</button>` : ''}${live.length ? '<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndoAll">Undo all</button>' : ''}</div>
+<p class="onb-hint">${d.undecided ? `Keep or undo each change (${d.undecided} left). Then finish: Claude polishes each kept skill once more with everything it learned, and this screen is put away.` : 'Everything is decided. Finish: Claude polishes each kept skill once more with everything it learned, and this screen is put away.'}</p>
+<button type="button" class="btn btn-primary" data-act="onbFinish" ${d.undecided || O.busy || !['done', 'stopped'].includes(last.status) ? 'disabled' : ''}>Finish onboarding</button></div>`}`;
   }
   const hasRun = !!last;
+  if (finished && !O.reopen) {
+    const kept = (last.changes || []).filter((x) => !x.undone).length;
+    const failed = Object.keys(last.polish_failed || {}).length;
+    return `<main class="main onb">${head}<section class="card onb-done">
+<div class="onb-done-ic">${svg(IC.check)}</div><h2>Onboarding is finished</h2>
+<p>${kept} change${kept === 1 ? '' : 's'} in use; each kept skill was polished with what YourQA learned${failed ? ` (${failed} kept as accepted)` : ''}. Edit them any time on the <a href="#/skills">Skills</a> screen.</p>
+<div class="onb-acts"><a class="btn btn-primary" href="#/board">Open the board</a><button type="button" class="btn btn-quiet" data-act="onbReopen">See what changed</button></div>
+<p class="onb-hint">Your tools changed a lot? Study again from here; the Onboarding screen comes back until you finish.</p>
+<button type="button" class="btn btn-sm" data-act="onbStudyAgain">Study again</button></section></main>`;
+  }
   return `<main class="main onb">${head}<div class="card onb-card">
 ${step(1, 'Connect', connect, c.tracker.connected)}
 ${step(2, 'Choose', choose, !!(O.projects || '').trim())}
@@ -1827,7 +1870,7 @@ function viewIntegrations() {
   }).join('') + (S.mcp.adding ? '' : `<button type="button" class="iavail-item" data-act="mcpAdd">${integTile('mcp', '#5B6170', 'M')}MCP server</button>`);
   return `<main class="main">
 <header style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:36px">
-<div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">${sum.ok} connected${sum.err ? `, <span class="c-crit">${sum.err} with an error</span>` : ''}.</p></div>
+<div><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Integrations</h1><p style="margin:2px 0 0;color:var(--muted)">${sum.ok} connected${sum.err ? `, <span class="c-crit">${sum.err} with an error</span>` : ''}.${S.app.onboarding_done ? ' Connected something new? <a href="#/onboarding">Study your tools again</a>.' : ''}</p></div>
 </header>
 ${html}${avail ? `<section class="igroup" aria-label="Add a service"><div class="igroup-head"><h2>Add a service</h2></div><div class="iavail">${avail}</div></section>` : ''}</main>`;
 }
@@ -2022,6 +2065,15 @@ const ACTS = {
     catch (e) { O.err = e.message; }
     O.busy = false; schedule();
   },
+  onbKeep: async (el) => { try { S.onb.data = { ...S.onb.data, ...(await api('POST', `/api/onboarding/keep/${encodeURIComponent(el.dataset.key)}`)) }; } catch (e) { S.onb.err = e.message; } },
+  onbKeepAll: async () => { try { S.onb.data = { ...S.onb.data, ...(await api('POST', '/api/onboarding/keep-all')) }; } catch (e) { S.onb.err = e.message; } },
+  onbFinish: async () => {
+    const O = S.onb; O.busy = true; O.err = ''; schedule();
+    try { O.data = { ...O.data, ...(await api('POST', '/api/onboarding/finish')), finishing: true }; } catch (e) { O.err = e.message; }
+    O.busy = false;
+  },
+  onbReopen: () => { S.onb.reopen = true; },
+  onbStudyAgain: () => { S.onb.reopen = true; S.app.onboarding_done = false; },
   onbStop: async () => { try { await api('POST', '/api/onboarding/stop'); } catch (e) { S.onb.err = e.message; } },
   onbDetails: () => { S.onb.details = !S.onb.details; },
   onbOpen: (el) => { const k = el.dataset.key; S.onb.open[k] = !S.onb.open[k]; },

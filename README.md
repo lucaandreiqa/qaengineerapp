@@ -92,8 +92,14 @@ YourQA up to match, straight away:
 - a framework profile of your automation (language, runner, layout, page objects, helpers, run command);
 - a company knowledge base (product areas, glossary, roles, environments) that Claude gets in every step.
 
-**What changed** lists every change with what it was based on, each with **Undo** (and **Undo all**). Undo leaves a
-change alone if you edited it yourself afterwards. **Study again** refreshes everything.
+While it studies, a **percentage bar** shows how far it is (it counts each project and each step Claude takes) with an
+estimate of the time left; the sidebar shows the percentage too.
+
+**What changed** lists every change with what it was based on. Changes apply straight away; mark each one **Keep** or
+**Undo** (or **Keep all**). Undo leaves a change alone if you edited it yourself afterwards. When everything is decided,
+**Finish onboarding**: Claude polishes each kept skill once more, merging what it learned and the knowledge base into
+one clean version per project, the changes become final, and the Onboarding screen is put away. To study again later,
+use the link on the Integrations screen.
 
 **Tests in your style.** After onboarding has studied your automation repo, *Create tests* writes each ticket's
 Playwright spec the way your team writes tests: Claude sees up to two of your own spec files and the signatures of your

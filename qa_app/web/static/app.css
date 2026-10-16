@@ -629,3 +629,21 @@ textarea.sk-text{height:max(62vh,420px);min-height:220px;padding:12px;line-heigh
 @media (prefers-reduced-motion:reduce){.setup-bar i{transition:none}}
 .side{max-width:216px}
 .who-t > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Onboarding progress, keep and finish */
+.onb-prog{display:flex;flex-direction:column;gap:6px;margin:2px 0 8px}
+.onb-prog-top{display:flex;align-items:baseline;gap:10px}
+.onb-prog-top b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.onb-prog-top span{color:var(--muted);font-size:12.5px}
+.onb-prog-bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}
+.onb-prog-bar i{display:block;height:100%;border-radius:4px;background:var(--accent);transition:width .4s ease}
+@media (prefers-reduced-motion:reduce){.onb-prog-bar i{transition:none}}
+.onb-kept{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--pass)}
+.onb-ch .btn + .btn{margin-left:4px}
+.onb-finish{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.onb-acts{display:flex;gap:8px;flex-wrap:wrap}
+.nav-pct{margin-left:auto;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.onb-done{max-width:640px;padding:28px;display:flex;flex-direction:column;align-items:flex-start;gap:10px}
+.onb-done h2{margin:0;font-size:20px;font-weight:600}
+.onb-done p{margin:0;color:var(--muted);line-height:1.55}
+.onb-done-ic{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--pass-bg);color:var(--pass)}
+.onb-finish .onb-prog{align-self:stretch}

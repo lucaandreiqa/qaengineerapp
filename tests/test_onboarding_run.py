@@ -125,3 +125,46 @@ def test_connected_mcp_servers_are_studied_with_read_tools_only(home, monkeypatc
     assert "mcp" in calls and "knowledge" in calls
     saved = json.loads((tmp / "company" / "onboarding" / last["id"] / "collected" / "mcp.json").read_text())
     assert "wiki" in saved["results"][0]["text"]
+
+
+class TwoProjects(MockJira):
+    def recent(self, project, limit=200):
+        return [dict(t, key=t["key"].replace("SCRUM", project)) for t in super().recent("SCRUM", limit)]
+
+
+def test_progress_goes_from_0_to_100_and_counts_each_project(home):
+    tmp, events, calls = home
+    factory = lambda: {"cfg": Config(demo=False, anthropic_api_key="k"), "tracker": TwoProjects(_issues(30)),  # noqa: E731
+                       "testrail": None, "confluence": None}
+    o = ob.Onboarding(factory)
+    assert o.state()["progress"]["percent"] == 0
+    go(o.study({"projects": ["SCRUM", "OPTR"], "spaces": [], "repo": ""}))
+    pct = [e["percent"] for e in events if e.get("type") == "onboarding" and e.get("event") == "progress" and "percent" in e]
+    assert pct and pct == sorted(pct) and pct[-1] == 100                  # only ever goes up, ends at 100
+    labels = [e.get("text", "") for e in events if e.get("event") == "progress"]
+    assert any("SCRUM" in l for l in labels) and any("OPTR" in l for l in labels)
+    assert o.state()["progress"]["percent"] == 100
+
+
+def test_finishing_needs_every_change_decided_then_polishes_skills_and_hides_onboarding(home):
+    tmp, events, calls = home
+    factory, repo = _sources(tmp, with_repo=False)
+    o = ob.Onboarding(factory)
+    go(o.study({"projects": ["SCRUM", "OPTR"], "spaces": [], "repo": ""}))
+    changes = o.state()["last"]["changes"]
+    with pytest.raises(ob.OnboardingBusy, match="Keep or undo"):
+        go(o.finish())
+    gather_optr = next(c for c in changes if c["target"] == "OPTR/gather")
+    o.undo(gather_optr["id"])                                             # undone: not polished, stays undone
+    o.keep_all()
+    calls.clear()
+    go(o.finish())
+    assert calls.count("polish") == 3                                      # SCRUM gather + jira-comment, OPTR jira-comment
+    assert skills.project("SCRUM", "gather")["text"].startswith("## Polished")
+    optr = skills.project("OPTR", "gather")
+    assert optr is None or optr.get("shipped")                            # back to what it was (OPTR has a built-in one)
+    assert config.load_settings()["app"]["onboarding_done"] is True
+    st = o.state()
+    assert st["last"]["status"] == "finished" and st["finished"] and st["progress"]["percent"] == 100
+    with pytest.raises(KeyError):
+        o.undo(changes[0]["id"])                                           # finished: no more undo

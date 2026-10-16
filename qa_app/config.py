@@ -30,7 +30,7 @@ DEFAULT_SETTINGS: dict[str, dict] = {
               "link": "", "connection": {}},
     "github": {"enabled": False, "token": "", "repos": ""},
     # First-run setup (sign-in, then one page per connection) is shown until finished or skipped.
-    "app": {"setup_done": False},
+    "app": {"setup_done": False, "onboarding_done": False},
     "testrail": {"enabled": False, "base_url": "", "username": "", "api_key": "",
                  "project_id": "", "suite_id": "", "section_map": {}},
     "xray": {"enabled": False, "client_id": "", "client_secret": "", "project_key": ""},

@@ -175,3 +175,32 @@ def undo_all(run_dir: Path, company: Path) -> dict:
     for c in reversed(load(run_dir)):  # newest first, so changes to the same target unwind in order
         counts[undo(run_dir, c["id"], company)] += 1
     return counts
+
+
+def keep(run_dir: Path, change_id: str) -> str:
+    """'kept', 'already kept', or 'already undone'. Kept changes are the ones Finish onboarding polishes."""
+    changes = load(run_dir)
+    c = next((x for x in changes if x["id"] == change_id), None)
+    if c is None:
+        raise KeyError(change_id)
+    if c.get("undone"):
+        return "already undone"
+    if c.get("kept"):
+        return "already kept"
+    c["kept"] = True
+    save_changes(run_dir, changes)
+    return "kept"
+
+
+def keep_all(run_dir: Path) -> int:
+    changes = load(run_dir)
+    n = 0
+    for c in changes:
+        if not c.get("undone") and not c.get("kept"):
+            c["kept"], n = True, n + 1
+    save_changes(run_dir, changes)
+    return n
+
+
+def undecided(run_dir: Path) -> int:
+    return sum(1 for c in load(run_dir) if not c.get("kept") and not c.get("undone"))

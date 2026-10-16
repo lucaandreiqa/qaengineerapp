@@ -305,7 +305,8 @@ def _q(text: str) -> str:
 # ------------------------------------------------------------------ first-run setup
 @app.get("/api/setup")
 def setup_state() -> dict:
-    return {"done": bool(load_settings().get("app", {}).get("setup_done"))}
+    a = load_settings().get("app", {})
+    return {"done": bool(a.get("setup_done")), "onboarding_done": bool(a.get("onboarding_done"))}
 
 
 @app.post("/api/setup/done")
@@ -584,6 +585,43 @@ def onboarding_undo(change_id: str) -> dict:
 @app.post("/api/onboarding/undo-all")
 def onboarding_undo_all() -> dict:
     return {"result": S().onboarding.undo_all(), **S().onboarding.state()}
+
+
+@app.post("/api/onboarding/keep/{change_id}")
+def onboarding_keep(change_id: str) -> dict:
+    try:
+        return {"result": S().onboarding.keep(change_id), **S().onboarding.state()}
+    except KeyError:
+        raise HTTPException(404, "That change is gone")
+
+
+@app.post("/api/onboarding/keep-all")
+def onboarding_keep_all() -> dict:
+    try:
+        return {"result": S().onboarding.keep_all(), **S().onboarding.state()}
+    except KeyError:
+        raise HTTPException(409, "Onboarding is already finished")
+
+
+@app.post("/api/onboarding/finish")
+async def onboarding_finish() -> dict:
+    """Polish the kept skills, make the run final and hide the Onboarding screen; progress arrives as live events."""
+    from ..onboarding.run import OnboardingBusy
+    ob = S().onboarding
+    st = ob.state()
+    if st["undecided"]:
+        raise HTTPException(409, f"Keep or undo every change first ({st['undecided']} left).")
+
+    async def go() -> None:
+        try:
+            await ob.finish()
+        except OnboardingBusy as e:
+            bus.publish({"type": "toast", "message": str(e)})
+        except Exception:
+            log.exception("Finishing onboarding failed")
+    asyncio.create_task(go())
+    await asyncio.sleep(0)
+    return ob.state()
 
 
 class ChatIn(BaseModel):

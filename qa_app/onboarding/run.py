@@ -28,6 +28,7 @@ class Onboarding:
         self.sources = sources
         self.task: Optional[asyncio.Task] = None
         self.lines: list[str] = []
+        self.progress = {"percent": 0, "text": "", "started": None, "done": 0, "total": 0, "phase": ""}
         for d in self._runs():  # a run the app didn't finish (restart, crash) is stopped, its applied parts kept
             s = self._summary(d)
             if s.get("status") == "running":
@@ -67,7 +68,35 @@ class Onboarding:
             last = {**self._summary(d), "changes": [
                 {k: c.get(k) for k in ("id", "kind", "target", "label", "area", "evidence", "replaced_edit", "undone")}
                 for c in apply.load(d)]}
-        return {"running": bool(self.task and not self.task.done()), "lines": self.lines[-200:], "last": last}
+        if last and last.get("status") in ("done", "finished") and self.progress["percent"] < 100 and not self._busy():
+            self.progress = {**self.progress, "percent": 100}
+        return {"running": self._busy() and self.progress["phase"] == "study", "finishing": self._busy() and self.progress["phase"] == "finish",
+                "lines": self.lines[-200:], "last": last, "progress": {k: self.progress[k] for k in ("percent", "text", "started", "phase")},
+                "undecided": apply.undecided(d) if d else 0, "finished": bool(config.load_settings().get("app", {}).get("onboarding_done"))}
+
+    def _busy(self) -> bool:
+        return bool(self.task and not self.task.done())
+
+    # ---------------------------------------------------------------------- progress
+    def _progress_start(self, phase: str, total: int, text: str) -> None:
+        self.progress = {"percent": 0, "text": text, "started": time.time(), "done": 0, "total": max(1, total), "phase": phase}
+        self._emit("progress", percent=0, text=text)
+
+    def _tick(self, text: str = "", units: int = 1) -> None:
+        p = self.progress
+        p["done"] += units
+        if p["done"] >= p["total"]:  # the estimate was low: grow it so the bar never reaches 100 early
+            p["total"] = p["done"] + 1
+        pct = max(p["percent"], min(99, int(p["done"] * 100 / p["total"])))
+        p["percent"], p["text"] = pct, text or p["text"]
+        self._emit("progress", percent=pct, text=p["text"])
+
+    def _retotal(self, remaining: int) -> None:
+        self.progress["total"] = max(self.progress["done"] + max(1, remaining), 1)
+
+    def _progress_end(self, text: str) -> None:
+        self.progress.update(percent=100, text=text)
+        self._emit("progress", percent=100, text=text)
 
     # ---------------------------------------------------------------------- the run
     def _emit(self, event: str, **data) -> None:
@@ -76,7 +105,7 @@ class Onboarding:
         bus.publish({"type": "onboarding", "event": event, **data})
 
     async def study(self, choices: dict) -> str:
-        if self.task and not self.task.done():
+        if self._busy():
             raise OnboardingBusy("A study is already running.")
         self.task = asyncio.ensure_future(self._study(choices))
         return await self.task
@@ -97,14 +126,24 @@ class Onboarding:
         src = self.sources()
         cfg = src["cfg"]
         collected: dict = {}
+        config.save_section("app", {"onboarding_done": False})  # a new study brings the Onboarding screen back
+        mcp_ids = [x for x in choices.get("mcp") or [] if x]
+        has = {"tracker": src.get("tracker") is not None and bool(projects), "testrail": bool(src.get("testrail")),
+               "confluence": src.get("confluence") is not None, "repo": bool(str(choices.get("repo") or "").strip())}
+        # The estimate: one unit per project and source read, then every Claude call (about 4 ticket batches per project).
+        estimate = (len(projects) if has["tracker"] else 0) + sum(has[k] for k in ("testrail", "confluence", "repo")) \
+            + (3 if mcp_ids else 0) + (len(projects) * 5 if has["tracker"] else 0) + sum(has[k] for k in ("testrail", "repo")) + 1
+        self._progress_start("study", estimate, "Starting")
+        loop = asyncio.get_running_loop()
 
-        async def grab(name: str, label: str, fn, describe) -> None:
-            self._emit("progress", source=name, status="reading", text=f"Reading {label}")
+        async def grab(name: str, label: str, fn, describe, units: int = 1) -> None:
+            self._emit("progress", source=name, status="reading", text=f"Reading {label}", percent=self.progress["percent"])
             try:
                 data = await asyncio.to_thread(fn)
             except Exception as e:
                 summary["sources"][name] = f"failed: {(str(e).splitlines() or ['error'])[0][:240]}"
                 self._emit("line", text=f"{label}: {summary['sources'][name]}")
+                self._tick(units=units)
                 return
             collected[name] = data
             (run_dir / "collected").mkdir(parents=True, exist_ok=True)
@@ -112,11 +151,16 @@ class Onboarding:
             summary["sources"][name] = describe(data)
             self._emit("line", text=summary["sources"][name])
             self._save_summary(run_dir, summary)
+            if name != "tracker":  # the tracker ticks once per project as it reads
+                self._tick(summary["sources"][name], units=units)
 
         try:
             if src.get("tracker") is not None and projects:
-                await grab("tracker", "tickets", lambda: collect.collect_tracker(src["tracker"], projects, 200),
+                def read_project(project: str, count: int) -> None:
+                    loop.call_soon_threadsafe(self._tick, f"Read {count} tickets from {project}")
+                await grab("tracker", "tickets", lambda: collect.collect_tracker(src["tracker"], projects, 200, on_project=read_project),
                            lambda d: f"Read {len(d['tickets'])} tickets from {', '.join(projects)}")
+                await asyncio.sleep(0)  # let the per-project ticks land
             else:
                 summary["sources"]["tracker"] = "not connected"
             if src.get("testrail"):
@@ -147,9 +191,18 @@ class Onboarding:
                 apply.save_changes(run_dir, all_changes)
                 self._emit("line", text=f"Applied {len(done)} change{'s' if len(done) != 1 else ''} from {area}")
 
-            findings = await analyze.analyze(cfg, collected, lambda kind, text: self._emit("line", text=text), on_area=apply_area)
+            self._retotal(analyze.count_calls(collected))
+            last_line = {"text": "Studying"}
+
+            def on_event(kind: str, text: str) -> None:
+                if kind == "line":
+                    last_line["text"] = text
+                self._emit("line", text=text)
+            findings = await analyze.analyze(cfg, collected, on_event, on_area=apply_area,
+                                             on_step=lambda: self._tick(last_line["text"]))
             summary["failed"] = findings.get("failed") or {}
             summary["status"] = "done"
+            self._progress_end("Done. Keep or undo each change, then finish onboarding.")
         except asyncio.CancelledError:
             summary["status"] = "stopped"
             raise
@@ -170,14 +223,16 @@ class Onboarding:
             summary["sources"]["mcp"] = "failed: no confirmed read tools on the chosen servers"
             self._emit("line", text="MCP servers: " + summary["sources"]["mcp"])
             return
-        self._emit("progress", source="mcp", status="reading", text="Reading the MCP servers")
+        self._emit("progress", source="mcp", status="reading", text="Reading the MCP servers", percent=self.progress["percent"])
         tickets = (collected.get("tracker") or {}).get("tickets") or []
         context = "\n".join(f"- {t.get('title')}" for t in tickets[:40])
         try:
             calls = await analyze.plan_mcp(cfg, catalog, context, lambda kind, text: self._emit("line", text=text))
         except Exception as e:
             summary["sources"]["mcp"] = f"failed: {(str(e).splitlines() or ['error'])[0][:240]}"
+            self._tick(units=3)
             return
+        self._tick("Chose what to read from the MCP servers")
         results = []
         for server, tool, args in calls:
             try:
@@ -186,6 +241,7 @@ class Onboarding:
                 self._emit("line", text=f"Read {tool} on {server}")
             except Exception as e:
                 self._emit("line", text=f"{server} {tool}: {(str(e).splitlines() or ['error'])[0][:200]}")
+        self._tick(f"Read {len(results)} results from the MCP servers", units=2)
         collected["mcp"] = {"results": results}
         (run_dir / "collected").mkdir(parents=True, exist_ok=True)
         (run_dir / "collected" / "mcp.json").write_text(json.dumps(collected["mcp"], ensure_ascii=False, indent=1), encoding="utf-8")
@@ -193,13 +249,70 @@ class Onboarding:
         self._emit("line", text=summary["sources"]["mcp"])
         self._save_summary(run_dir, summary)
 
-    # ---------------------------------------------------------------------- undo
-    def undo(self, change_id: str) -> str:
+    # ---------------------------------------------------------------------- keep / undo
+    def _open_dir(self, change_id: str = "") -> Path:
         d = self._last_dir()
-        if not d:
+        if not d or self._summary(d).get("status") == "finished":  # finished: the changes are final
             raise KeyError(change_id)
-        return apply.undo(d, change_id, self.company)
+        return d
+
+    def undo(self, change_id: str) -> str:
+        return apply.undo(self._open_dir(change_id), change_id, self.company)
 
     def undo_all(self) -> dict:
+        try:
+            return apply.undo_all(self._open_dir(), self.company)
+        except KeyError:
+            return {"undone": 0}
+
+    def keep(self, change_id: str) -> str:
+        return apply.keep(self._open_dir(change_id), change_id)
+
+    def keep_all(self) -> int:
+        return apply.keep_all(self._open_dir())
+
+    # ---------------------------------------------------------------------- finish
+    async def finish(self) -> None:
+        """Every change kept or undone: Claude polishes each kept project skill once more with everything learned,
+        the run becomes final, and the Onboarding screen is hidden (a new study brings it back)."""
+        if self._busy():
+            raise OnboardingBusy("Onboarding is busy. Wait for it to finish.")
         d = self._last_dir()
-        return apply.undo_all(d, self.company) if d else {"undone": 0}
+        if not d or self._summary(d).get("status") not in ("done", "stopped"):
+            raise OnboardingBusy("Finish a study first.")
+        left = apply.undecided(d)
+        if left:
+            raise OnboardingBusy(f"Keep or undo every change first ({left} left).")
+        self.task = asyncio.ensure_future(self._finish(d))
+        await self.task
+
+    async def _finish(self, d: Path) -> None:
+        from ..workflow import skills
+        cfg = self.sources()["cfg"]
+        jobs = [c for c in apply.load(d) if c["kind"] == "skill" and c.get("kept") and not c.get("undone")]
+        self._progress_start("finish", len(jobs) or 1, "Polishing your skills")
+        knowledge = (self.company / "knowledge.md").read_text(encoding="utf-8") if (self.company / "knowledge.md").exists() else ""
+        profile = (self.company / "profile.json").read_text(encoding="utf-8") if (self.company / "profile.json").exists() else ""
+        summary = self._summary(d)
+        polished, failed = [], {}
+        for c in jobs:
+            project, step = c["target"].split("/", 1)
+            label = f"{apply.STEP_LABELS.get(step, step)} skill for {project}"
+            current = skills.project(project, step)
+            try:
+                text = await analyze.polish(cfg, step, skills.general(step)[0], (current or {}).get("text") or c["after"],
+                                            knowledge, profile if step == "create-tests" else "")
+                skills.save_project(project, step, text, mode="add")
+                polished.append({"target": c["target"], "before": (current or {}).get("text", ""), "after": text})
+                self._emit("line", text=f"Polished the {label}")
+            except Exception as e:  # the accepted version stays as it is
+                failed[c["target"]] = (str(e).splitlines() or ["error"])[0][:200]
+                self._emit("line", text=f"Kept the {label} as accepted: {failed[c['target']]}")
+            self._tick(f"Polished the {label}")
+        (d / "finish.json").write_text(json.dumps({"at": time.time(), "polished": polished, "failed": failed}, indent=1,
+                                                  ensure_ascii=False), encoding="utf-8")
+        summary.update(status="finished", finished_at=time.time(), polish_failed=failed)
+        self._save_summary(d, summary)
+        config.save_section("app", {"onboarding_done": True})
+        self._progress_end("Onboarding finished")
+        self._emit("done", status="finished", id=summary.get("id"))

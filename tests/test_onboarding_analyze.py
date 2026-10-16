@@ -42,10 +42,12 @@ ANSWERS = {
 ANSWERS["mcp"] = {"calls": [{"server": "gitlab", "tool": "search_issues", "args": {"q": "qa"}},
                             {"server": "gitlab", "tool": "create_note", "args": {}}]}
 
+ANSWERS["polish"] = {"markdown": "## Polished\nOne clean skill."}
+
 
 def fake_claude(calls, bad=()):
     async def ask(cfg, system, prompt, max_tokens=4000, step=None):
-        area = next(a for a in ("batch", "combine", "testrail", "knowledge", "repo", "mcp") if f"[onboarding:{a}]" in system)
+        area = next(a for a in ("batch", "combine", "testrail", "knowledge", "repo", "mcp", "polish") if f"[onboarding:{a}]" in system)
         calls.append(area)
         return "not json at all" if area in bad else json.dumps(ANSWERS[area])
     return ask
@@ -77,3 +79,11 @@ def test_each_area_returns_its_contract_and_missing_sources_are_skipped(monkeypa
     assert out["testrail"]["section_map"] == {"Frontend": "Finance › Gift cards"}
     assert out["knowledge"]["markdown"].startswith("# Company")       # knowledge still made from the tickets alone
     assert any("Studying" in t for _, t in events)
+
+
+def test_progress_counts_every_claude_call(monkeypatch):
+    calls, steps = [], []
+    monkeypatch.setattr(agent, "ask_claude", fake_claude(calls))
+    assert analyze.count_calls(COLLECTED) == 3 + 1 + 1 + 1 + 1          # 3 ticket batches, combine, testrail, knowledge, repo
+    run(analyze.analyze(Config(demo=False, anthropic_api_key="k"), COLLECTED, lambda *a: None, on_step=lambda: steps.append(1)))
+    assert len(steps) == len(calls) == 7

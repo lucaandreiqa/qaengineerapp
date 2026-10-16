@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (Google sign-in with sessions, and a first-run setup page per connection).
+Last updated: 2026-10-16 (Onboarding progress bar, Keep or Undo per change, and Finish onboarding).
 
 
 ## 1. What it is
@@ -207,7 +207,20 @@ collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) �
   adds the profile to the Create tests prompt; the TestRail draft uses the learned section map.
 - **Runs** (`run.py`): one study at a time; progress on the bus (`type: onboarding`); Stop keeps the areas already
   applied; a run the app didn't finish is marked stopped on restart.
-- **Screen**: Onboarding (first on a fresh install): Connect · Choose · Study · What changed, in one column.
+- **Progress**: one unit per project read (`collect_tracker(on_project=…)`) and per other source, then one per Claude
+  call (`analyze.count_calls`; `analyze` calls `on_step` after each). The total starts as an estimate (about 5 units per
+  project) and is recounted after collecting; the percentage only goes up and stays below 100 until the run ends. Events
+  `{"event": "progress", "percent", "text"}`; `state()["progress"]` has the start time, so the screen shows an estimate
+  of the time left. The sidebar shows the percentage, or how many changes are still undecided.
+- **Keep or Undo**: changes still apply straight away; each is then kept (`apply.keep`, `keep_all`) or undone.
+  `undecided()` counts the rest.
+- **Finish onboarding** (`Onboarding.finish`, `/api/onboarding/finish`): only when every change is kept or undone. For
+  each kept skill change (`<PROJECT>/<step>`), `analyze.polish` gets the general skill, the learned project version, the
+  knowledge base (and the profile for Create tests) and writes one clean project version (mode add, under 6,000
+  characters); a failed polish keeps the accepted text. Before and after are saved in `finish.json`, the run becomes
+  `finished` (no more Undo), and `app.onboarding_done` hides the Onboarding screen from the sidebar. Integrations links
+  back to it; starting a new study brings it back.
+- **Screen**: Connect · Choose · Study · What changed, in one column; once finished, a short summary with Study again.
 
 ## 6. Skills
 
@@ -318,6 +331,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-16: Onboarding shows a percentage bar (per project, per Claude call); changes are kept or undone one by one; Finish onboarding has Claude polish each kept skill with everything learned, makes the run final and hides the Onboarding screen.
 - 2026-10-16: Sign in with Google first (any account; YourQA's own Desktop OAuth client), then a first-run setup with one skippable page per connection ending in onboarding's study. Spec: `2026-10-16-sign-in-and-setup-design.md`.
 - 2026-10-16: A successful Test connection on an integration that is off switches it on and saves its settings (Integrations page).
 - 2026-10-16: Framework adapters, first version Playwright TS only: specs follow the company's style examples from onboarding (never importing their code), written in YourQA's workspace; finished tickets are committed to a local `yourqa/<KEY>` branch. Spec: `2026-10-16-framework-adapters-design.md`.

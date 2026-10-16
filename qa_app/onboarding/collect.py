@@ -46,11 +46,15 @@ def brief_ticket(raw: dict) -> dict:
             "comments": [b[:COMMENT_MAX] for b in bodies if b][-COMMENTS:]}
 
 
-def collect_tracker(client, projects: list[str], limit: int = 200) -> dict:
-    """Recent tickets per project, and what the sample shows: statuses, components, labels, types, transitions."""
+def collect_tracker(client, projects: list[str], limit: int = 200, on_project=None) -> dict:
+    """Recent tickets per project, and what the sample shows: statuses, components, labels, types, transitions.
+    on_project(project, count) is called as each project is read (for the progress bar)."""
     tickets: list[dict] = []
     for p in projects:
-        tickets += client.recent(p, limit)
+        got = client.recent(p, limit)
+        tickets += got
+        if on_project:
+            on_project(p, len(got))
     count = lambda field: dict(sorted(Counter(v for t in tickets for v in (t[field] if isinstance(t[field], list) else [t[field]]) if v).items()))
     transitions: dict[str, list[str]] = {}
     for status in list(count("status"))[:12]:
