@@ -331,6 +331,26 @@ class McpJira:
         from ..workflow.ticket_context import brief
         return [brief(i) for i in issues]
 
+    def recent(self, project: str, limit: int = 200) -> list[dict]:
+        """The project's most recently updated tickets, newest first, for onboarding (read-only)."""
+        from ..onboarding.collect import brief_ticket
+        from .jira import SAMPLE_FIELDS
+        out: list[dict] = []
+        token = None
+        while len(out) < limit:
+            args = {"jql": f'project = "{project}" ORDER BY updated DESC', "fields": SAMPLE_FIELDS, "maxResults": min(50, limit - len(out))}
+            if token:
+                args["nextPageToken"] = token
+            elif out:
+                args["startAt"] = len(out)
+            res = self.mcp.op("searchJiraIssuesUsingJql", **args) or {}
+            issues = res.get("issues", []) if isinstance(res, dict) else []
+            out += [brief_ticket(i) for i in issues]
+            token = res.get("nextPageToken") if isinstance(res, dict) else None
+            if not issues or res.get("isLast") or (not token and len(issues) < args["maxResults"]):
+                break
+        return out[:limit]
+
     def get_issue(self, key: str) -> dict:
         """Everything on the ticket: all fields (custom ones by name), every comment, attachments, links."""
         from ..workflow.ticket_context import build

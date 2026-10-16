@@ -316,6 +316,27 @@ class AzureBoards:
         order = {i: n for n, i in enumerate(ids)}
         return [brief(to_raw(i)) for i in sorted(items, key=lambda i: order.get(i.get("id"), 0))]
 
+    def recent(self, project: str, limit: int = 200) -> list[dict]:
+        """The project's most recently changed work items, newest first, for onboarding (read-only)."""
+        from ..onboarding.collect import brief_ticket
+        q = ("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project ORDER BY [System.ChangedDate] DESC")
+        res = self.az.req("POST", f"{_p(project)}/_apis/wit/wiql", params={"$top": limit}, json={"query": q})
+        ids = [w["id"] for w in res.get("workItems") or []][:limit]
+        fields = LIST_FIELDS + ["System.Description", "Microsoft.VSTS.Common.AcceptanceCriteria", "System.ChangedDate"]
+        items: list[dict] = []
+        for i in range(0, len(ids), 200):
+            items += self.az.req("POST", f"{_p(project)}/_apis/wit/workitemsbatch",
+                                 json={"ids": ids[i:i + 200], "fields": fields}).get("value") or []
+        order = {i: n for n, i in enumerate(ids)}
+        out = []
+        for it in sorted(items, key=lambda x: order.get(x.get("id"), 0)):
+            raw = to_raw(it)
+            ac = html_text((it.get("fields") or {}).get("Microsoft.VSTS.Common.AcceptanceCriteria"))
+            if ac:
+                raw["fields"]["description"] = (raw["fields"].get("description") or "") + "\n\nAcceptance criteria:\n" + ac
+            out.append(brief_ticket(raw))
+        return out
+
     def _item(self, key: str, expand: str = "all") -> dict:
         if not str(key).isdigit():
             raise AzureError(f"'{key}' is not an Azure Boards work item id")

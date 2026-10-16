@@ -39,6 +39,9 @@ class RealJira:
     def search_column(self, project: str, column: str) -> list[dict]:
         return jira_api.search_column(self.cfg, project, column, self.status_ids)
 
+    def recent(self, project: str, limit: int = 200) -> list[dict]:
+        return jira_api.recent(self.cfg, project, limit)
+
     def get_issue(self, key: str) -> dict:
         return jira_api.get_issue(self.cfg, key)
 
@@ -120,6 +123,18 @@ class MockJira:
                 "merged": i.get("merged", i["status"] == "Merged"),
                 "pr_url": i.get("pr_url", ""),
                 "comments": comments, "context": build(raw)}
+
+    def recent(self, project: str, limit: int = 200) -> list[dict]:
+        from ..onboarding.collect import brief_ticket
+        rows = sorted(self.issues.values(), key=lambda i: i.get("updated", ""), reverse=True)[:limit]
+        return [brief_ticket(self._raw(i)) for i in rows]
+
+    def _raw(self, i: dict) -> dict:
+        return {"key": i["key"], "fields": {
+            "summary": i["title"], "status": {"name": i["status"]}, "description": i.get("description", ""),
+            "issuetype": {"name": i.get("issue_type", "Story")}, "priority": {"name": i.get("priority", "Medium")},
+            "labels": i.get("labels", []), "components": [{"name": c} for c in i.get("components", [])],
+            "comment": {"comments": [{"body": c} for c in self.comments.get(i["key"], [])]}}}
 
     def get_issue(self, key: str) -> dict:
         if key not in self.issues:

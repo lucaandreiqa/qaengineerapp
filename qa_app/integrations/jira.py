@@ -171,6 +171,27 @@ def search_column(cfg: dict, project: str, column: str, status_ids: list[str] | 
     return [brief(i) for i in r.json().get("issues", [])]
 
 
+SAMPLE_FIELDS = ["summary", "issuetype", "status", "priority", "components", "labels", "description", "comment", "updated"]
+
+
+def recent(cfg: dict, project: str, limit: int = 200) -> list[dict]:
+    """The project's most recently updated tickets, newest first, for onboarding (read-only)."""
+    from ..onboarding.collect import brief_ticket
+    s, out, token = _session(cfg), [], None
+    while len(out) < limit:
+        body = {"jql": f'project = "{project}" ORDER BY updated DESC', "maxResults": min(100, limit - len(out)), "fields": SAMPLE_FIELDS}
+        if token:
+            body["nextPageToken"] = token
+        r = s.post(f"{_base(cfg)}/rest/api/3/search/jql", json=body, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        out += [brief_ticket(i) for i in data.get("issues", [])]
+        token = data.get("nextPageToken")
+        if not token or data.get("isLast") or not data.get("issues"):
+            break
+    return out[:limit]
+
+
 def _pull_requests(s: requests.Session, cfg: dict, issue_id: str) -> dict:
     """PR state from the development panel, when the Git integration exposes it."""
     for app in ("GitHub", "bitbucket", "GitLab"):
