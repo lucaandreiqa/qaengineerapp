@@ -1019,6 +1019,10 @@ class Workflow:
         return "\n".join(out)
 
     def _section_for(self, t: Ticket) -> str:
+        mapping = load_settings().get("testrail", {}).get("section_map") or {}  # learned during onboarding
+        for name in list(t.components) + list(t.labels) + [t.type]:
+            if name and mapping.get(name):
+                return mapping[name]
         area = {"FE": "Frontend", "BE": "Backend", "FE+BE": "Frontend and backend"}.get(t.type, self.cfg.jira_project or "QA")
         return f"{area} › {t.checklist[0].name if t.checklist else t.title}"
 

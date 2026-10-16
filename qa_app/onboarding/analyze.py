@@ -104,8 +104,9 @@ async def _repo(cfg, repo: dict, on_event) -> dict:
             "evidence": [str(e) for e in data.get("evidence") or []][:20]}
 
 
-async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None]) -> dict:
-    """{tickets, testrail, knowledge, repo, failed}. A missing source gives None for its area; a failing call is in failed."""
+async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None], on_area=None) -> dict:
+    """{tickets, testrail, knowledge, repo, failed}. A missing source gives None for its area; a failing call is in failed.
+    on_area(area, result) is awaited as each area finishes, so its results can be applied straight away."""
     out: dict = {"tickets": None, "testrail": None, "knowledge": None, "repo": None, "failed": {}}
     tracker, testrail, confluence, repo = (collected.get(k) for k in ("tracker", "testrail", "confluence", "repo"))
     jobs = [("tickets", tracker and tracker.get("tickets"), lambda: _tickets(cfg, tracker, on_event)),
@@ -119,6 +120,8 @@ async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None]) ->
         try:
             out[area] = await job()
             on_event("done", area)
+            if on_area:
+                await on_area(area, out[area])
         except Exception as e:  # one area failing never stops the others
             out["failed"][area] = (str(e).splitlines() or ["error"])[0][:300]
             on_event("failed", f"{area}: {out['failed'][area]}")

@@ -67,6 +67,11 @@ def ensure_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+def company_dir() -> Path:
+    """What onboarding learned about the company: knowledge.md, profile.json, and each study run."""
+    return APP_DIR / "company"
+
+
 def load_settings() -> dict:
     ensure_dirs()
     settings = json.loads(json.dumps(DEFAULT_SETTINGS))

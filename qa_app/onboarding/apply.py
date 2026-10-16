@@ -123,7 +123,7 @@ def _same(a: Any, b: Any) -> bool:
 
 
 # ------------------------------------------------------------------------------------------- apply / undo
-def _save(run_dir: Path, changes: list[dict]) -> None:
+def save_changes(run_dir: Path, changes: list[dict]) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "changes.json").write_text(json.dumps(changes, indent=1, ensure_ascii=False), encoding="utf-8")
 
@@ -150,7 +150,7 @@ def apply(changes: list[dict], run_dir: Path, company: Path) -> list[dict]:
         value = _after_value(c, before)
         _write(c["target"], value, company)
         done.append({**c, "before": before, "applied": value, "replaced_edit": _replaces_edit(c, before)})
-    _save(run_dir, done)
+    save_changes(run_dir, done)
     return done
 
 
@@ -166,7 +166,7 @@ def undo(run_dir: Path, change_id: str, company: Path) -> str:
         return "changed since"
     _write(c["target"], c["before"], company)
     c["undone"] = True
-    _save(run_dir, changes)
+    save_changes(run_dir, changes)
     return "undone"
 
 

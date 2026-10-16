@@ -187,7 +187,32 @@ def can_fetch(cfg: Config) -> bool:
 def system(base: str, step: str, cfg: Config) -> str:
     """The step's base instructions plus its skill (general, refined for the Jira project when it has its own)."""
     from . import skills
-    return base + NO_TOOLS + (ASK_FOR_MORE if can_fetch(cfg) else "") + skills.for_prompt(step, cfg.jira_project)
+    return base + NO_TOOLS + (ASK_FOR_MORE if can_fetch(cfg) else "") + company_context() + skills.for_prompt(step, cfg.jira_project)
+
+
+KNOWLEDGE_MAX = 12000
+
+
+def company_context() -> str:
+    """The company knowledge base onboarding wrote, for every step ('' until onboarding has run)."""
+    from ..config import company_dir
+    p = company_dir() / "knowledge.md"
+    try:
+        text = p.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return f"\n\n<company_knowledge>\nWhat YourQA learned about this company during onboarding:\n\n{text[:KNOWLEDGE_MAX]}\n</company_knowledge>" if text else ""
+
+
+def framework_note() -> str:
+    """The framework profile onboarding found in the company's automation repo, for writing tests ('' if none)."""
+    from ..config import company_dir
+    try:
+        prof = json.loads((company_dir() / "profile.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    lines = [f"- {k.replace('_', ' ')}: {', '.join(map(str, v)) if isinstance(v, list) else v}" for k, v in prof.items() if v]
+    return "\n\nThe company's automation (from onboarding):\n" + "\n".join(lines) if lines else ""
 
 
 def _needs(data: dict) -> list[str]:
@@ -318,7 +343,7 @@ async def build_spec(cfg: Config, t: Ticket, sources_md: str = "", on_need=None)
     if cfg.claude_ready and not cfg.is_mock:
         prompt = (f"Ticket {t.key}: {t.title}\nBase URL: {t.env.url if t.env else 'process.env.BASE_URL'}\n"
                   f"Test account (SSO, storage state is preloaded): {who(cfg)}\n\n"
-                  f"Checklist:\n{checklist_md(t)}" + (f"\n\n{sources_md}" if sources_md else ""))
+                  f"Checklist:\n{checklist_md(t)}" + (f"\n\n{sources_md}" if sources_md else "") + framework_note())
         spec = await ask_claude(cfg, system(SPEC_SYSTEM, "create-tests", cfg), prompt, max_tokens=16000)
         needs = re.findall(r"^\s*//\s*YOURQA-NEED:\s*(.+)$", spec, flags=re.M)[:5]
         if needs and on_need:
