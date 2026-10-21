@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-21 (Onboarding finished summary, with Accept or Revert per skill update).
+Last updated: 2026-10-21 (New look: orange on cream, atmospheric backgrounds, Instrument Sans and Bricolage Grotesque).
 
 
 ## 1. What it is
@@ -25,7 +25,7 @@ use, outside the board.
 
 | Layer | Modules | Responsibility |
 |---|---|---|
-| UI | `web/static/app.js`, `app.css`, `tokens.css` | Renders from one state object; `render()` builds HTML and morphs it into the page (only changed nodes are touched). Live updates arrive over SSE. Screens show what needs a decision; secondary details (ticket fields, runs, files, cost) sit in folded sections (`foldSection`). No all-caps labels, middle-dot meta strings or monospace keys. |
+| UI | `web/static/app.js`, `app.css`, `tokens.css` | Renders from one state object; `render()` builds HTML and morphs it into the page (only changed nodes are touched). Live updates arrive over SSE. Screens show what needs a decision; secondary details (ticket fields, runs, files, cost) sit in folded sections (`foldSection`). No all-caps labels, middle-dot meta strings or monospace keys. Look: orange accent on cream (light) or warm charcoal (dark), layered gradient backgrounds with a faint grain (`--atmo`, `.qa::before`), translucent blurred surfaces; Instrument Sans for text, Bricolage Grotesque for headings, JetBrains Mono for code, loaded from Google Fonts with system fallbacks. |
 | Sign-in | `auth.py` | Google sign-in (authorization code + PKCE, YourQA's own Desktop client), sessions in an HttpOnly cookie; the API refuses requests without one. |
 | HTTP API | `web/server.py`, `jira_connect.py`, `azure_connect.py` | Routes for the board, tickets, chat, history, reports, integrations, skills; serves static files with no-cache and versioned assets. |
 | Workflow engine | `workflow/engine.py` | The lanes and gates, background steps (`spawn`), stop/retry, chat, auto-sync, the live feed (`say`) and terminal (`term`). |
@@ -340,6 +340,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-21: New look: orange on cream with atmospheric backgrounds instead of flat colours; fonts Instrument Sans, Bricolage Grotesque and JetBrains Mono (no Inter or Roboto).
 - 2026-10-21: The finished Onboarding screen summarises what was read, what was found and how each skill changed; each skill update can be accepted or reverted.
 - 2026-10-21: Finish onboarding merges the kept skill changes into the general skills (one section per step, replaced by a later onboarding) instead of polishing per-project versions; onboarding's project versions are removed unless edited.
 - 2026-10-16: Onboarding shows a percentage bar (per project, per Claude call); changes are kept or undone one by one; Finish onboarding has Claude polish each kept skill with everything learned, makes the run final and hides the Onboarding screen.

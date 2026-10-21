@@ -60,7 +60,7 @@ const IC = {
   eyeoff: '<path d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4.5 9.5 6a15 15 0 0 1-2.8 3.3M6.5 7.6C4.6 9 3.2 10.9 2.5 12c1 1.5 4.5 6 9.5 6a9.6 9.6 0 0 0 4.6-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2"></path>',
   bolt: '<path d="M13 3L5 13.5h6.5L10.5 21 19 10h-6.5z"></path>',
 };
-const LOGO = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--accent)"></rect><path d="M7.5 13.5l3.5 3.5 7.5-8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+const LOGO = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--accent)"></rect><path d="M7.5 13.5l3.5 3.5 7.5-8" fill="none" stroke="var(--accent-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
 /* ------------------------------------------------------------------ constants */
 const LANES = [
@@ -291,7 +291,7 @@ function render() {
     scrolls[el.dataset.keep] = [el.scrollLeft, el.scrollTop, el.scrollTop + el.clientHeight >= el.scrollHeight - 40];
   });
   $app.dataset.theme = S.theme;
-  document.documentElement.style.background = S.theme === 'dark' ? '#0B0C0E' : '#F6F6F7';
+  document.documentElement.style.background = S.theme === 'dark' ? '#1B1612' : '#F7F1E7';
   const next = document.createElement('div');
   if (S.route === 'login' || S.route === 'setup') next.innerHTML = (S.route === 'login' ? viewLogin() : viewSetup()) + viewToast();
   else {
@@ -316,7 +316,7 @@ function render() {
 function viewSide() {
   const link = (r, label, icon) => `<a class="nav-link" href="#/${r}" ${S.route === r ? 'aria-current="page"' : ''}>${svg(icon)}${label}</a>`;
   return `<nav class="side" aria-label="Main">
-<div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span style="font-weight:600;font-size:14px;letter-spacing:-.01em">YourQA</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:4px 8px 18px">${LOGO}<span class="brand-name">YourQA</span></div>
 ${S.app.onboarding_done && S.route !== 'onboarding' ? '' : `<a class="nav-link" href="#/onboarding" ${S.route === 'onboarding' ? 'aria-current="page"' : ''}>${svg(IC.spark || IC.skill)}Onboarding${onbBadge()}</a>`}
 ${link('board', 'Board', IC.board, 1)}${link('history', 'History', IC.history, 2)}${link('reports', 'Reports', IC.report, 3)}${link('integrations', 'Integrations', IC.integ, 4)}${link('skills', 'Skills', IC.skill, 5)}
 <div class="theme-wrap" style="margin-top:auto;padding:16px 4px 4px">
@@ -868,7 +868,7 @@ const GOOGLE_G = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="t
 function viewLogin() {
   const st = S.auth.status || {};
   return `<main class="signin"><section class="signin-card" aria-labelledby="login-title">
-<div class="signin-brand">${LOGO}<span>YourQA</span></div>
+<div class="signin-brand">${LOGO}<span class="brand-name">YourQA</span></div>
 <h1 id="login-title">Sign in</h1>
 <p class="signin-lead">Test every ticket with Claude, with you approving each step.</p>
 ${st.google === false ? `<div class="callout c-info">${svg(IC.info)}<span>Google sign-in isn't set up in this copy of YourQA yet. You can continue without signing in.</span></div>
