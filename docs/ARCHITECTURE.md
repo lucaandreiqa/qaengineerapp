@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-21 (Finish onboarding merges what was learnt into the general skills).
+Last updated: 2026-10-21 (Onboarding finished summary, with Accept or Revert per skill update).
 
 
 ## 1. What it is
@@ -224,6 +224,11 @@ collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) �
   before the merge are saved in `finish.json`, the run becomes
   `finished` (no more Undo), and `app.onboarding_done` hides the Onboarding screen from the sidebar. Integrations links
   back to it; starting a new study brings it back.
+- **Finished summary**: `state()["last"]["finish"]` lists each merged step (name, projects it came from, the added
+  section, `state` pending/accepted/reverted, `fallback` when Claude's tidy-up failed) without the whole skill files.
+  `accept_merge(step)` marks it; `revert_merge(step)` (`/api/onboarding/merge/{step}/accept|revert`) restores the general
+  skill from `finish.json` (or follows the built-in one again when it was built-in) and puts back the project versions
+  Finish removed, but only while the general skill still holds what Finish wrote ("changed since" otherwise).
 - **Screen**: Connect · Choose · Study · What changed, in one column; once finished, a short summary with Study again.
 
 ## 6. Skills
@@ -335,6 +340,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-21: The finished Onboarding screen summarises what was read, what was found and how each skill changed; each skill update can be accepted or reverted.
 - 2026-10-21: Finish onboarding merges the kept skill changes into the general skills (one section per step, replaced by a later onboarding) instead of polishing per-project versions; onboarding's project versions are removed unless edited.
 - 2026-10-16: Onboarding shows a percentage bar (per project, per Claude call); changes are kept or undone one by one; Finish onboarding has Claude polish each kept skill with everything learned, makes the run final and hides the Onboarding screen.
 - 2026-10-16: Sign in with Google first (any account; YourQA's own Desktop OAuth client), then a first-run setup with one skippable page per connection ending in onboarding's study. Spec: `2026-10-16-sign-in-and-setup-design.md`.

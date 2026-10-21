@@ -184,3 +184,34 @@ def test_merging_again_replaces_the_learnt_section():
     twice = ob.merge_learnt(once, "Learnt B")
     assert twice.startswith("# Gather\nGeneral rules.") and twice.count(ob.LEARNT_START) == 1
     assert "Learnt B" in twice and "Learnt A" not in twice
+
+
+def test_the_finished_page_explains_what_was_found_and_each_skill_update_can_be_reverted(home):
+    tmp, events, calls = home
+    factory, repo = _sources(tmp, with_repo=False)
+    o = ob.Onboarding(factory)
+    go(o.study({"projects": ["SCRUM", "OPTR"], "spaces": [], "repo": ""}))
+    o.keep_all()
+    before = {s: skills.general(s)[0] for s in ("gather", "jira-comment")}
+    go(o.finish())
+    last = o.state()["last"]
+    assert last["sources"]["tracker"].startswith("Read")                          # what was read
+    assert any(c["evidence"] for c in last["changes"])                            # what it was based on
+    merged = {m["step"]: m for m in last["finish"]["merged"]}
+    assert set(merged) == {"gather", "jira-comment"}
+    g = merged["gather"]
+    assert g["state"] == "pending" and "## Polished" in g["section"] and g["from"] == ["SCRUM", "OPTR"]
+    assert g["name"] == "Gather requirements" and "before" not in g                # the screen gets the change, not whole files
+
+    o.accept_merge("jira-comment")
+    assert {m["step"]: m["state"] for m in o.state()["last"]["finish"]["merged"]}["jira-comment"] == "accepted"
+    assert o.revert_merge("gather") == "reverted"
+    assert skills.general("gather")[0] == before["gather"]                        # the general skill as it was
+    assert "## Polished" not in skills.project("SCRUM", "gather")["text"] and not skills.project("SCRUM", "gather").get("shipped")  # project versions are back
+    assert skills.project("OPTR", "gather") is not None
+    assert {m["step"]: m["state"] for m in o.state()["last"]["finish"]["merged"]}["gather"] == "reverted"
+    assert o.revert_merge("gather") == "already reverted"
+
+    skills.save_general("jira-comment", "I rewrote it myself")                     # edited after finishing
+    assert o.revert_merge("jira-comment") == "changed since"
+    assert skills.general("jira-comment")[0] == "I rewrote it myself"

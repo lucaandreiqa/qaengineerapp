@@ -100,7 +100,13 @@ estimate of the time left; the sidebar shows the percentage too.
 **Finish onboarding**: what you kept is merged into the **general skills**, so it applies to every project. Claude
 writes one clean section per step (*Your team's way*, at the end of the general skill) from what was learnt and the
 knowledge base; onboarding's project versions are folded in and removed, except ones you edited yourself. The changes
-become final and the Onboarding screen is put away. To study again later,
+become final and the Onboarding screen is put away.
+
+**Onboarding is finished** then shows a summary: *What YourQA read* (each source and how much of it), *What it found*
+(the evidence behind the changes, by area), *How your skills changed* (each step's added section, to read in full), and
+*What else was set up* (board settings, move rules, knowledge base, framework profile). Each skill update is already in
+use: **Accept** it, or **Revert** it to put the general skill and onboarding's project versions back exactly as they
+were (a skill you edited after finishing is left alone). To study again later,
 use the link on the Integrations screen.
 
 **Tests in your style.** After onboarding has studied your automation repo, *Create tests* writes each ticket's

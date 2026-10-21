@@ -82,6 +82,10 @@ class Onboarding:
             last = {**self._summary(d), "changes": [
                 {k: c.get(k) for k in ("id", "kind", "target", "label", "area", "evidence", "replaced_edit", "undone")}
                 for c in apply.load(d)]}
+        if last and last.get("status") == "finished":  # how each step's skill changed, to accept or revert
+            fin = self._finish_record(d)
+            last["finish"] = {"merged": [{k: v for k, v in m.items() if k not in ("before", "before_custom", "after", "removed")} for m in fin.get("merged", [])],
+                              "left": fin.get("left", [])}
         if last and last.get("status") in ("done", "finished") and self.progress["percent"] < 100 and not self._busy():
             self.progress = {**self.progress, "percent": 100}
         return {"running": self._busy() and self.progress["phase"] == "study", "finishing": self._busy() and self.progress["phase"] == "finish",
@@ -285,6 +289,54 @@ class Onboarding:
     def keep_all(self) -> int:
         return apply.keep_all(self._open_dir())
 
+    # ---------------------------------------------------------------------- after finishing: accept or revert each skill update
+    @staticmethod
+    def _finish_record(d: Path) -> dict:
+        try:
+            return json.loads((d / "finish.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _merge(self, step: str) -> tuple[Path, dict, dict]:
+        d = self._last_dir()
+        fin = self._finish_record(d) if d else {}
+        m = next((x for x in fin.get("merged", []) if x["step"] == step), None)
+        if not m:
+            raise KeyError(step)
+        return d, fin, m
+
+    def _save_finish(self, d: Path, fin: dict) -> None:
+        (d / "finish.json").write_text(json.dumps(fin, indent=1, ensure_ascii=False), encoding="utf-8")
+
+    def accept_merge(self, step: str) -> str:
+        d, fin, m = self._merge(step)
+        if m.get("state") == "reverted":
+            return "already reverted"
+        m["state"] = "accepted"
+        self._save_finish(d, fin)
+        return "accepted"
+
+    def revert_merge(self, step: str) -> str:
+        """The general skill back to how it was before Finish, and onboarding's project versions back; only while the
+        general skill still holds what Finish wrote ('changed since' otherwise, and it stays)."""
+        from ..workflow import skills
+        d, fin, m = self._merge(step)
+        if m.get("state") == "reverted":
+            return "already reverted"
+        if skills.general(step)[0].strip() != m["after"].strip():
+            return "changed since"
+        if m.get("before_custom", True):
+            skills.save_general(step, m["before"])
+        else:  # it was the built-in skill: back to following the built-in one
+            skills.reset_general(step)
+        for r in m.get("removed", []):
+            v = r.get("value") or {}
+            if v.get("text"):
+                skills.save_project(r["project"], step, v["text"], mode=v.get("mode", "add"))
+        m["state"] = "reverted"
+        self._save_finish(d, fin)
+        return "reverted"
+
     # ---------------------------------------------------------------------- finish
     async def finish(self) -> None:
         """Every change kept or undone: the kept skill changes are merged into the general skills, the run becomes
@@ -320,20 +372,26 @@ class Onboarding:
             for c in cs:  # the same text for several projects is merged once
                 texts.setdefault(c["after"].strip(), []).append(c["target"].split("/", 1)[0])
             learned = "\n\n".join(t if len(texts) == 1 else f"In {', '.join(ps)}:\n{t}" for t, ps in texts.items())
-            before = skills.general(step)[0]
+            before, before_custom = skills.general(step)
             try:
                 section = await analyze.polish(cfg, step, before, learned, knowledge, profile if step == "create-tests" else "")
             except Exception as e:  # what was kept goes in as it is
                 failed[step] = (str(e).splitlines() or ["error"])[0][:200]
                 section = learned
-            skills.save_general(step, merge_learnt(before, section))
-            merged.append({"step": step, "before": before})
+            after = merge_learnt(before, section)
+            skills.save_general(step, after)
+            removed = []
             for c in cs:
                 project = c["target"].split("/", 1)[0]
-                if apply._same(apply._read(c["target"], self.company), c.get("applied")):
+                current = apply._read(c["target"], self.company)
+                if apply._same(current, c.get("applied")):
                     skills.delete_project(project, step)
+                    removed.append({"project": project, "value": current})
                 else:
                     left.append(c["target"])  # you edited it after the study: it stays
+            merged.append({"step": step, "name": apply.STEP_LABELS.get(step, step), "from": [c["target"].split("/", 1)[0] for c in cs],
+                           "section": section, "before": before, "before_custom": before_custom, "after": after, "removed": removed, "state": "pending",
+                           "fallback": step in failed})
             self._emit("line", text=f"Added what was learnt to the {label}")
             self._tick(f"Added what was learnt to the {label}")
         (d / "finish.json").write_text(json.dumps({"at": time.time(), "merged": merged, "failed": failed, "left": left},

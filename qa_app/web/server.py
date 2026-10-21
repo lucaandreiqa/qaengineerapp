@@ -603,6 +603,19 @@ def onboarding_keep_all() -> dict:
         raise HTTPException(409, "Onboarding is already finished")
 
 
+@app.post("/api/onboarding/merge/{step}/{decision}")
+def onboarding_merge_decision(step: str, decision: str) -> dict:
+    """After Finish: accept a step's skill update, or revert it (general skill and project versions as they were)."""
+    ob = S().onboarding
+    if decision not in ("accept", "revert"):
+        raise HTTPException(404, "Accept or revert")
+    try:
+        result = ob.accept_merge(step) if decision == "accept" else ob.revert_merge(step)
+    except KeyError:
+        raise HTTPException(404, "That skill update is gone")
+    return {"result": result, **ob.state()}
+
+
 @app.post("/api/onboarding/finish")
 async def onboarding_finish() -> dict:
     """Merge the kept skills into the general skills, make the run final and hide the Onboarding screen; progress arrives as live events."""

@@ -991,6 +991,48 @@ function onbBadge() {
 }
 
 const ONB_AREA = { tickets: 'From your tickets', testrail: 'From TestRail', knowledge: 'Knowledge base', repo: 'From your automation' };
+const ONB_SOURCE = { tracker: 'Tickets', testrail: 'Test cases', confluence: 'Docs', repo: 'Automation', mcp: 'MCP servers' };
+
+/* Onboarding finished: what was read, what it showed, and how each skill changed, with Accept or Revert per skill. */
+function viewOnbFinished(head, last) {
+  const O = S.onb, fin = last.finish || { merged: [], left: [] };
+  const fmt = (t) => new Date(t * 1000).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const mins = last.finished && last.started ? Math.max(1, Math.round((last.finished - last.started) / 60)) : 0;
+  const read = Object.entries(last.sources || {}).filter(([, v]) => v && !/^(not connected|not given)$/.test(v)).map(([k, v]) => {
+    const bad = /^failed/.test(v);
+    return `<li class="${bad ? 'is-bad' : ''}"><span class="onbf-k">${esc(ONB_SOURCE[k] || k)}</span><span>${esc(bad ? 'Couldn\'t read it: ' + v.replace(/^failed:\s*/, '') : v)}</span></li>`;
+  }).join('');
+  const changes = last.changes || [];
+  const found = Object.keys(ONB_AREA).map((area) => {
+    const ev = [...new Set(changes.filter((c) => c.area === area && !c.undone).flatMap((c) => c.evidence || []))].slice(0, 6);
+    return ev.length ? `<div class="onbf-area"><h4>${esc(ONB_AREA[area])}</h4><ul>${ev.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>` : '';
+  }).join('');
+  const setup = changes.filter((c) => c.kind !== 'skill').map((c) => `<li class="${c.undone ? 'is-undone' : ''}"><span>${esc(c.label)}</span><span class="onbf-st">${c.undone ? 'Undone' : 'In use'}</span></li>`).join('');
+  const pending = fin.merged.filter((m) => m.state === 'pending').length;
+  const skillCards = fin.merged.map((m) => {
+    const open = !!O.open['merge|' + m.step];
+    const from = m.from.length > 1 ? m.from.slice(0, -1).join(', ') + ' and ' + m.from[m.from.length - 1] : m.from[0];
+    const st = m.state === 'accepted' ? `<span class="onbf-chip ok">${svg(IC.check, 'ic ic-s')}Accepted</span>` : m.state === 'reverted' ? '<span class="onbf-chip">Reverted</span>' : '<span class="onbf-chip new">To review</span>';
+    const acts = m.state === 'reverted' ? '' : `${m.state === 'pending' ? `<button type="button" class="btn btn-sm btn-primary" data-act="onbMerge" data-key="${esc(m.step)}" data-v="accept">Accept</button>` : ''}
+<button type="button" class="btn btn-sm btn-quiet" data-act="onbMerge" data-key="${esc(m.step)}" data-v="revert">Revert</button>`;
+    return `<article class="onbf-skill${m.state === 'reverted' ? ' is-reverted' : ''}">
+<header><div><h4>${esc(m.name)}</h4><p>Learnt from ${esc(from)}. Added to the general skill as "Your team's way", so it applies to every project.${m.fallback ? ' Claude couldn\'t tidy it, so it was added as you kept it.' : ''}</p></div>${st}</header>
+<button type="button" class="fold" data-act="onbOpen" data-key="${esc('merge|' + m.step)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s')}${open ? 'Hide' : 'Show'} what was added</button>
+${open ? `<div class="onbf-added">${mdLite(m.section)}</div>` : ''}
+${acts ? `<div class="onbf-acts">${acts}</div>` : ''}</article>`;
+  }).join('');
+  const left = (fin.left || []).length ? `<p class="onb-hint">${fin.left.length} project version${fin.left.length === 1 ? '' : 's'} you edited yourself after the study stayed as ${fin.left.length === 1 ? 'it was' : 'they were'}: ${esc(fin.left.join(', '))}.</p>` : '';
+  return `<main class="main onb">${head}<div class="onbf">
+<section class="card onbf-top"><div class="onb-done-ic">${svg(IC.check)}</div><div style="flex:1;min-width:0"><h2>Onboarding is finished</h2>
+<p>Studied on ${esc(fmt(last.started))}${mins ? `, in ${mins} minute${mins === 1 ? '' : 's'}` : ''}. ${pending ? `${pending} skill update${pending === 1 ? '' : 's'} to review below.` : 'Everything is reviewed.'}</p></div>
+<a class="btn btn-primary" href="#/board">Open the board</a></section>
+${read ? `<section class="card onbf-sec"><h3>What YourQA read</h3><ul class="onbf-read">${read}</ul></section>` : ''}
+${found ? `<section class="card onbf-sec"><h3>What it found</h3><div class="onbf-found">${found}</div></section>` : ''}
+${skillCards ? `<section class="onbf-sec onbf-skills"><h3>How your skills changed</h3><p class="onb-hint">Each update is already in use. Accept it, or revert it to put the skill back exactly as it was.</p>${skillCards}${left}</section>` : ''}
+${setup ? `<section class="card onbf-sec"><h3>What else was set up</h3><ul class="onbf-setup">${setup}</ul><p class="onb-hint">Change these any time on the Integrations and Skills screens.</p></section>` : ''}
+<p class="onb-hint">Your tools changed a lot? <button type="button" class="linkish" data-act="onbStudyAgain">Study again</button>; the Onboarding screen comes back until you finish.</p>
+</div></main>`;
+}
 
 function viewOnboarding() {
   const O = S.onb, d = O.data;
@@ -1041,16 +1083,7 @@ ${finished ? '' : d.finishing ? `<div class="onb-finish">${onbProgress(d.progres
 <button type="button" class="btn btn-primary" data-act="onbFinish" ${d.undecided || O.busy || !['done', 'stopped'].includes(last.status) ? 'disabled' : ''}>Finish onboarding</button></div>`}`;
   }
   const hasRun = !!last;
-  if (finished && !O.reopen) {
-    const kept = (last.changes || []).filter((x) => !x.undone).length;
-    const left = (last.kept_project_versions || []).length;
-    return `<main class="main onb">${head}<section class="card onb-done">
-<div class="onb-done-ic">${svg(IC.check)}</div><h2>Onboarding is finished</h2>
-<p>${kept} change${kept === 1 ? '' : 's'} in use. What YourQA learnt is now part of your general skills, so it applies to every project${left ? ` (${left} project version${left === 1 ? '' : 's'} you edited yourself stayed as they are)` : ''}. Edit them any time on the <a href="#/skills">Skills</a> screen.</p>
-<div class="onb-acts"><a class="btn btn-primary" href="#/board">Open the board</a><button type="button" class="btn btn-quiet" data-act="onbReopen">See what changed</button></div>
-<p class="onb-hint">Your tools changed a lot? Study again from here; the Onboarding screen comes back until you finish.</p>
-<button type="button" class="btn btn-sm" data-act="onbStudyAgain">Study again</button></section></main>`;
-  }
+  if (finished && !O.reopen) return viewOnbFinished(head, last);
   return `<main class="main onb">${head}<div class="card onb-card">
 ${step(1, 'Connect', connect, c.tracker.connected)}
 ${step(2, 'Choose', choose, !!(O.projects || '').trim())}
@@ -1103,6 +1136,8 @@ function mdLite(text) {
     const li = l.match(/^\s*[-*•]\s+(.*)$/) || l.match(/^\s*\d+[.)]\s+(.*)$/);
     if (li) { if (!list) { html += '<ul>'; list = true; } html += `<li>${li[1]}</li>`; continue; }
     if (list) { html += '</ul>'; list = false; }
+    const h = l.match(/^\s*#{1,6}\s+(.*)$/);
+    if (h) { html += `<p class="md-h">${h[1]}</p>`; continue; }
     html += l.trim() ? `<p>${l}</p>` : '';
   }
   return html + (list ? '</ul>' : '');
@@ -2073,6 +2108,14 @@ const ACTS = {
     O.busy = false;
   },
   onbReopen: () => { S.onb.reopen = true; },
+  onbMerge: async (el) => {
+    const O = S.onb;
+    try {
+      const r = await api('POST', `/api/onboarding/merge/${encodeURIComponent(el.dataset.key)}/${el.dataset.v}`);
+      O.data = { ...O.data, ...r };
+      toast(r.result === 'changed since' ? 'You changed this skill after finishing, so it stays as you left it.' : r.result === 'reverted' ? 'Skill put back as it was' : r.result === 'accepted' ? 'Skill update accepted' : r.result);
+    } catch (e) { toast(e.message); }
+  },
   onbStudyAgain: () => { S.onb.reopen = true; S.app.onboarding_done = false; },
   onbStop: async () => { try { await api('POST', '/api/onboarding/stop'); } catch (e) { S.onb.err = e.message; } },
   onbDetails: () => { S.onb.details = !S.onb.details; },
