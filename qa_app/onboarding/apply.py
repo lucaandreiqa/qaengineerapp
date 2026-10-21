@@ -178,7 +178,7 @@ def undo_all(run_dir: Path, company: Path) -> dict:
 
 
 def keep(run_dir: Path, change_id: str) -> str:
-    """'kept', 'already kept', or 'already undone'. Kept changes are the ones Finish onboarding polishes."""
+    """'kept', 'already kept', or 'already undone'. Kept skill changes are the ones Finish onboarding merges into the general skills."""
     changes = load(run_dir)
     c = next((x for x in changes if x["id"] == change_id), None)
     if c is None:

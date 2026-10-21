@@ -22,6 +22,20 @@ class OnboardingBusy(Exception):
     pass
 
 
+LEARNT_START = "<!-- yourqa:onboarding -->"
+LEARNT_END = "<!-- /yourqa:onboarding -->"
+LEARNT_HEADING = "## Your team's way (learnt during onboarding)"
+
+
+def merge_learnt(general: str, section: str) -> str:
+    """The general skill with the learnt section at its end; a section from an earlier onboarding is replaced."""
+    text = general
+    if LEARNT_START in text and LEARNT_END in text:
+        a, rest = text.split(LEARNT_START, 1)
+        text = a + rest.split(LEARNT_END, 1)[1]
+    return f"{text.rstrip()}\n\n{LEARNT_START}\n{LEARNT_HEADING}\n\n{section.strip()}\n{LEARNT_END}\n"
+
+
 class Onboarding:
     def __init__(self, sources: Callable[[], dict]) -> None:
         """sources() -> {"cfg": WorkflowConfig, "tracker": client|None, "testrail": settings|None, "confluence": reader|None}"""
@@ -273,8 +287,8 @@ class Onboarding:
 
     # ---------------------------------------------------------------------- finish
     async def finish(self) -> None:
-        """Every change kept or undone: Claude polishes each kept project skill once more with everything learned,
-        the run becomes final, and the Onboarding screen is hidden (a new study brings it back)."""
+        """Every change kept or undone: the kept skill changes are merged into the general skills, the run becomes
+        final, and the Onboarding screen is hidden (a new study brings it back)."""
         if self._busy():
             raise OnboardingBusy("Onboarding is busy. Wait for it to finish.")
         d = self._last_dir()
@@ -287,31 +301,44 @@ class Onboarding:
         await self.task
 
     async def _finish(self, d: Path) -> None:
+        """Merge every kept skill change into the general skill for its step (one Claude pass per step, in a section
+        of its own), then remove onboarding's project versions unless you edited them since."""
         from ..workflow import skills
         cfg = self.sources()["cfg"]
-        jobs = [c for c in apply.load(d) if c["kind"] == "skill" and c.get("kept") and not c.get("undone")]
-        self._progress_start("finish", len(jobs) or 1, "Polishing your skills")
+        kept = [c for c in apply.load(d) if c["kind"] == "skill" and c.get("kept") and not c.get("undone")]
+        steps: dict[str, list[dict]] = {}
+        for c in kept:
+            steps.setdefault(c["target"].split("/", 1)[1], []).append(c)
+        self._progress_start("finish", len(steps) or 1, "Adding what was learnt to your skills")
         knowledge = (self.company / "knowledge.md").read_text(encoding="utf-8") if (self.company / "knowledge.md").exists() else ""
         profile = (self.company / "profile.json").read_text(encoding="utf-8") if (self.company / "profile.json").exists() else ""
         summary = self._summary(d)
-        polished, failed = [], {}
-        for c in jobs:
-            project, step = c["target"].split("/", 1)
-            label = f"{apply.STEP_LABELS.get(step, step)} skill for {project}"
-            current = skills.project(project, step)
+        merged, failed, left = [], {}, []
+        for step, cs in steps.items():
+            label = f"{apply.STEP_LABELS.get(step, step)} skill"
+            texts: dict[str, list[str]] = {}
+            for c in cs:  # the same text for several projects is merged once
+                texts.setdefault(c["after"].strip(), []).append(c["target"].split("/", 1)[0])
+            learned = "\n\n".join(t if len(texts) == 1 else f"In {', '.join(ps)}:\n{t}" for t, ps in texts.items())
+            before = skills.general(step)[0]
             try:
-                text = await analyze.polish(cfg, step, skills.general(step)[0], (current or {}).get("text") or c["after"],
-                                            knowledge, profile if step == "create-tests" else "")
-                skills.save_project(project, step, text, mode="add")
-                polished.append({"target": c["target"], "before": (current or {}).get("text", ""), "after": text})
-                self._emit("line", text=f"Polished the {label}")
-            except Exception as e:  # the accepted version stays as it is
-                failed[c["target"]] = (str(e).splitlines() or ["error"])[0][:200]
-                self._emit("line", text=f"Kept the {label} as accepted: {failed[c['target']]}")
-            self._tick(f"Polished the {label}")
-        (d / "finish.json").write_text(json.dumps({"at": time.time(), "polished": polished, "failed": failed}, indent=1,
-                                                  ensure_ascii=False), encoding="utf-8")
-        summary.update(status="finished", finished_at=time.time(), polish_failed=failed)
+                section = await analyze.polish(cfg, step, before, learned, knowledge, profile if step == "create-tests" else "")
+            except Exception as e:  # what was kept goes in as it is
+                failed[step] = (str(e).splitlines() or ["error"])[0][:200]
+                section = learned
+            skills.save_general(step, merge_learnt(before, section))
+            merged.append({"step": step, "before": before})
+            for c in cs:
+                project = c["target"].split("/", 1)[0]
+                if apply._same(apply._read(c["target"], self.company), c.get("applied")):
+                    skills.delete_project(project, step)
+                else:
+                    left.append(c["target"])  # you edited it after the study: it stays
+            self._emit("line", text=f"Added what was learnt to the {label}")
+            self._tick(f"Added what was learnt to the {label}")
+        (d / "finish.json").write_text(json.dumps({"at": time.time(), "merged": merged, "failed": failed, "left": left},
+                                                  indent=1, ensure_ascii=False), encoding="utf-8")
+        summary.update(status="finished", finished_at=time.time(), merge_failed=failed, kept_project_versions=left)
         self._save_summary(d, summary)
         config.save_section("app", {"onboarding_done": True})
         self._progress_end("Onboarding finished")

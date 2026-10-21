@@ -97,8 +97,10 @@ estimate of the time left; the sidebar shows the percentage too.
 
 **What changed** lists every change with what it was based on. Changes apply straight away; mark each one **Keep** or
 **Undo** (or **Keep all**). Undo leaves a change alone if you edited it yourself afterwards. When everything is decided,
-**Finish onboarding**: Claude polishes each kept skill once more, merging what it learned and the knowledge base into
-one clean version per project, the changes become final, and the Onboarding screen is put away. To study again later,
+**Finish onboarding**: what you kept is merged into the **general skills**, so it applies to every project. Claude
+writes one clean section per step (*Your team's way*, at the end of the general skill) from what was learnt and the
+knowledge base; onboarding's project versions are folded in and removed, except ones you edited yourself. The changes
+become final and the Onboarding screen is put away. To study again later,
 use the link on the Integrations screen.
 
 **Tests in your style.** After onboarding has studied your automation repo, *Create tests* writes each ticket's

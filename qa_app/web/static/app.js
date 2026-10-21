@@ -987,7 +987,7 @@ function onbBadge() {
   const d = S.onb.data;
   if (!d) return '';
   if (d.running || d.finishing) return `<span class="nav-pct">${(d.progress && d.progress.percent) || 0}%</span>`;
-  return d.undecided ? `<span class="nav-pct">${d.undecided}</span>` : '';
+  return d.undecided && !d.finished ? `<span class="nav-pct">${d.undecided}</span>` : '';
 }
 
 const ONB_AREA = { tickets: 'From your tickets', testrail: 'From TestRail', knowledge: 'Knowledge base', repo: 'From your automation' };
@@ -1034,19 +1034,19 @@ ${x.undone ? '<span class="onb-undone">Undone</span>' : finished ? '<span class=
         : `${x.kept ? `<span class="onb-kept">${svg(IC.check, 'ic ic-s')}Kept</span>` : `<button type="button" class="btn btn-sm" data-act="onbKeep" data-key="${esc(x.id)}">Keep</button>`}<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndo" data-key="${esc(x.id)}">Undo</button>`}
 ${open ? `<ul class="onb-ev">${(x.evidence || []).map((e) => `<li>${esc(e)}</li>`).join('') || '<li>No evidence recorded.</li>'}</ul>` : ''}</div>`;
     }).join('')}</div>`).join('')}
-${finished ? '' : d.finishing ? `<div class="onb-finish">${onbProgress(d.progress, 'finish')}<p class="onb-hint">${esc((d.progress && d.progress.text) || 'Polishing your skills')}</p></div>`
+${finished ? '' : d.finishing ? `<div class="onb-finish">${onbProgress(d.progress, 'finish')}<p class="onb-hint">${esc((d.progress && d.progress.text) || 'Adding what was learnt to your skills')}</p></div>`
       : `<div class="onb-finish">
 <div class="onb-acts">${d.undecided ? `<button type="button" class="btn btn-sm" data-act="onbKeepAll">Keep all ${d.undecided}</button>` : ''}${live.length ? '<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndoAll">Undo all</button>' : ''}</div>
-<p class="onb-hint">${d.undecided ? `Keep or undo each change (${d.undecided} left). Then finish: Claude polishes each kept skill once more with everything it learned, and this screen is put away.` : 'Everything is decided. Finish: Claude polishes each kept skill once more with everything it learned, and this screen is put away.'}</p>
+<p class="onb-hint">${d.undecided ? `Keep or undo each change (${d.undecided} left). Then finish: what you kept is merged into your general skills, so it applies to every project, and this screen is put away.` : 'Everything is decided. Finish: what you kept is merged into your general skills, so it applies to every project, and this screen is put away.'}</p>
 <button type="button" class="btn btn-primary" data-act="onbFinish" ${d.undecided || O.busy || !['done', 'stopped'].includes(last.status) ? 'disabled' : ''}>Finish onboarding</button></div>`}`;
   }
   const hasRun = !!last;
   if (finished && !O.reopen) {
     const kept = (last.changes || []).filter((x) => !x.undone).length;
-    const failed = Object.keys(last.polish_failed || {}).length;
+    const left = (last.kept_project_versions || []).length;
     return `<main class="main onb">${head}<section class="card onb-done">
 <div class="onb-done-ic">${svg(IC.check)}</div><h2>Onboarding is finished</h2>
-<p>${kept} change${kept === 1 ? '' : 's'} in use; each kept skill was polished with what YourQA learned${failed ? ` (${failed} kept as accepted)` : ''}. Edit them any time on the <a href="#/skills">Skills</a> screen.</p>
+<p>${kept} change${kept === 1 ? '' : 's'} in use. What YourQA learnt is now part of your general skills, so it applies to every project${left ? ` (${left} project version${left === 1 ? '' : 's'} you edited yourself stayed as they are)` : ''}. Edit them any time on the <a href="#/skills">Skills</a> screen.</p>
 <div class="onb-acts"><a class="btn btn-primary" href="#/board">Open the board</a><button type="button" class="btn btn-quiet" data-act="onbReopen">See what changed</button></div>
 <p class="onb-hint">Your tools changed a lot? Study again from here; the Onboarding screen comes back until you finish.</p>
 <button type="button" class="btn btn-sm" data-act="onbStudyAgain">Study again</button></section></main>`;

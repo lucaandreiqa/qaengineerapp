@@ -151,15 +151,17 @@ def count_calls(collected: dict) -> int:
 
 
 async def polish(cfg, step: str, general: str, learned: str, knowledge: str, profile: str) -> str:
-    """Finish onboarding: one clean project version of a step's skill from what was learned and accepted."""
+    """Finish onboarding: one clean section, added to the general skill, from what was learned and kept."""
     data = await _ask(cfg, "polish", f"The general skill for this step (YourQA's, used for every company):\n{general[:20000]}\n\n"
                       f"What onboarding learned about this company for this step (accepted by them):\n{learned[:12000]}\n\n"
                       + (f"The company knowledge base:\n{knowledge[:8000]}\n\n" if knowledge else "")
                       + (f"Their automation:\n{profile[:3000]}\n\n" if profile else "")
-                      + "Write the final project version of this skill: it ADDS to the general skill, so keep only what is "
-                      "specific to this company, merged into one clean, well-ordered document with no repetition, using "
-                      "their terms. Keep every concrete convention from what was learned. Return JSON: {\"markdown\": str "
-                      "(under 6,000 characters)}. " + SKILL_RULES, 8000)
+                      + "Write the section that will be added to the end of the general skill, so it applies every time: "
+                      "only what is specific to this company (not what the general skill already says), merged into one "
+                      "clean, well-ordered section with no repetition, using their terms. Keep every concrete convention "
+                      "from what was learned; when projects differ, say which project a rule is for. Start headings at "
+                      "### (the section has its own ## heading). Return JSON: {\"markdown\": str (under 6,000 characters)}. "
+                      + SKILL_RULES, 8000)
     text = str(data.get("markdown") or "").strip()
     if not text:
         raise ValueError("the answer had no skill text")

@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-16 (Onboarding progress bar, Keep or Undo per change, and Finish onboarding).
+Last updated: 2026-10-21 (Finish onboarding merges what was learnt into the general skills).
 
 
 ## 1. What it is
@@ -215,9 +215,13 @@ collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) �
 - **Keep or Undo**: changes still apply straight away; each is then kept (`apply.keep`, `keep_all`) or undone.
   `undecided()` counts the rest.
 - **Finish onboarding** (`Onboarding.finish`, `/api/onboarding/finish`): only when every change is kept or undone. For
-  each kept skill change (`<PROJECT>/<step>`), `analyze.polish` gets the general skill, the learned project version, the
-  knowledge base (and the profile for Create tests) and writes one clean project version (mode add, under 6,000
-  characters); a failed polish keeps the accepted text. Before and after are saved in `finish.json`, the run becomes
+  each step with kept skill changes, the learnt texts (deduplicated across projects, labelled by project when they
+  differ) go to `analyze.polish` with the general skill and the knowledge base (and the profile for Create tests), which
+  writes one section of only the company-specific rules. `run.merge_learnt` puts it at the end of the general skill
+  between `<!-- yourqa:onboarding -->` markers under "Your team's way (learnt during onboarding)", replacing the
+  section of an earlier onboarding; a failed call merges the kept text as it is. Onboarding's project versions are then
+  deleted when they still hold onboarding's value; ones you edited stay (`kept_project_versions`). The general skills
+  before the merge are saved in `finish.json`, the run becomes
   `finished` (no more Undo), and `app.onboarding_done` hides the Onboarding screen from the sidebar. Integrations links
   back to it; starting a new study brings it back.
 - **Screen**: Connect · Choose · Study · What changed, in one column; once finished, a short summary with Study again.
@@ -331,6 +335,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-21: Finish onboarding merges the kept skill changes into the general skills (one section per step, replaced by a later onboarding) instead of polishing per-project versions; onboarding's project versions are removed unless edited.
 - 2026-10-16: Onboarding shows a percentage bar (per project, per Claude call); changes are kept or undone one by one; Finish onboarding has Claude polish each kept skill with everything learned, makes the run final and hides the Onboarding screen.
 - 2026-10-16: Sign in with Google first (any account; YourQA's own Desktop OAuth client), then a first-run setup with one skippable page per connection ending in onboarding's study. Spec: `2026-10-16-sign-in-and-setup-design.md`.
 - 2026-10-16: A successful Test connection on an integration that is off switches it on and saves its settings (Integrations page).

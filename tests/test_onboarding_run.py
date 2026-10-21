@@ -146,7 +146,7 @@ def test_progress_goes_from_0_to_100_and_counts_each_project(home):
     assert o.state()["progress"]["percent"] == 100
 
 
-def test_finishing_needs_every_change_decided_then_polishes_skills_and_hides_onboarding(home):
+def test_finishing_merges_what_was_learnt_into_the_general_skills_and_hides_onboarding(home):
     tmp, events, calls = home
     factory, repo = _sources(tmp, with_repo=False)
     o = ob.Onboarding(factory)
@@ -155,16 +155,32 @@ def test_finishing_needs_every_change_decided_then_polishes_skills_and_hides_onb
     with pytest.raises(ob.OnboardingBusy, match="Keep or undo"):
         go(o.finish())
     gather_optr = next(c for c in changes if c["target"] == "OPTR/gather")
-    o.undo(gather_optr["id"])                                             # undone: not polished, stays undone
+    o.undo(gather_optr["id"])                                             # undone: never merged
+    skills.save_project("SCRUM", "jira-comment", "My own SCRUM comment rules", mode="add")   # your edit after the study
     o.keep_all()
+    general_before = skills.general("gather")[0]
     calls.clear()
     go(o.finish())
-    assert calls.count("polish") == 3                                      # SCRUM gather + jira-comment, OPTR jira-comment
-    assert skills.project("SCRUM", "gather")["text"].startswith("## Polished")
+    assert calls.count("polish") == 2                                      # one per step: gather, jira-comment
+    gather = skills.general("gather")[0]
+    assert gather.startswith(general_before.rstrip()[:200])               # the general skill is kept as it was…
+    assert ob.LEARNT_START in gather and "## Polished" in gather          # …with what was learnt added in its own section
+    assert skills.project("SCRUM", "gather") is None                      # onboarding's project versions are folded in
+    assert "## Polished" in skills.general("jira-comment")[0]
+    assert skills.project("SCRUM", "jira-comment")["text"] == "My own SCRUM comment rules"   # your edit stays
     optr = skills.project("OPTR", "gather")
-    assert optr is None or optr.get("shipped")                            # back to what it was (OPTR has a built-in one)
+    assert optr is None or optr.get("shipped")
+    go_again = skills.general("gather")[0]
+    assert go_again.count(ob.LEARNT_START) == 1
     assert config.load_settings()["app"]["onboarding_done"] is True
     st = o.state()
     assert st["last"]["status"] == "finished" and st["finished"] and st["progress"]["percent"] == 100
     with pytest.raises(KeyError):
         o.undo(changes[0]["id"])                                           # finished: no more undo
+
+
+def test_merging_again_replaces_the_learnt_section():
+    once = ob.merge_learnt("# Gather\nGeneral rules.\n", "Learnt A")
+    twice = ob.merge_learnt(once, "Learnt B")
+    assert twice.startswith("# Gather\nGeneral rules.") and twice.count(ob.LEARNT_START) == 1
+    assert "Learnt B" in twice and "Learnt A" not in twice

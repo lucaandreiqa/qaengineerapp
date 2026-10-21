@@ -605,7 +605,7 @@ def onboarding_keep_all() -> dict:
 
 @app.post("/api/onboarding/finish")
 async def onboarding_finish() -> dict:
-    """Polish the kept skills, make the run final and hide the Onboarding screen; progress arrives as live events."""
+    """Merge the kept skills into the general skills, make the run final and hide the Onboarding screen; progress arrives as live events."""
     from ..onboarding.run import OnboardingBusy
     ob = S().onboarding
     st = ob.state()
