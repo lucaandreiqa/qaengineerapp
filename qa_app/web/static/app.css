@@ -49,7 +49,7 @@ html,body{background:#1B1612}
 [aria-pressed=true] > span > .sw,[aria-pressed=true] > .sw{background:var(--accent)}
 [aria-pressed=true] > span > .sw::after,[aria-pressed=true] > .sw::after{transform:translateX(12px)}
 .vchip{height:30px;padding:0 10px;border-radius:7px;border:1px solid var(--border2);background:var(--panel);color:var(--muted);display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:500}
-.vchip[aria-pressed=true]{color:var(--fg);border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel))}
+.vchip[aria-pressed=true]{color:var(--link);font-weight:600;border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel));box-shadow:0 0 0 1px var(--accent)}
 .cb{display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--fg)}
 .cb input{width:15px;height:15px;accent-color:var(--accent);margin:0}
 .disc{display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 16px;border:0;background:transparent;cursor:pointer;text-align:left}
@@ -158,8 +158,8 @@ html,body{background:#1B1612}
 /* Jira: one board link, two ways to sign in */
 .jc-hows{display:inline-flex;padding:2px;gap:2px;border:1px solid var(--border2);border-radius:8px;background:var(--raised)}
 .jc-how{height:30px;padding:0 12px;border:0;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-weight:500;cursor:pointer}
-.jc-how:hover{color:var(--fg)}
-.jc-how.is-on{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgb(0 0 0 / .12)}
+.jc-how:not(.is-on):hover{color:var(--link);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.jc-how.is-on{background:var(--accent);color:var(--accent-fg);font-weight:600;box-shadow:0 1px 3px color-mix(in srgb,var(--accent) 40%,transparent)}
 .jc-how:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .jc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;max-width:760px}
 .jc-grid .inp{height:36px;width:100%}
@@ -205,7 +205,8 @@ html,body{background:#1B1612}
 .sk-child[aria-current=true] .sk-name{color:var(--fg)}
 .sk-twig{flex:none;width:10px;height:14px;margin:-6px 0 0 4px;border-left:1px solid var(--border-strong,var(--border));border-bottom:1px solid var(--border-strong,var(--border));border-bottom-left-radius:4px}
 .sk-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent)}
-.sk-rec{margin-left:6px;font-size:10.5px;font-weight:600;color:var(--accent)}
+.sk-rec{margin-left:6px;font-size:10.5px;font-weight:600;color:var(--link)}
+.seg button[aria-pressed=true] .sk-rec{color:inherit;opacity:.85}
 .sk-use{display:flex;align-items:center;gap:8px;padding-left:10px;border-left:1px solid var(--border)}
 textarea.sk-text.is-locked{background:var(--raised);color:var(--muted);cursor:default}
 .sk-note{color:var(--muted);font-size:12.5px}
@@ -708,5 +709,6 @@ textarea.sk-text{height:max(62vh,420px);min-height:220px;padding:12px;line-heigh
 .tk{box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 6px 18px -10px var(--shadow)}
 .qa[data-theme=light] .tk{box-shadow:0 1px 2px var(--shadow)}
 .btn-primary{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 40%,transparent),0 6px 18px -8px color-mix(in srgb,var(--accent) 70%,transparent)}
-.nav-link[aria-current=page]{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 2px 0 0 var(--accent)}
+.nav-link[aria-current=page]{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--link)!important;font-weight:600;box-shadow:inset 3px 0 0 var(--accent)}
+.nav-link[aria-current=page] .ic{color:var(--accent)}
 .brand-name{font-weight:650;font-size:16px}
