@@ -1563,7 +1563,7 @@ ${M.err[srv.id] ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(M.err[sr
 <button type="button" class="btn btn-quiet" data-act="mcpRemove" data-key="${esc(srv.id)}">${M.removeArm === srv.id ? 'Remove? Click again' : 'Remove'}</button>
 <button type="button" class="btn btn-primary" style="margin-left:auto" data-act="mcpSave" data-key="${esc(srv.id)}" ${dirty && tools.length && !M.busy ? '' : 'disabled'}>${srv.confirmed && !dirty ? 'Saved' : 'Save'}</button></div></div>`;
   }
-  return `<section class="irow${open ? ' is-open' : ''}" aria-labelledby="mcp-${esc(srv.id)}"><div class="irow-head">
+  return `<section class="irow${open ? ' is-open' : ''}${kind === 'ok' ? ' is-live' : ''}" aria-labelledby="mcp-${esc(srv.id)}"><div class="irow-head">
 <button type="button" class="irow-btn" data-act="mcpOpen" data-key="${esc(srv.id)}" aria-expanded="${open}">${integTile('mcp', '#5B6170', 'M')}
 <span class="irow-text"><span id="mcp-${esc(srv.id)}" class="irow-name">${esc(srv.name)}</span><span class="irow-sum">${esc(summary)}</span></span>
 ${statusChip(kind, label)}${svg(IC.chev, 'ic irow-chev')}</button></div>${body}</section>`;
@@ -1655,7 +1655,7 @@ ${err}
   const comps = c.components && c.components.length
     ? `Components in ${esc(c.project.key)}: <span class="mono">${esc(c.components.join(', '))}</span>. Components and labels set each ticket's FE / BE type (FE, BE, FE+BE…; the names are on the Testing board card).`
     : `Each ticket's FE / BE type comes from its components or labels, for example a label <span class="mono">FE</span>, <span class="mono">BE</span> or <span class="mono">FE+BE</span>. Tickets with neither show no FE / BE badge.`;
-  return `<section class="card jc" aria-labelledby="int-jira-connect">${head(`${statusChip(st.signedIn ? 'ok' : 'err', st.signedIn ? 'Connected' : 'Signed out')}<button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="jira-mcp" aria-expanded="true" aria-label="Collapse Jira" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
+  return `<section class="card jc${st.signedIn ? ' is-live' : ''}" aria-labelledby="int-jira-connect">${head(`${statusChip(st.signedIn ? 'ok' : 'err', st.signedIn ? 'Connected' : 'Signed out')}<button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="jira-mcp" aria-expanded="true" aria-label="Collapse Jira" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
 <div class="jc-body">
 <dl class="jc-facts">
 <div><dt>Site</dt><dd class="mono"><a href="${esc(c.base_url)}" target="_blank" rel="noopener">${esc(c.site)}</a></dd></div>
@@ -1759,7 +1759,7 @@ ${err}
   const col = A.col || st.column;
   const live = st.active && !st.demo && st.column && st.column === col;
   const colChips = c.columns.map((x) => `<button type="button" class="jc-col" role="radio" aria-checked="${x.name === col}" data-act="azCol" data-v="${esc(x.name)}"><span class="lz lz-${esc(x.category || 'new')}">${esc(x.name)}</span>${x.count == null ? '' : `<span class="seg-n">${x.count}</span>`}</button>`).join('');
-  return `<section class="card jc" aria-labelledby="int-azure-connect">${head(`${statusChip('ok', 'Connected')}<button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="azure" aria-expanded="true" aria-label="Collapse Azure Boards" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
+  return `<section class="card jc is-live" aria-labelledby="int-azure-connect">${head(`${statusChip('ok', 'Connected')}<button type="button" class="btn btn-quiet btn-icon" data-act="integOpen" data-key="azure" aria-expanded="true" aria-label="Collapse Azure Boards" title="Collapse">${svg(IC.chev, 'ic irow-chev')}</button>`)}
 <div class="jc-body">
 <dl class="jc-facts">
 <div><dt>Organization</dt><dd class="mono"><a href="${esc(c.base_url)}" target="_blank" rel="noopener">${esc(c.site)}</a></dd></div>
@@ -1802,7 +1802,7 @@ function azureRow() {
   if (A.changing || integIsOpen('azure', kind)) return `<div class="irow is-open irow-jira">${viewAzureConnect()}</div>`;
   const c = connected ? st.connection : null;
   const summary = c ? `${c.project.name}, ${c.board.name}${st.column ? ', ' + st.column : ''}` : 'Paste your board link and a personal access token';
-  return `<section class="irow" aria-labelledby="int-azure"><div class="irow-head">
+  return `<section class="irow${kind === 'ok' ? ' is-live' : ''}" aria-labelledby="int-azure"><div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="azure" aria-expanded="false">
 ${integTile('azure', '#0A6CBC', 'AZ', integLogo('azure'))}
 <span class="irow-text"><span id="int-azure" class="irow-name">Azure Boards</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>
@@ -1914,7 +1914,8 @@ function integRow(c) {
   const summary = kind === 'ok' && res ? res.text : c.desc;
   const on = c.key === 'workflow' || !!I.enabled[c.key];
   const chip = c.key === 'workflow' ? statusChip(I.vals.workflow.demo ? 'setup' : 'ok', I.vals.workflow.demo ? 'Demo data' : 'Live') : statusChip(kind, label);
-  return `<section class="irow${open ? ' is-open' : ''}" aria-labelledby="int-${c.key}">
+  const live = c.key === 'workflow' ? !I.vals.workflow.demo : kind === 'ok' && on;
+  return `<section class="irow${open ? ' is-open' : ''}${live ? ' is-live' : ''}" aria-labelledby="int-${c.key}">
 <div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="${c.key}" aria-expanded="${open}" aria-controls="ib-${c.key}">
 ${integTile(c.key, c.tint, c.mono, c.logo)}
@@ -1935,7 +1936,7 @@ function jiraRow() {
   if (open) return `<div class="irow is-open irow-jira">${viewJiraConnect()}</div>`;
   const c = connected ? st.connection : null;
   const summary = c ? `${c.project.name}, ${c.board.name}${st.column ? ', ' + st.column : ''}` : 'Paste your board link and sign in with Atlassian';
-  return `<section class="irow" aria-labelledby="int-jira-mcp"><div class="irow-head">
+  return `<section class="irow${kind === 'ok' ? ' is-live' : ''}" aria-labelledby="int-jira-mcp"><div class="irow-head">
 <button type="button" class="irow-btn" data-act="integOpen" data-key="jira-mcp" aria-expanded="false">
 ${integTile('jira', '#2F64D6', 'J', jiraLogo())}
 <span class="irow-text"><span id="int-jira-mcp" class="irow-name">Jira</span><span class="irow-sum" title="${esc(summary)}">${esc(summary)}</span></span>

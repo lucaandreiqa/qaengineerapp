@@ -299,6 +299,11 @@ textarea.sk-text{height:max(62vh,420px);min-height:220px;padding:12px;line-heigh
 .irow{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}
 .irow.is-open{border-color:var(--border2)}
 .irow-jira{border:0;background:transparent;overflow:visible}
+/* Connected: the warm gradient, so what's live stands out from what's off or still to set up */
+.irow.is-live,.card.jc.is-live{background:var(--live);border-color:var(--live-border)}
+.irow.is-live .irow-btn:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.irow.is-live .irow-body,.card.jc.is-live .jc-body{background:var(--panel)}
+.irow.is-live .mono-tile:not(.itile-logo),.card.jc.is-live .mono-tile:not(.itile-logo){box-shadow:0 3px 12px color-mix(in srgb,var(--accent) 32%,transparent)}
 .irow-jira .jc{margin:0}
 .irow-head{display:flex;align-items:center;gap:10px;padding-right:14px}
 .irow-btn{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:10px 14px;background:transparent;border:0;color:var(--fg);text-align:left;cursor:pointer;border-radius:10px}
