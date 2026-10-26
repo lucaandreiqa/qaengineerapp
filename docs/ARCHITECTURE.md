@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-26 (Layout consistency pass: equal lane headers, one size per button kind, consistency audit).
+Last updated: 2026-10-26 (Integration failures explained, with a Fix button to the failing integration).
 
 
 ## 1. What it is
@@ -309,6 +309,34 @@ Ticket folder `tests/tickets/<KEY>/`: `<KEY>-context.md`, `-scenarios.md`, `-qa-
 `-mcp-writes.json` (MCP write calls you ran from the chat).
 
 
+## 5d. Integration failures
+
+`integrations/failures.py` turns a raw error into `{service, name, kind, title, message, fix, action, target, retry,
+detail}`:
+- **service**: recognised from the error text (atlassian, dev.azure.com, testrail, hooks.slack.com, anthropic…) or
+  given by the caller.
+- **kind**: auth, permission, notfound, network, rate, server, billing, missing or other, from the status code and
+  wording.
+- **target**: the Integrations card to open. Confluence goes to Jira; an MCP server is `mcp:<id>`.
+- Errors that aren't about a service (stopped by you, nothing to build) give `None`.
+- `for_stage` names the service a board step talks to (1 Claude, 3 the tracker, 4 TestRail).
+- `sync_info` treats a board sync error as the tracker's.
+- `hint` is the short fix for a card's own Test connection result.
+
+Where it is attached:
+- `ticket_view`: `error_info`, and `info` on chat error messages.
+- `/api/board`: `syncErrorInfo`; the auto-sync event carries `info`.
+- `/api/sync`, `/api/reports/{id}/send` and `/api/mcp/{id}/test`: errors are `{"message", "info"}` via `_fail`; the
+  front end's `api()` puts it on `err.info`.
+- History run: `error_info`.
+- Onboarding state: `source_info` and `failed_info`.
+- `/api/integrations/{key}/test`: `hint`.
+- The engine's "stopped" toast uses the title.
+
+In the front end, `failBox(info, extra)` shows the title, message and fix, a **Fix <service>** link to
+`#/integrations?open=<target>` and the raw error folded. `errBox` falls back to a plain error when there's no info.
+`focusInteg` opens that card, scrolls to it and outlines it briefly.
+
 ## 9. Safety rules
 
 - Every external write (Jira comment, move, TestRail push, report send) happens only on the user's gate approval;
@@ -352,6 +380,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-26: Integration failures are explained in one place (`integrations/failures.py`): which service, what happened, what to do, with a Fix button that opens and scrolls to the failing integration's card. Used on the board sync banner, stopped tickets, chat, History, Reports sending, Onboarding sources and card tests.
 - 2026-10-26: Layout consistency: the form-control reset is `.qa :where(button, …)` so it never outweighs a class (it made `button.btn-sm` take its parent's font size while `a.btn-sm` got 12px); buttons in one row share a size; lane headers always take two lines; card titles and notes clamp at two lines; card titles are 14px. `design/consistency_audit.py` reports rows whose items or controls differ in height.
 - 2026-10-26: Skills become two trees with sub-skills under each step: general (ships with the app, read-only, product-neutral, rewritten from the team's improved skills) and personal (editable copy). Finish onboarding builds the personal tree by improving each skill the kept lessons bear on, and switches the studied projects to it; each project chooses its tree, personal recommended. Project versions and editing the general skills are gone; old edits migrate into personal. Spec: `2026-10-26-general-and-personal-skills-design.md`.
 - 2026-10-21: New look: orange on cream with atmospheric backgrounds instead of flat colours; fonts Instrument Sans, Bricolage Grotesque and JetBrains Mono (no Inter or Roboto).

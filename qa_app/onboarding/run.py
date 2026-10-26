@@ -74,6 +74,12 @@ class Onboarding:
             last = {**self._summary(d), "changes": [
                 {k: c.get(k) for k in ("id", "kind", "target", "label", "area", "evidence", "replaced_edit", "undone")}
                 for c in apply.load(d)]}
+        if last:  # a source or Claude call that failed, in plain words with where to fix it
+            from ..integrations import failures
+            svc = {"tracker": failures.tracker(), "testrail": "testrail", "confluence": "confluence"}
+            last["source_info"] = {k: failures.explain(str(v)[len("failed:"):].strip(), svc.get(k), "read it")
+                                   for k, v in (last.get("sources") or {}).items() if str(v).startswith("failed")}
+            last["failed_info"] = {k: failures.explain(str(v), "claude", "study it") for k, v in (last.get("failed") or {}).items()}
         if last and last.get("status") == "finished":  # how each step's skill changed, to accept or revert
             fin = self._finish_record(d)
             last["finish"] = {"merged": [{k: v for k, v in m.items() if k not in ("before", "after")} for m in fin.get("merged", [])],

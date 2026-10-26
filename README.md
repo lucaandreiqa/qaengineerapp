@@ -354,6 +354,18 @@ To accept intended UI changes, tick *Accept current screenshots as new baselines
 | Zephyr Scale | Imports JUnit as a test cycle, auto-creating test cases | API token, project key |
 | AWS S3 | Uploads the whole run folder. The report link (presigned for 7 days, or via `public_base_url`) is shared in Slack/Teams/Jira | Standard AWS credentials (profile, SSO, env, role) |
 
+**When an integration fails**, YourQA says which service it was, what happened and what to do, in plain words.
+Examples: "Jira didn't accept the sign-in", "Couldn't reach TestRail", "Your Claude account is out of credit". Each
+message has a **Fix <service>** button that opens that service's card on the Integrations screen and scrolls to it.
+The raw error from the service is folded underneath (*What TestRail said*). These messages show up:
+- on the board, as a banner when syncing fails, with **Sync now**;
+- on a stopped ticket's card (*See error* and **Fix <service>**) and in its details, next to *Retry this step*;
+- in the ticket chat when Claude can't be reached;
+- on a run in History;
+- on the Reports send screen;
+- in Onboarding, for a source it couldn't read.
+A failed *Test connection* on a card adds a line on what to do, for example "Enter a new API key".
+
 Any setting can be overridden with an env var: `QA_APP_<SECTION>_<KEY>`, e.g. `QA_APP_JIRA_API_TOKEN`.
 Use env vars for secrets in CI.
 

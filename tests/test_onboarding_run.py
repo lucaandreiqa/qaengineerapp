@@ -73,6 +73,21 @@ def test_a_missing_source_is_skipped_and_listed(home):
     assert any(c["target"] == "SCRUM/gather" for c in last["changes"])   # the tracker part still applied
 
 
+class RefusedJira(MockJira):
+    def recent(self, project, limit=200):
+        raise RuntimeError("401 Client Error: Unauthorized for url: https://acme.atlassian.net/rest/api/3/search")
+
+
+def test_a_failed_source_is_explained_with_where_to_fix_it(home):
+    tmp, events, calls = home
+    factory = lambda: {"cfg": Config(demo=False, anthropic_api_key="k"), "tracker": RefusedJira([]),  # noqa: E731
+                       "testrail": None, "confluence": None}
+    o = ob.Onboarding(factory)
+    go(o.study({"projects": ["SCRUM"], "spaces": [], "repo": ""}))
+    info = o.state()["last"]["source_info"]["tracker"]
+    assert info["service"] == "jira" and info["kind"] == "auth" and info["target"] == "jira" and "read it" in info["message"]
+
+
 def test_only_one_study_at_a_time_and_an_interrupted_run_is_marked_stopped(home):
     tmp, events, calls = home
     factory, repo = _sources(tmp)

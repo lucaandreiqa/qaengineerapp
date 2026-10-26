@@ -182,8 +182,9 @@ async function api(method, path, body) {
   try { data = await r.json(); } catch (e) { /* empty body */ }
   if (r.status === 401 && data && data.login && S.route !== 'login') { S.auth.status = { ...(S.auth.status || {}), user: null }; S.route = 'login'; schedule(); }
   if (!r.ok) {
-    const err = new Error((data && (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail))) || r.statusText);
-    err.data = data; err.status = r.status;
+    const d = data && data.detail;
+    const err = new Error((typeof d === 'string' ? d : d && d.message ? d.message : d ? JSON.stringify(d) : '') || r.statusText);
+    err.data = data; err.status = r.status; err.info = (d && d.info) || null;
     throw err;
   }
   return data;
@@ -210,7 +211,7 @@ function connect() {
       d.finishedToday = ev.finished_today;
       if (S.board.sel === ev.key) S.board.sel = null;
     } else if (ev.type === 'sync' && d) {
-      d.lastSync = ev.lastSync; d.syncError = ev.error || '';
+      d.lastSync = ev.lastSync; d.syncError = ev.error || ''; d.syncErrorInfo = ev.info || null;
     } else if (ev.type === 'onboarding') {
       const O = S.onb;
       if (O.data && ev.event === 'line') O.data.lines = [...(O.data.lines || []), ev.text].slice(-200);
@@ -363,7 +364,7 @@ function deco(t) {
   if (st === 4 && sub === 'gate') { d.stateLabel = 'Your review'; d.summary = `${t.cases.length} cases drafted`; d.act = 'Review draft'; d.note = 'Gate 4 of 4. Approving does not push anything.'; d.primary = 'Approve draft'; }
   if (st === 4 && sub === 'approved') { d.stateLabel = 'Draft approved'; d.cls = 'state state-ok'; d.summary = 'Ready to push when you are'; d.act = 'Push'; d.note = 'Pushes only on this explicit go-ahead, then verifies with get_cases.'; d.primary = `Push ${t.cases.length} cases to TestRail`; }
   if (working) d.cls = 'state state-work';
-  if (t.error) { d.cls = 'state state-warn'; d.stateLabel = 'Stopped'; d.summary = t.error; d.act = 'See error'; }
+  if (t.error) { d.cls = 'state state-warn'; d.stateLabel = 'Stopped'; d.summary = t.error_info ? t.error_info.title : t.error; d.act = t.error_info && t.error_info.target ? t.error_info.action : 'See error'; }
   d.working = working;
   d.you = !working;
   return d;
@@ -452,6 +453,8 @@ function viewBoard() {
 <div class="lane-body">${cards.map(viewCard).join('') || `<div class="lane-empty">${F.active || B.q.trim() ? 'No tickets here match the filters' : l.empty}</div>`}</div>
 </section>`;
   }).join('');
+  const syncFail = data.syncError ? errBox('Sync failed: ' + data.syncError, data.syncErrorInfo,
+    `<button type="button" class="btn btn-sm" data-act="sync" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic ic-s spin' : 'ic ic-s')}Sync now</button>`, { style: 'margin-top:12px' }) : '';
   const syncTip = `${c.tracker || 'Jira'} ${c.project}, column ${c.column}. `
     + (data.syncError ? 'Automatic sync failed: ' + data.syncError : data.autoSync ? `Syncs automatically every ${data.autoSync} min.` : 'Automatic sync is off.') + ' Click to sync now.';
   return `<main class="main">
@@ -466,6 +469,7 @@ ${viewFilters(B, F)}
 <button type="button" class="sync-btn" data-act="sync" title="${esc(syncTip)}" ${B.syncing ? 'disabled' : ''}>${svg(IC.sync, B.syncing ? 'ic ic-s spin' : 'ic ic-s')}${data.syncError ? '<span class="c-crit">Sync failed</span>' : esc(ago(data.lastSync).replace(/^s/, 'S'))}</button>
 </div>
 </header>
+${syncFail}
 ${c.mode !== 'live' ? `<div class="notice jc-banner">${svg(IC.info)}<span>Sample tickets. Connect Jira or Azure Boards to test your own.</span><a class="btn btn-sm btn-primary" href="#/integrations" style="margin-left:auto">Connect</a></div>` : ''}
 <div class="board" role="list" aria-label="QA workflow steps" data-keep="board">${lanes}</div>
 </main>`;
@@ -489,7 +493,9 @@ function viewCard(t) {
 <span class="${d.cls}">${d.working ? svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"') : ''}${d.you && d.cls.includes('state-you') ? svg(IC.person, 'ic ic-s') : ''}${esc(d.stateLabel)}</span>
 <span class="clamp2">${esc(d.summary)}</span>
 </div>
-${d.you ? `<div class="tk-foot"><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="open" data-key="${esc(t.key)}">${esc(d.act)}</button></div>` : ''}
+${d.you ? `<div class="tk-foot">${t.error && t.error_info && t.error_info.target
+    ? `<button type="button" class="btn btn-quiet btn-sm" data-act="open" data-key="${esc(t.key)}">See error</button><a class="btn btn-sm" style="margin-left:auto" href="${fixHref(t.error_info.target)}" data-act="fixInteg" data-key="${esc(t.error_info.target)}">${svg(IC.integ, 'ic ic-s')}${esc(d.act)}</a>`
+    : `<button type="button" class="btn btn-sm" style="margin-left:auto" data-act="open" data-key="${esc(t.key)}">${esc(d.act)}</button>`}</div>` : ''}
 </article>`;
 }
 
@@ -536,6 +542,25 @@ function viewTicketContext(t) {
   if (!tags && !rows.length && !warn) return '';
   const inner = `${tags ? `<div class="ctx-tags">${tags}</div>` : ''}${rows.length ? `<div class="box" style="margin-top:8px">${rows.join('')}</div>` : ''}`;
   return (tags || rows.length ? foldSection(t.key + '|ctx', 'Ticket details', null, inner) : '') + warn;
+}
+
+/* ------------------------------------------------------------------ An integration that failed, in plain words
+   info comes from the server (integrations/failures.py): what happened, what to do, and which Integrations card
+   fixes it. extra: more buttons (Retry…) shown next to "Fix <service>". */
+const fixHref = (target) => `#/integrations?open=${encodeURIComponent(target)}`;
+function failBox(info, extra = '', opts = {}) {
+  if (!info) return '';
+  const fix = info.target ? `<a class="btn btn-sm btn-primary" href="${fixHref(info.target)}" data-act="fixInteg" data-key="${esc(info.target)}">${svg(IC.integ, 'ic ic-s')}${esc(info.action)}</a>` : '';
+  return `<div class="callout c-err fail" role="alert"${opts.style ? ` style="${opts.style}"` : ''}>${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}
+<div class="fail-body"><b class="fail-t">${esc(info.title)}</b><span class="fail-m">${esc(info.message)} ${esc(info.fix)}</span>
+<div class="fail-acts">${fix}${extra}</div>
+${info.detail ? `<details class="fail-d"><summary>What ${esc(info.name)} said</summary><code>${esc(info.detail)}</code></details>` : ''}</div></div>`;
+}
+/* An error that may or may not be explained: the failure box when it is, a plain error callout when not. */
+function errBox(text, info, extra = '', opts = {}) {
+  if (info) return failBox(info, extra, opts);
+  if (!text) return '';
+  return `<div class="callout c-err" role="alert"${opts.style ? ` style="${opts.style}"` : ''}>${svg(IC.err, 'ic', 'style="flex:none;margin-top:1px"')}<div class="fail-body"><span>${esc(text)}</span>${extra ? `<div class="fail-acts">${extra}</div>` : ''}</div></div>`;
 }
 
 /* ------------------------------------------------------------------ Skills: how Claude does each board step
@@ -763,7 +788,7 @@ function viewDrawer() {
   body += '</div>';
 
   if (t.error) {
-    body += `<div class="callout c-err">${svg(IC.err)}<div style="display:flex;flex-direction:column;gap:8px;min-width:0"><span>${esc(t.error)}</span><div style="display:flex;gap:8px;flex-wrap:wrap">${isWorking(t) ? `<button type="button" class="btn btn-sm" data-act="retry" data-key="${esc(t.key)}">Retry this step</button>` : ''}<span style="align-self:center;color:var(--muted);font-size:12px">or skip it with the button below</span></div></div></div>`;
+    body += errBox(t.error, t.error_info, `${isWorking(t) ? `<button type="button" class="btn btn-sm" data-act="retry" data-key="${esc(t.key)}">${svg(IC.sync, 'ic ic-s')}Retry this step</button>` : ''}<span class="fail-or">or skip it with the button below</span>`);
   }
 
   if (st === 0 && sub !== 'gate') {
@@ -1085,7 +1110,10 @@ ${O.details ? `<div class="term onb-term">${lines.map((l) => `<div class="tl">${
     const status = { done: '', stopped: ' (stopped)', error: ' (failed)' }[last.status] || '';
     const problems = Object.entries(last.sources || {}).filter(([, v]) => /^failed/.test(v)).concat(Object.entries(last.failed || {}).map(([k, v]) => [k, 'failed: ' + v]));
     changed = `<p class="onb-sum">Studied ${esc(when)}${status}. ${live.length} change${live.length === 1 ? '' : 's'} in use</p>
-${problems.length ? `<div class="callout c-warn">${svg(IC.warn)}<span>${problems.map(([k, v]) => `${esc(k)}: ${esc(v.replace(/^failed: /, ''))}`).join('<br>')}</span></div>` : ''}
+${problems.map(([k, v]) => {
+      const info = (last.source_info || {})[k] || (last.failed_info || {})[k];
+      return errBox(`${ONB_SOURCE[k] || k}: ${v.replace(/^failed: /, '')}`, info);
+    }).join('')}
 ${groups.map(([a, xs]) => `<div class="onb-group"><div class="onb-gh">${esc(ONB_AREA[a])}</div>${xs.map((x) => {
       const open = !!O.open[x.id];
       return `<div class="onb-ch${x.undone ? ' is-undone' : ''}"><button type="button" class="onb-chh" data-act="onbOpen" data-key="${esc(x.id)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s' + (open ? '' : ' rot-90'))}<span>${esc(x.label)}</span>${x.replaced_edit ? '<span class="onb-tag">replaced your edit</span>' : ''}</button>
@@ -1190,7 +1218,7 @@ ${a.state === 'applied' ? `<span class="tres tres-ok">${svg(IC.check, 'ic ic-s')
       : `<div class="chat-acts"><button type="button" class="btn btn-sm btn-primary" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${B.busy ? 'disabled' : ''}>Run</button><button type="button" class="btn btn-sm btn-quiet" data-act="chatDismiss" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}">Don't run</button></div>`}</div>`
       : `<button type="button" class="btn btn-sm${a.state === 'applied' ? ' btn-done' : ''}" data-act="chatApply" data-key="${esc(key)}" data-m="${mi}" data-a="${ai}" ${a.state === 'applied' || a.state === 'dismissed' || B.busy ? 'disabled' : ''}>${a.state === 'applied' ? svg(IC.check, 'ic ic-s') : ''}${esc(a.label)}</button>`).join('');
     return `<div class="chat-msg chat-${m.role}${m.error ? ' chat-err' : ''}">${m.role === 'assistant' ? `<span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span>` : ''}
-<div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.text) : esc(m.text).replace(/\n/g, '<br>')}</div>
+${m.error && m.info ? failBox(m.info) : `<div class="chat-bubble">${m.role === 'assistant' ? mdLite(m.text) : esc(m.text).replace(/\n/g, '<br>')}</div>`}
 ${acts ? `<div class="chat-acts">${acts}</div>` : ''}</div>`;
   };
   const rows = groups.map((g, gi) => {
@@ -1365,7 +1393,7 @@ function viewReportModal() {
 <p class="rnote">${esc(m.kind_name)} ready.</p>
 <div class="hacts"><a class="btn" href="/api/reports/${encodeURIComponent(m.id)}.html" target="_blank" rel="noopener">Open${svg(IC.ext, 'ic ic-s')}</a><a class="btn" href="/api/reports/${encodeURIComponent(m.id)}.pdf" target="_blank" rel="noopener">Download PDF</a></div>
 <div class="lbl" style="margin-top:14px">Send it</div><div class="fchips">${dest('slack', 'Slack')}${dest('teams', 'Microsoft Teams')}${m.key ? dest('tracker', S.board.data && S.board.data.config.tracker === 'Azure Boards' ? 'Azure Boards work item' : 'Jira ticket') : ''}</div>
-${P.err ? `<div class="callout c-err" style="margin-top:10px">${svg(IC.err)}<span>${esc(P.err)}</span></div>` : ''}
+${errBox(P.err, P.info, '', { style: 'margin-top:10px' })}
 ${P.pv ? `<div class="rprev"><div><b>Where:</b> ${esc(P.pv.where)}</div><div><b>What:</b> ${esc(P.pv.what)}</div>${P.pv.text ? `<pre>${esc(P.pv.text)}</pre>` : ''}</div>
 <div style="display:flex;gap:8px;margin-top:10px">${P.result ? `<span class="tres tres-ok">${svg(IC.check, 'ic ic-s')}${esc(P.result)}</span>` : `<button type="button" class="btn btn-primary" data-act="repSendNow" ${P.busy ? 'disabled' : ''}>${P.busy ? svg(IC.spin, 'ic spin') : ''}Send now</button>`}</div>` : ''}
 </div></div>`;
@@ -1458,7 +1486,7 @@ ${r.has_report ? `<a class="btn btn-sm" href="${evidenceUrl(r.id, 'report/index.
 <button type="button" class="btn btn-sm" data-act="makeReport" data-kind="ticket" data-v="${esc(r.key)}">Ticket report</button></div>`;
   const nav = `<div class="hnav">${r.prev ? `<a class="btn btn-quiet btn-sm" href="#/history/${encodeURIComponent(r.prev)}">‹ Run ${r.run_no - 1}</a>` : ''}<span>Run ${r.run_no} of ${r.of}</span>${r.next ? `<a class="btn btn-quiet btn-sm" href="#/history/${encodeURIComponent(r.next)}">Run ${r.run_no + 1} ›</a>` : ''}${cmpSel}</div>`;
   const evidence = {}; r.items.forEach((i) => { if (i.error || (i.attachments || []).length) evidence[String(i.n)] = { error: i.error, attachments: i.attachments }; });
-  const body = H.cmp ? viewCompare(H.cmp) : `${r.error ? `<div class="callout c-err">${svg(IC.err)}<span>${esc(r.error)}</span></div>` : ''}${!r.evidence_kept ? `<div class="notice">${svg(IC.info)}<span>Evidence for this run was removed to save space; the results are kept.</span></div>` : ''}
+  const body = H.cmp ? viewCompare(H.cmp) : `${errBox(r.error, r.error_info)}${!r.evidence_kept ? `<div class="notice">${svg(IC.info)}<span>Evidence for this run was removed to save space; the results are kept.</span></div>` : ''}
 ${qaChecklist({ key: r.key, sections: runSections(r), ran: r.status !== 'running', live: r.status === 'running', running: -1, runId: r.id, evidence, readonly: true })}`;
   return `<main class="main">${back}
 <header class="hhead"><div style="min-width:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${runStatus(r.status)}<span class="tkey" style="color:var(--muted)">${esc(r.key)}</span>${r.type ? `<span class="ttype tt-${r.type === 'FE+BE' ? 'both' : r.type.toLowerCase()}">${esc(r.type)}</span>` : ''}</div>
@@ -1826,6 +1854,26 @@ function statusChip(kind, label) {
   return `<span class="ist ist-setup">${esc(label || 'Needs setup')}</span>`;
 }
 
+/* Open one integration's card and bring it into view (from a "Fix <service>" button elsewhere). */
+const INTEG_ANCHOR = { jira: ['jira-mcp', 'int-jira-mcp', 'int-jira-connect'], azure: ['azure', 'int-azure', 'int-azure-connect'] };
+function focusInteg(target) {
+  let openKey = target, ids = [`int-${target}`];
+  if (INTEG_ANCHOR[target]) { openKey = INTEG_ANCHOR[target][0]; ids = INTEG_ANCHOR[target].slice(1); }
+  if (target.startsWith('mcp:')) { const id = target.slice(4); S.mcp.open[id] = true; ids = [`mcp-${id}`]; openKey = ''; }
+  if (openKey) S.integ.open[openKey] = true;
+  S.integ.focus = { ids, until: Date.now() + 4000 };
+  let tries = 0;
+  const go = () => {
+    const el = ids.map((i) => document.getElementById(i)).find(Boolean);
+    const card = el && el.closest('.card, .irow, section');
+    if (!card) { if (tries++ < 25) setTimeout(go, 120); return; }
+    card.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    card.classList.add('is-flash');
+    setTimeout(() => card.classList.remove('is-flash'), 2200);
+  };
+  schedule(); setTimeout(go, 60);
+}
+
 function integIsOpen(key, kind) {
   const o = S.integ.open[key];
   if (o != null) return o;
@@ -1853,6 +1901,7 @@ ${f.secret ? `<button type="button" class="reveal" aria-label="${revealed ? 'Hid
 <div class="ifoot">
 <button type="button" class="btn" data-act="integTest" data-key="${c.key}" ${I.testing[c.key] ? 'disabled' : ''}>${svg(I.testing[c.key] ? IC.spin : IC.bolt, I.testing[c.key] ? 'ic spin' : 'ic')}Test connection</button>
 ${res ? `<div class="tres ${res.ok ? 'tres-ok' : 'tres-err'}" role="status" style="flex:0 1 auto">${svg(res.ok ? IC.check : IC.err, 'ic', 'style="width:14px;height:14px"')}<span title="${esc(res.text)}">${esc(res.text)}</span></div>` : ''}
+${res && !res.ok && res.hint ? `<p class="fail-hint" role="note">${esc(res.hint)}</p>` : ''}
 <button type="button" class="btn ${I.saved[c.key] ? 'btn-done' : 'btn-primary'}" style="margin-left:auto" data-act="integSave" data-key="${c.key}">${I.saved[c.key] ? 'Saved' : 'Save'}</button>
 </div>`;
 }
@@ -2026,14 +2075,16 @@ const ACTS = {
     catch (e) { S.board.chatErr[key] = e.message; }
   },
   dismissToast: () => { S.toast = ''; },
+  // a "Fix <service>" button: the link changes the page; when it's already this page, open the card again
+  fixInteg: (el) => { if (location.hash === el.getAttribute('href')) focusInteg(el.dataset.key); S.board.sel = ''; },
   // board
   sync: async () => {
     S.board.syncing = true; schedule();
     try {
       const r = await api('POST', '/api/sync');
-      S.board.data.lastSync = r.lastSync; S.board.data.syncError = '';
+      S.board.data.lastSync = r.lastSync; S.board.data.syncError = ''; S.board.data.syncErrorInfo = null;
       toast(r.new.length ? `Pulled ${r.new.join(', ')} from ${S.board.data.config.tracker || 'Jira'} ${S.board.data.config.column}` : `No new tickets in ${S.board.data.config.column}`);
-    } catch (e) { toast(e.message); }
+    } catch (e) { S.board.data.syncError = e.message; S.board.data.syncErrorInfo = e.info; toast(e.message); }
     S.board.syncing = false;
   },
   ftoggle: () => { S.board.fopen = !S.board.fopen; },
@@ -2179,8 +2230,8 @@ const ACTS = {
     try { P.pv = await api('POST', `/api/reports/${encodeURIComponent(P.meta.id)}/preview`, { to: P.to }); } catch (e) { P.err = e.message; }
   },
   repSendNow: async () => {
-    const P = S.reports.preview; P.busy = true; P.err = ''; schedule();
-    try { const r = await api('POST', `/api/reports/${encodeURIComponent(P.meta.id)}/send`, { to: P.to }); P.result = r.result; toast(r.result); } catch (e) { P.err = e.message; }
+    const P = S.reports.preview; P.busy = true; P.err = ''; P.info = null; schedule();
+    try { const r = await api('POST', `/api/reports/${encodeURIComponent(P.meta.id)}/send`, { to: P.to }); P.result = r.result; toast(r.result); } catch (e) { P.err = e.message; P.info = e.info; }
     P.busy = false;
   },
   // history
@@ -2414,7 +2465,11 @@ function route() {
   if (S.route === 'setup') { if (!SETUP.some((x) => x.id === S.routeArg)) S.routeArg = SETUP[0].id; loadSetup(); }
   if (S.route === 'login') { const e = new URLSearchParams(query || '').get('error'); if (e) S.auth.err = e; }
   if (S.route === 'integrations' && !S.integ.cards) loadIntegrations();
-  if (S.route === 'integrations') { loadJira(); loadAzure(); loadMcp(); }
+  if (S.route === 'integrations') {
+    loadJira(); loadAzure(); loadMcp();
+    const open = new URLSearchParams(query || '').get('open');
+    if (open) focusInteg(open);
+  }
   if (S.route === 'skills') {
     const p = new URLSearchParams(query || '');
     if (/^[a-z-]{2,30}$/.test(p.get('step') || '')) S.skills.sel = p.get('step');

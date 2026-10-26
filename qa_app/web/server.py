@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import auth, integrations
-from ..integrations import mcp_servers
+from ..integrations import failures, mcp_servers
 from ..config import APP_DIR, DEFAULT_SETTINGS, SECRET_KEYS, WORKFLOW_DIR, ensure_dirs, load_settings, save_section
 from ..workflow import agent, seed
 from ..workflow.clients import MockJira, MockTestRail
@@ -193,6 +193,10 @@ class Services:
             d["jiraUrl"] = f"{base.rstrip('/')}/browse/{t.key}"
             d["tracker"] = "Jira"
         d["envShort"] = agent.env_name(t, cfg) if t.env else ""
+        # A failing integration in plain words, with the Integrations card to fix it
+        tracker = "azure" if d["tracker"] == "Azure Boards" else "jira"
+        d["error_info"] = failures.explain(t.error, failures.for_stage(t.stage, tracker), STAGE_DOING.get(t.stage, "")) if t.error else None
+        d["chat"] = [{**m, "info": failures.explain(m.get("text", ""), "claude", "answer")} if m.get("error") else m for m in d.get("chat") or []]
         # The latest run's evidence per check, and every run of this ticket (History)
         store = self.workflow.history()
         d["evidence"] = {}
@@ -336,7 +340,17 @@ def state() -> dict:
         "finishedToday": store.finished_today(),
         "lastSync": store.last_sync,
         "autoSync": 0 if cfg.is_mock else cfg.auto_sync_minutes, "syncError": s.workflow.sync_error,
+        "syncErrorInfo": failures.sync_info(s.workflow.sync_error),
     }
+
+
+STAGE_DOING = {0: "gather the requirements", 1: "write the tests", 2: "run the tests", 3: "post the comment or move the ticket",
+               4: "draft or push the TestRail cases"}
+
+
+def _fail(status: int, message: str, info: Optional[dict]) -> HTTPException:
+    """An error the screens can explain: {"message", "info"} (info has the service, the fix and where to fix it)."""
+    return HTTPException(status, {"message": message, "info": info})
 
 
 @app.post("/api/sync")
@@ -344,7 +358,9 @@ async def sync() -> dict:
     try:
         new = await S().workflow.sync()
     except Exception as e:
-        raise HTTPException(502, f"Jira sync failed: {str(e)[:300]}")
+        raw = (str(e).splitlines() or ["error"])[0][:300]
+        info = failures.sync_info(raw)
+        raise _fail(502, info["title"] if info else f"Sync failed: {raw}", info)
     return {"new": new, "lastSync": S().workflow.tickets.last_sync}
 
 
@@ -511,7 +527,9 @@ async def reports_send(rid: str, body: SendIn) -> dict:
     except rep.SendError as e:
         raise HTTPException(409, str(e))
     except Exception as e:
-        raise HTTPException(502, f"Sending failed: {str(e).splitlines()[0][:300]}")
+        raw = (str(e).splitlines() or ["error"])[0][:300]
+        info = failures.explain(raw, body.to if body.to in failures.NAMES else None, "send the report")
+        raise _fail(502, info["title"] if info else f"Sending failed: {raw}", info)
 
 
 @app.get("/api/tickets/{key}/terminal")
@@ -786,7 +804,8 @@ def history_get(run_id: str) -> dict:
         tracker_url = f"{str(a.get('org_url', '')).rstrip('/')}/{quote(a.get('project', ''), safe='')}/_workitems/edit/{rec['key']}"
     else:
         tracker_url = f"{(st.get('jira', {}).get('base_url') or 'https://example.atlassian.net').rstrip('/')}/browse/{rec['key']}"
-    return {**rec, "on_board": S().workflow.tickets.get(rec["key"]) is not None, "tracker_url": tracker_url}
+    return {**rec, "on_board": S().workflow.tickets.get(rec["key"]) is not None, "tracker_url": tracker_url,
+            "error_info": failures.explain(rec.get("error") or "", None, "run the tests")}
 
 
 @app.get("/api/history/{run_id}/compare/{other}")
@@ -894,6 +913,8 @@ async def test_integration(key: str, values: dict[str, Any] = Body(...)) -> dict
             res = {"ok": True, "text": await asyncio.to_thread(integrations.test_connection, key, values)}
         except Exception as e:  # show the service's own error on the card
             res = {"ok": False, "text": (str(e).splitlines() or ["error"])[0][:300]}
+    if not res.get("ok"):
+        res["hint"] = failures.hint(res.get("text", ""), key)
     _set_status(key, res)
     return res
 
@@ -1042,7 +1063,7 @@ async def mcp_test(server_id: str) -> dict:
     try:
         await asyncio.to_thread(mcp_servers.refresh_tools, server_id)
     except mcp_servers.McpError as e:
-        raise HTTPException(422, str(e))
+        raise _fail(422, str(e), failures.explain(str(e), f"mcp:{server_id}", "read its tools"))
     return {"server": _mcp_view(server_id)}
 
 

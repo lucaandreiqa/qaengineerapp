@@ -179,9 +179,12 @@ class Workflow:
                 raise
             except Exception as e:  # keep the ticket where it is and show the error in the drawer
                 log.exception("Background step failed for %s", key)
-                if self.tickets.get(key):
+                t = self.tickets.get(key)
+                if t:
+                    from ..integrations import failures
+                    info = failures.explain(str(e), failures.for_stage(t.stage, failures.tracker()))
                     self.tickets.patch(key, error=str(e)[:500])
-                    self.toast(f"{key} stopped: {str(e)[:120]}")
+                    self.toast(f"{key} stopped: {info['title'] if info else str(e)[:120]}")
 
         self.tasks[key] = asyncio.create_task(guarded())
 
@@ -217,7 +220,9 @@ class Workflow:
         except Exception as e:
             self._sync_failed_at = now
             self.sync_error = (str(e).splitlines() or ["error"])[0][:300]
-            bus.publish({"type": "sync", "lastSync": self.tickets.last_sync, "error": self.sync_error, "auto": True})
+            from ..integrations import failures
+            bus.publish({"type": "sync", "lastSync": self.tickets.last_sync, "error": self.sync_error, "auto": True,
+                         "info": failures.sync_info(self.sync_error)})
             return None
         if new:
             self.toast(f"Auto-sync: {len(new)} new ticket{'s' if len(new) != 1 else ''} · {', '.join(new[:4])}{'…' if len(new) > 4 else ''}")

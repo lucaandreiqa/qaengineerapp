@@ -714,3 +714,18 @@ textarea.sk-text{height:max(62vh,420px);min-height:220px;padding:12px;line-heigh
 .nav-link[aria-current=page]{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--link)!important;font-weight:600;box-shadow:inset 3px 0 0 var(--accent)}
 .nav-link[aria-current=page] .ic{color:var(--accent)}
 .brand-name{font-weight:650;font-size:16px}
+
+/* An integration that failed: what happened, what to do, and a way to the card that fixes it */
+.fail-body{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1}
+.fail-t{font-weight:600;color:var(--crit)}
+.fail-m{color:var(--fg);line-height:1.5}
+.fail-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px}
+.fail-acts:empty{display:none}
+.fail-or{color:var(--muted);font-size:12px}
+.fail-d summary{cursor:pointer;color:var(--muted);font-size:12px;width:max-content}
+.fail-d code{display:block;margin-top:6px;padding:8px 10px;border-radius:6px;background:var(--raised);border:1px solid var(--border);color:var(--muted);font:12px/1.5 var(--mono,'JetBrains Mono',ui-monospace,monospace);white-space:pre-wrap;word-break:break-word}
+.fail-hint{flex-basis:100%;order:3;margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.chat-msg .fail{margin-top:2px}
+.is-flash{animation:flash 2.2s ease-out}
+@keyframes flash{0%,35%{box-shadow:0 0 0 2px var(--accent),0 0 0 6px color-mix(in srgb,var(--accent) 25%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.is-flash{animation:none;outline:2px solid var(--accent)}}
