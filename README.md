@@ -14,7 +14,7 @@ headless in CI and in the classic window.
 | **History** ⌘2 | Every ticket test run: filters, each run's checks with screenshots / video / trace and the Playwright report, and comparison between two runs of a ticket |
 | **Reports** ⌘3 | Trends (pass rate, first-time pass, runs to green, flaky checks, breakdowns) and run / ticket / period reports as HTML, PDF or CSV, sent to Slack, Teams, Jira or Azure Boards |
 | **Integrations** ⌘4 | Every service, plus the Testing board and Claude settings. Test connection, then Save |
-| **Skills** ⌘5 | How Claude does each board step: a general skill per step, refined per Jira project |
+| **Skills** ⌘5 | How Claude does each board step: read-only general skills for any product, and your editable personal skills shaped by onboarding; each project picks one |
 
 The original PySide window is still there: `run_classic.bat` / `run_classic.command` or `python -m qa_app --classic`.
 
@@ -86,7 +86,7 @@ projects, and press **Study**. YourQA reads a recent sample of each (about 200 t
 30 docs pages and your automation repo; read-only) and Claude works out how your team does things. It then sets
 YourQA up to match, straight away:
 
-- skills for each project: how your tickets are written, how your QA comments, test cases and tests look;
+- lessons for your skills: how your tickets are written, how your QA comments, test cases and tests look;
 - board settings: the QA column, which components mean frontend or backend, how test environment links look, and
   where tickets move after QA;
 - a framework profile of your automation (language, runner, layout, page objects, helpers, run command);
@@ -97,16 +97,17 @@ estimate of the time left; the sidebar shows the percentage too.
 
 **What changed** lists every change with what it was based on. Changes apply straight away; mark each one **Keep** or
 **Undo** (or **Keep all**). Undo leaves a change alone if you edited it yourself afterwards. When everything is decided,
-**Finish onboarding**: what you kept is merged into the **general skills**, so it applies to every project. Claude
-writes one clean section per step (*Your team's way*, at the end of the general skill) from what was learnt and the
-knowledge base; onboarding's project versions are folded in and removed, except ones you edited yourself. The changes
-become final and the Onboarding screen is put away.
+**Finish onboarding**: YourQA builds your **personal skills**. It copies the general skills and Claude works what you
+kept into each skill it bears on (for example, where your tickets keep the acceptance criteria goes into *Ticket
+context*), using your team's words. Skills nothing was learnt for stay as general copies. The general skills never
+change. The projects you studied switch to your personal skills. The changes become final and the Onboarding screen is
+put away.
 
 **Onboarding is finished** then shows a summary: *What YourQA read* (each source and how much of it), *What it found*
-(the evidence behind the changes, by area), *How your skills changed* (each step's added section, to read in full), and
-*What else was set up* (board settings, move rules, knowledge base, framework profile). Each skill update is already in
-use: **Accept** it, or **Revert** it to put the general skill and onboarding's project versions back exactly as they
-were (a skill you edited after finishing is left alone). To study again later,
+(the evidence behind the changes, by area), *Your personal skills* (each updated skill, grouped by board step, with the
+lines it gained), and *What else was set up* (board settings, move rules, knowledge base, framework profile). Each
+skill update is already in use: **Accept** it, or **Revert** it to put that skill back as it was before Finish (a skill
+you edited after finishing is left alone). To study again later,
 use the link on the Integrations screen.
 
 **Tests in your style.** After onboarding has studied your automation repo, *Create tests* writes each ticket's
@@ -147,19 +148,26 @@ links, and every comment with its author and date. It all goes into `<KEY>-conte
 checklist (oldest comments are trimmed first if a ticket is very long). The ticket drawer shows a summary.
 Linked tickets and attachments are listed, not opened.
 
-**Skills.** Each board column has a skill: Markdown instructions Claude gets every time it does that step
-(Gather requirements, Create tests, Run tests, Jira comment, TestRail cases). The app ships a general skill for
-each (`qa_app/skills/*.md`). On the **Skills** screen (⌘5, or the skill icon on a board lane) you can:
-- edit the general skill for everyone (saved in `~/.qa_app/skills/general/`, *Reset to default* any time);
-- add a version for a Jira project that **adds to** the general skill (default) or **replaces** it
-  (`~/.qa_app/skills/projects/<KEY>/`), e.g. "our API is GraphQL", "always test the mobile viewport".
-The ticket's Jira project decides which version is used, and the drawer shows which one Claude followed. Output
-formats stay in the code, so editing a skill changes how Claude works, not what the app can read back.
+**Skills.** Each board step has a skill, Markdown instructions Claude gets every time it does that step, and under it
+the skills for each part of the step: *Gather requirements* has Ticket context, Scenarios and QA checklist; *Create
+tests* has Spec conventions, Locators and page structure, Test data and UI timing; *Run tests* has Why a check failed
+and Bug notes; *Jira comment* has QA summary, Remarks and Plain writing; *TestRail* has Writing cases and Manual cases
+and automation. A step gets its own skill followed by every skill under it.
 
-The built-in general skills are product-neutral versions of the team's skills (gather-context, define-scenarios,
-test-ticket, test-specs, unslop). The original EVA Suite Admin texts ship word for word as a built-in **OPTR**
-project version that adds to them; saving your own OPTR version overrides it, and removing yours brings the built-in
-one back. Skills can be up to 60,000 characters.
+There are two trees with that shape:
+- **General** skills ship with YourQA (`qa_app/skills/general/`) and work for any product. They are read-only.
+- **Personal** skills (`~/.qa_app/skills/personal/`) are your team's copy, made by finishing onboarding (from the
+  general skills plus what it learnt about your team) or with *Copy the general skills*. They are editable, each skill
+  resets to its general version, and they are the recommended choice.
+
+On the **Skills** screen (⌘5, or the skill icon on a board lane) pick a skill in the tree, switch between *Personal*
+and *General*, edit and save your personal version, and choose which tree each Jira project uses (*SCRUM uses
+Personal / General*). Personal is the default once you have it. The drawer shows which tree Claude followed. Output
+formats stay in the code, so editing a skill changes how Claude works, not what the app can read back. Skills can be
+up to 60,000 characters.
+
+If you edited skills in an earlier version of YourQA (your own general skills or project versions), they move into
+your personal skills the first time the app starts; the old files are kept in `~/.qa_app/skills/_before-personal/`.
 
 **Connected apps.** Before Claude gathers requirements, YourQA reads (read-only) what the connected apps know about
 the ticket: GitHub PRs linked on it or mentioning its key (description, commits, changed files, diffs, review
@@ -238,7 +246,7 @@ running check spins live, and a failed check opens to its note, error, screensho
 about this**.
 
 **Learning where tickets move.** After you move a ticket, Claude asks in the ticket chat whether to update the
-**Jira comment & move** skill so it picks that state itself next time (for every board). Runs are grouped as all
+**Jira comment & move** skill (your personal one, made if you don't have it yet, and the project switches to personal skills) so it picks that state itself next time. Runs are grouped as all
 passed, any failed, or blocked / partial; each has one rule, saved as a plain line under "Moving the ticket" in the
 skill (editable on the Skills screen). Next time the comment is posted, that state is pre-selected and marked
 "picked by the skill"; in Gated mode you still approve the move, and choosing another state asks again. A state Jira
@@ -376,10 +384,10 @@ qa_app/
   report.py          HTML (templates/report.html.j2) + JUnit output
   web/               FastAPI server, Jira / Azure connect (jira_connect.py, azure_connect.py), static front end
   workflow/          Testing board: ticket models, gated engine, checklist/spec/comment logic, demo data,
-                     skills.py (general + per-project step skills), environments.py, ticket_context.py,
+                     skills.py (general and personal skill trees, choice per project), environments.py, ticket_context.py,
                      history.py (run records), playwright_run.py (per-run config + live reporter),
                      reports.py (trends, reports, export, send), chat.py (Claude on a ticket)
-  skills/            the general skill for each board step (Markdown), passed to Claude in that step
+  skills/general/    the general skill tree (tree.json + one Markdown file per skill), read-only
   ui/                PySide6 window and background workers (classic)
 tests/               pytest suite for the workflow rules and the report
 ci/                  pipeline templates

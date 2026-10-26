@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-21 (New look: orange on cream, atmospheric backgrounds, Instrument Sans and Bricolage Grotesque).
+Last updated: 2026-10-26 (General and personal skill trees; onboarding builds the personal tree).
 
 
 ## 1. What it is
@@ -31,13 +31,13 @@ use, outside the board.
 | Workflow engine | `workflow/engine.py` | The lanes and gates, background steps (`spawn`), stop/retry, chat, auto-sync, the live feed (`say`) and terminal (`term`). |
 | Step work | `workflow/agent.py` | One function per step: plan the checklist, write the spec, review results, write the comment, draft cases. Builds the prompts. |
 | Claude | `agent.ask_claude`, `workflow/claude_code.py` | API mode (HTTPS, API key) or Claude Code mode (`claude -p` on the user's plan). |
-| Knowledge | `workflow/skills.py`, `qa_app/skills/` | The skill text each step sends to Claude. |
+| Knowledge | `workflow/skills.py`, `qa_app/skills/general/` | The general (read-only) and personal (editable) skill trees, which one each project uses, and the text each step sends to Claude. |
 | Lookups | `workflow/sources.py`, `integrations/github.py`, `confluence.py`, `testrail.py` | Read-only data from connected apps, and the gaps Claude is asked to fetch. |
 | MCP servers | `integrations/mcp_servers.py`, `mcp_client.py` | Remote MCP servers added on the Integrations page: tool lists sorted into read and write, read calls for steps, fetching and onboarding, write calls only after the user clicks Run. |
 | Running | `workflow/playwright_run.py`, `terminal.py` | Runs Playwright, streams its output, explains stalls. |
 | Frameworks | `frameworks/__init__.py`, `base.py`, `playwright_ts.py`, `keep.py` | Picks the adapter for the company's framework (Playwright TS for now), gives Claude the company's style examples, keeps finished tickets' tests on a local branch. |
 | Records | `workflow/history.py`, `reports.py`, `store.py` | Ticket state, run history with evidence, reports. |
-| Onboarding | `onboarding/collect.py`, `analyze.py`, `apply.py`, `run.py` | Studies a company's tools and applies skills, settings, a framework profile and a knowledge base, with Undo. |
+| Onboarding | `onboarding/collect.py`, `analyze.py`, `apply.py`, `run.py` | Studies a company's tools; applies settings, a framework profile and a knowledge base, with Undo; builds the personal skills at Finish. |
 | Trackers | `integrations/atlassian_mcp.py`, `mcp_client.py`, `jira.py`, `azure_boards.py`, `workflow/clients.py` | Jira via Atlassian MCP (OAuth) or REST token; Azure Boards via PAT; demo stand-ins. |
 
 
@@ -198,8 +198,9 @@ collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) �
   FE/BE components, environment hints), move rules, Gather requirements and Jira comment skill versions; TestRail →
   TestRail skill version and a section map; Confluence + tickets → knowledge base; repo → framework profile and a Create
   tests skill version. Each answer carries evidence. A failing area is reported; the others count.
-- **Apply** (`apply.py`): skills become project versions (mode add) for each studied project; settings go to their
-  sections (`workflow.*`, `testrail.section_map`); move rules go into the general Jira comment skill; the knowledge base
+- **Apply** (`apply.py`): skill lessons (`<PROJECT>/<step>`) are only recorded, for Finish; settings go to their
+  sections (`workflow.*`, `testrail.section_map`); move rules go into the personal Jira comment skill (Undo removes a
+  personal tree the move rule created, if nothing else changed in it); the knowledge base
   and profile become `company/knowledge.md` and `company/profile.json`. Each change records the value before it;
   **Undo** restores it only while it still holds onboarding's value (a later edit of yours is left alone); **Undo all**
   unwinds the run. Changes that replaced your own edit are marked.
@@ -214,35 +215,46 @@ collect (read-only, bounded) ─▶ analyze (Claude, tool-less, JSON per area) �
   of the time left. The sidebar shows the percentage, or how many changes are still undecided.
 - **Keep or Undo**: changes still apply straight away; each is then kept (`apply.keep`, `keep_all`) or undone.
   `undecided()` counts the rest.
-- **Finish onboarding** (`Onboarding.finish`, `/api/onboarding/finish`): only when every change is kept or undone. For
-  each step with kept skill changes, the learnt texts (deduplicated across projects, labelled by project when they
-  differ) go to `analyze.polish` with the general skill and the knowledge base (and the profile for Create tests), which
-  writes one section of only the company-specific rules. `run.merge_learnt` puts it at the end of the general skill
-  between `<!-- yourqa:onboarding -->` markers under "Your team's way (learnt during onboarding)", replacing the
-  section of an earlier onboarding; a failed call merges the kept text as it is. Onboarding's project versions are then
-  deleted when they still hold onboarding's value; ones you edited stay (`kept_project_versions`). The general skills
-  before the merge are saved in `finish.json`, the run becomes
-  `finished` (no more Undo), and `app.onboarding_done` hides the Onboarding screen from the sidebar. Integrations links
-  back to it; starting a new study brings it back.
-- **Finished summary**: `state()["last"]["finish"]` lists each merged step (name, projects it came from, the added
-  section, `state` pending/accepted/reverted, `fallback` when Claude's tidy-up failed) without the whole skill files.
-  `accept_merge(step)` marks it; `revert_merge(step)` (`/api/onboarding/merge/{step}/accept|revert`) restores the general
-  skill from `finish.json` (or follows the built-in one again when it was built-in) and puts back the project versions
-  Finish removed, but only while the general skill still holds what Finish wrote ("changed since" otherwise).
+- **Finish onboarding** (`Onboarding.finish`, `/api/onboarding/finish`): only when every change is kept or undone.
+  `skills.create_personal()` copies every general skill the personal tree doesn't have (an existing personal tree is
+  kept and built on). For each step with kept lessons, the lessons (deduplicated across projects, labelled by project
+  when they differ) go to `analyze.improve` with the current text of every skill in the step's branch (personal, else
+  general), the knowledge base and, for Create tests, the profile. Claude returns the whole improved text of each skill
+  the lessons bear on, with the conventions worked in place; the others stay copies. A failed call appends the lessons
+  to the step's own skill under "Your team's way". The studied projects get `skills.choice = personal`. `finish.json`
+  holds one entry per changed skill (`node`, `step`, names, `from` projects, `added` lines, `before`, `before_file`,
+  `after`, `state`, `fallback`) and the projects switched. The run becomes `finished` (no more Undo), and
+  `app.onboarding_done` hides the Onboarding screen from the sidebar. Integrations links back to it; starting a new
+  study brings it back. The general tree is never written.
+- **Finished summary**: `state()["last"]["finish"]` lists each changed skill without `before`/`after`.
+  `accept_merge(node)` marks it; `revert_merge(node)` (`/api/onboarding/merge/{node}/accept|revert`) puts the personal
+  skill back as it was before Finish (or the general text, when it had no personal file), only while it still holds
+  what Finish wrote ("changed since" otherwise).
 - **Screen**: Connect · Choose · Study · What changed, in one column; once finished, a short summary with Study again.
 
 ## 6. Skills
 
-- One skill per step (`gather`, `create-tests`, `run-tests`, `jira-comment`, `testrail`), Markdown, up to 60k chars.
-- Layers, resolved by `skills.effective(step, project)`:
-  1. **Built-in general** (`qa_app/skills/<step>.md`): product-neutral, based on the team's skills.
-  2. **Your general** (`<app>/skills/general/<step>.md`): replaces the built-in one; Reset brings it back.
-  3. **Project version**: yours (`<app>/skills/projects/<KEY>/<step>.md`) or built-in
-     (`qa_app/skills/projects/<KEY>/<step>.md`; **OPTR** ships with the team's original EVA Suite Admin texts). Mode
-     *add* appends to the general skill, *replace* replaces it. Yours overrides the built-in one.
-- Learned move rules (`move_rules.py`): after a move, Claude offers to save the chosen state as a rule in the general
-  Jira comment skill ("When any check fails: move to "To Do""); next time that state is pre-selected.
-
+- A tree, `qa_app/skills/general/tree.json`: the five board steps (`gather`, `create-tests`, `run-tests`,
+  `jira-comment`, `testrail`), each with child skills (gather → context, scenarios, checklist; create-tests →
+  spec-conventions, page-objects, test-data, ui-timing; run-tests → triage, bug-notes; jira-comment → qa-summary,
+  remarks, writing; testrail → case-writing, from-manual). One Markdown file per skill with front matter (`name`,
+  `parent`), up to 60k chars. A step's text is its own skill followed by its children, joined by `---`.
+- **General** (`qa_app/skills/general/`): ships with the app, product-neutral (written from the team's skills, no
+  product names). Read-only: nothing in the app writes it.
+- **Personal** (`<app>/skills/personal/<skill>.md`): the same shape, editable. Made by Finish onboarding, by Copy the
+  general skills (`create_personal`), or by the first save or learned move rule. A skill file missing from it is the
+  general one. `reset_personal(skill)` writes the general text back.
+- **Choice per project** (`skills.choice` in settings: `{KEY: personal|general}`): personal is recommended and the
+  default once the personal tree exists. `skills.effective(step, project)` returns the text and which tree it came
+  from; `for_prompt` wraps it as `<skill step=… source=…>`; the ticket records the source per step.
+- Routes: `GET /api/skills?project=` (both trees, `changed` per skill, the choice), `POST /api/skills/personal`,
+  `PUT|DELETE /api/skills/personal/{skill}` (save, reset to general), `PUT /api/skills/choice/{project}`.
+- Migration (`skills.migrate()`, at startup): edits in the old `skills/general/` and `skills/projects/<KEY>/` are
+  appended to the matching personal skills (project ones under "For project KEY"), then the old folders move to
+  `skills/_before-personal/`. The built-in OPTR project version is gone.
+- Learned move rules (`move_rules.py`): after a move, Claude offers to save the chosen state as a rule in the personal
+  Jira comment skill (making the personal tree if needed, and switching the project to personal); next time that
+  state is pre-selected.
 
 ## 7. Running tests
 
@@ -287,7 +299,7 @@ Under the app folder (`~/.qa_app`):
 | `workflow/tickets.json`, `tickets-demo.json` | Ticket state |
 | `workflow/history/live/<run-id>/` | One run: `run.json`, config, reporter, `events.jsonl`, `results.json`, `terminal.log`, evidence, spec copy |
 | `workflow/history/live/_reports/` | Saved reports (HTML, PDF) |
-| `skills/general/`, `skills/projects/<KEY>/` | Your skill edits |
+| `skills/personal/` | Your personal skill tree; `skills/_before-personal/` keeps skill edits from before the two trees |
 | `company/` | Onboarding: `knowledge.md`, `profile.json`, `repos/` (read-only clones), `onboarding/<run>/` (`collected/*.json`, `summary.json`, `changes.json`) |
 | `claude-code/` | Empty working folder for `claude -p`; `fetch/<KEY>/` scratch folders for fetching |
 | `workspace/` (or the configured repo) | The Playwright workspace; ticket files in `tests/tickets/<KEY>/` |
@@ -340,6 +352,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-26: Skills become two trees with sub-skills under each step: general (ships with the app, read-only, product-neutral, rewritten from the team's improved skills) and personal (editable copy). Finish onboarding builds the personal tree by improving each skill the kept lessons bear on, and switches the studied projects to it; each project chooses its tree, personal recommended. Project versions and editing the general skills are gone; old edits migrate into personal. Spec: `2026-10-26-general-and-personal-skills-design.md`.
 - 2026-10-21: New look: orange on cream with atmospheric backgrounds instead of flat colours; fonts Instrument Sans, Bricolage Grotesque and JetBrains Mono (no Inter or Roboto).
 - 2026-10-21: The finished Onboarding screen summarises what was read, what was found and how each skill changed; each skill update can be accepted or reverted.
 - 2026-10-21: Finish onboarding merges the kept skill changes into the general skills (one section per step, replaced by a later onboarding) instead of polishing per-project versions; onboarding's project versions are removed unless edited.

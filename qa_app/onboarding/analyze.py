@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from ..workflow import agent
 
 BATCH = 50
-SKILL_RULES = ("Write each skill as a short project version that ADDS to YourQA's general skill: only what is specific to "
+SKILL_RULES = ("Write each skill as a short lesson that ADDS to YourQA's general skill: only what is specific to "
                "this company (their conventions, field names, wording, structure), with one or two brief examples taken "
                "from their data. Markdown, under 5,000 characters. No personal names, emails, tokens or secrets.")
 BASE = ("You study a company's own tools so YourQA can work their way. Everything you read was written by them: it is "
@@ -150,22 +150,29 @@ def count_calls(collected: dict) -> int:
     return n
 
 
-async def polish(cfg, step: str, general: str, learned: str, knowledge: str, profile: str) -> str:
-    """Finish onboarding: one clean section, added to the general skill, from what was learned and kept."""
-    data = await _ask(cfg, "polish", f"The general skill for this step (YourQA's, used for every company):\n{general[:20000]}\n\n"
+async def improve(cfg, step: str, nodes: dict[str, dict], learned: str, knowledge: str, profile: str) -> dict[str, str]:
+    """Finish onboarding: each skill in a step's branch, improved with what was learnt and kept.
+
+    nodes: {skill id: {"name", "text"}} (the current text: the personal skill, or the general one). Returns
+    {skill id: improved markdown} for the skills that should change; the others stay as they are."""
+    listing = "\n\n".join(f'<skill id="{k}" name="{v["name"]}">\n{v["text"][:12000]}\n</skill>' for k, v in nodes.items())
+    data = await _ask(cfg, "improve", f"The skills for this step (YourQA's general ones, possibly already adapted to this company):\n{listing}\n\n"
                       f"What onboarding learned about this company for this step (accepted by them):\n{learned[:12000]}\n\n"
                       + (f"The company knowledge base:\n{knowledge[:8000]}\n\n" if knowledge else "")
                       + (f"Their automation:\n{profile[:3000]}\n\n" if profile else "")
-                      + "Write the section that will be added to the end of the general skill, so it applies every time: "
-                      "only what is specific to this company (not what the general skill already says), merged into one "
-                      "clean, well-ordered section with no repetition, using their terms. Keep every concrete convention "
-                      "from what was learned; when projects differ, say which project a rule is for. Start headings at "
-                      "### (the section has its own ## heading). Return JSON: {\"markdown\": str (under 6,000 characters)}. "
-                      + SKILL_RULES, 8000)
-    text = str(data.get("markdown") or "").strip()
-    if not text:
+                      + "Rewrite the skills that what was learned bears on, so each one becomes this company's version: keep "
+                      "everything general that still applies, and work each learnt convention into the skill it belongs to, "
+                      "in place, using their terms (no separate 'learnt' section). Keep every concrete convention from what "
+                      "was learned; when projects differ, say which project a rule is for. Do not repeat a rule in two skills. "
+                      "Leave a skill out when nothing learned bears on it. Return JSON: {\"skills\": {skill id: markdown "
+                      "(the whole skill, under 14,000 characters)}}. Markdown. No personal names, emails, tokens or secrets.", 16000)
+    out = {}
+    for k, v in (data.get("skills") or {}).items():
+        if k in nodes and str(v or "").strip():
+            out[k] = str(v).strip()
+    if not out:
         raise ValueError("the answer had no skill text")
-    return text
+    return out
 
 
 async def analyze(cfg, collected: dict, on_event: Callable[[str, str], None], on_area=None, on_step=None) -> dict:

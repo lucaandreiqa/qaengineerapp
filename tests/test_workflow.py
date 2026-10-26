@@ -543,7 +543,9 @@ def test_stop_needs_something_running(wf):
 
 def _skills_in(tmp_path, monkeypatch):
     from qa_app.workflow import skills
+    from qa_app import config as appconfig
     monkeypatch.setattr(skills, "root", lambda: tmp_path / "skills")
+    monkeypatch.setattr(appconfig, "SETTINGS_FILE", tmp_path / "settings.json")
     return skills
 
 
@@ -567,8 +569,8 @@ def test_after_a_move_claude_offers_to_learn_the_state_and_picks_it_next_time(wf
         await wf.chat_apply(key, mi, 0, t.stage, t.sub)
         t = wf.tickets.get(key)
         assert [a.get("state") for a in t.chat[mi]["actions"]] == ["applied", "dismissed"]
-        text, _ = skills.general("jira-comment")
-        assert move_rules.rules(text) == {result: "Docs"}
+        assert move_rules.rules(skills.personal("jira-comment")) == {result: "Docs"}   # in your personal skill
+        assert skills.choice(wf.cfg.jira_project) == "personal"
 
     run(go())
     # the next ticket with the same kind of result gets the state picked by the skill
@@ -601,7 +603,7 @@ def test_no_thanks_leaves_the_skill_alone(wf, tmp_path, monkeypatch):
         t = wf.tickets.get(key)
         assert [a.get("state") for a in t.chat[mi]["actions"]] == ["dismissed", "applied"]
     run(go())
-    assert skills.general("jira-comment")[1] is False  # still the shipped skill, unchanged
+    assert not skills.has_personal()  # nothing learnt, no personal skills made
 
 
 def test_gather_has_no_fixed_item_cap_says_claude_has_no_tools_and_keeps_its_analysis(wf, monkeypatch, tmp_path):

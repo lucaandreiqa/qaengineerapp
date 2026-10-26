@@ -6,8 +6,9 @@ edit is left alone); undo_all() undoes the whole run.
 
 Targets:
   workflow.<key> / testrail.section_map     settings (comma lists are stored as text, as the cards do)
-  <PROJECT>/<step>                          a project version of a skill (mode add)
-  move_rule.<result>                        a learned move rule in the general Jira comment skill
+  <PROJECT>/<step>                          what was learnt for a step's skills. Recorded only: Finish onboarding builds
+                                            the personal skill tree from the kept ones (the general tree is read-only)
+  move_rule.<result>                        a learned move rule in the personal Jira comment skill
   company/knowledge.md, company/profile.json   company files
 """
 from __future__ import annotations
@@ -70,14 +71,12 @@ def _read(target: str, company: Path) -> Any:
         section, key = target.split(".", 1)
         return load_settings().get(section, {}).get(key)
     if target.startswith("move_rule."):
-        text, custom = skills.general("jira-comment")
-        return {"text": text, "custom": custom}
+        own = skills.has_personal() and (skills.personal_dir() / "jira-comment.md").exists()
+        return {"text": skills.personal("jira-comment") or skills.general("jira-comment"), "file": bool(own), "tree": skills.has_personal()}
     if target.startswith("company/"):
         p = company / target.split("/", 1)[1]
         return p.read_text(encoding="utf-8") if p.exists() else None
-    project, step = target.split("/", 1)
-    p = skills.project(project, step)
-    return None if not p or p.get("shipped") else {"text": p["text"], "mode": p["mode"]}
+    return None  # a skill lesson: nothing is written until Finish
 
 
 def _write(target: str, value: Any, company: Path) -> None:
@@ -85,12 +84,12 @@ def _write(target: str, value: Any, company: Path) -> None:
         section, key = target.split(".", 1)
         save_section(section, {key: value})
     elif target.startswith("move_rule."):
-        if value is None or not value.get("custom"):
-            skills.reset_general("jira-comment")
-            if value and value.get("text") != skills.general("jira-comment")[0]:
-                skills.save_general("jira-comment", value["text"])
-        else:
-            skills.save_general("jira-comment", value["text"])
+        if value and value.get("file"):
+            skills.save_personal("jira-comment", value["text"])
+        else:  # there was no personal Jira comment skill before
+            skills.remove_personal_skill("jira-comment")
+            if value is not None and not value.get("tree"):  # nor any personal skills: the copy goes too
+                skills.drop_personal_if_unchanged()
     elif target.startswith("company/"):
         p = company / target.split("/", 1)[1]
         if value is None:
@@ -98,21 +97,15 @@ def _write(target: str, value: Any, company: Path) -> None:
         else:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(value, encoding="utf-8")
-    else:
-        project, step = target.split("/", 1)
-        if value is None:
-            skills.delete_project(project, step)
-        else:
-            skills.save_project(project, step, value["text"], mode=value.get("mode", "add"))
 
 
 def _after_value(change: dict, before: Any) -> Any:
     """What the target holds once the change is applied (move rules and skills have a richer shape than `after`)."""
     if change["kind"] == "move_rule":
         result = change["target"].split(".", 1)[1]
-        return {"text": move_rules.with_rule((before or {}).get("text", ""), result, change["after"]).strip() + "\n", "custom": True}
+        return {"text": move_rules.with_rule((before or {}).get("text", ""), result, change["after"]).strip() + "\n", "file": True}
     if change["kind"] == "skill":
-        return {"text": change["after"], "mode": "add"}
+        return {"text": change["after"]}
     return change["after"]
 
 
@@ -136,7 +129,7 @@ def load(run_dir: Path) -> list[dict]:
 def _replaces_edit(change: dict, before: Any) -> bool:
     """Did this change replace something you had set yourself? (So the summary can say so; Undo brings it back.)"""
     if change["kind"] == "skill":
-        return before is not None  # you had your own project version
+        return False  # only recorded; Finish adds it to the personal skills
     if change["kind"] == "move_rule":
         old = move_rules.rules((before or {}).get("text", "")).get(change["target"].split(".", 1)[1])
         return old is not None and old != change["after"]
@@ -148,7 +141,8 @@ def apply(changes: list[dict], run_dir: Path, company: Path) -> list[dict]:
     for c in changes:
         before = _read(c["target"], company)
         value = _after_value(c, before)
-        _write(c["target"], value, company)
+        if c["kind"] != "skill":
+            _write(c["target"], value, company)
         done.append({**c, "before": before, "applied": value, "replaced_edit": _replaces_edit(c, before)})
     save_changes(run_dir, done)
     return done
@@ -162,9 +156,10 @@ def undo(run_dir: Path, change_id: str, company: Path) -> str:
         raise KeyError(change_id)
     if c.get("undone"):
         return "already undone"
-    if not _same(_read(c["target"], company), c["applied"]):
-        return "changed since"
-    _write(c["target"], c["before"], company)
+    if c["kind"] != "skill":  # a skill lesson was only recorded: undoing it just leaves it out of Finish
+        if not _same(_read(c["target"], company), c["applied"]):
+            return "changed since"
+        _write(c["target"], c["before"], company)
     c["undone"] = True
     save_changes(run_dir, changes)
     return "undone"
@@ -178,7 +173,7 @@ def undo_all(run_dir: Path, company: Path) -> dict:
 
 
 def keep(run_dir: Path, change_id: str) -> str:
-    """'kept', 'already kept', or 'already undone'. Kept skill changes are the ones Finish onboarding merges into the general skills."""
+    """'kept', 'already kept', or 'already undone'. Kept skill lessons are the ones Finish onboarding builds the personal skills from."""
     changes = load(run_dir)
     c = next((x for x in changes if x["id"] == change_id), None)
     if c is None:

@@ -1,0 +1,21 @@
+[
+  {"id": "gather", "name": "Gather requirements", "children": [
+    {"id": "context", "name": "Ticket context"},
+    {"id": "scenarios", "name": "Scenarios"},
+    {"id": "checklist", "name": "QA checklist"}]},
+  {"id": "create-tests", "name": "Create tests", "children": [
+    {"id": "spec-conventions", "name": "Spec conventions"},
+    {"id": "page-objects", "name": "Locators and page structure"},
+    {"id": "test-data", "name": "Test data, records and settings"},
+    {"id": "ui-timing", "name": "UI updates and timing"}]},
+  {"id": "run-tests", "name": "Run tests", "children": [
+    {"id": "triage", "name": "Why a check failed"},
+    {"id": "bug-notes", "name": "Bug notes and severity"}]},
+  {"id": "jira-comment", "name": "Comment & move Jira ticket", "children": [
+    {"id": "qa-summary", "name": "QA summary comment"},
+    {"id": "remarks", "name": "Remarks and worth knowing"},
+    {"id": "writing", "name": "Plain writing"}]},
+  {"id": "testrail", "name": "Update TestRail tests", "children": [
+    {"id": "case-writing", "name": "Writing cases"},
+    {"id": "from-manual", "name": "Manual cases and automation"}]}
+]

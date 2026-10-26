@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from qa_app.onboarding import analyze
 from qa_app.workflow import agent
@@ -42,13 +43,15 @@ ANSWERS = {
 ANSWERS["mcp"] = {"calls": [{"server": "gitlab", "tool": "search_issues", "args": {"q": "qa"}},
                             {"server": "gitlab", "tool": "create_note", "args": {}}]}
 
-ANSWERS["polish"] = {"markdown": "## Polished\nOne clean skill."}
 
 
 def fake_claude(calls, bad=()):
     async def ask(cfg, system, prompt, max_tokens=4000, step=None):
-        area = next(a for a in ("batch", "combine", "testrail", "knowledge", "repo", "mcp", "polish") if f"[onboarding:{a}]" in system)
+        area = next(a for a in ("batch", "combine", "testrail", "knowledge", "repo", "mcp", "improve") if f"[onboarding:{a}]" in system)
         calls.append(area)
+        if area == "improve" and area not in bad:  # the step's own skill and its first child get the team's way, worked in
+            ids = re.findall(r'<skill id="([^"]+)"', prompt)[:2]
+            return json.dumps({"skills": {i: f"# {i}\n\n## Improved\nOur team's way for {i}." for i in ids}})
         return "not json at all" if area in bad else json.dumps(ANSWERS[area])
     return ask
 

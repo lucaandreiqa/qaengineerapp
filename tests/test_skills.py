@@ -1,4 +1,4 @@
-"""Skills: a general one per board step, refined per Jira project, and passed to Claude in that step."""
+"""Skills: a read-only general tree for any project, an editable personal tree, and a choice per project."""
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from qa_app import config
 from qa_app.workflow import agent, skills
 from qa_app.workflow.models import CheckItem, CleanupItem, Env, Section, Ticket
 from qa_app.workflow.settings import WorkflowConfig as Config
@@ -14,6 +15,7 @@ from qa_app.workflow.settings import WorkflowConfig as Config
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(skills, "root", lambda: tmp_path / "skills")
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
     return tmp_path / "skills"
 
 
@@ -21,39 +23,86 @@ def run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-def test_every_board_step_has_a_general_skill(store):
+def test_the_general_tree_has_the_five_steps_with_their_skills_under_them(store):
     assert [s for s, _ in skills.STEPS] == ["gather", "create-tests", "run-tests", "jira-comment", "testrail"]
-    for step in skills.STEP_IDS:
-        text, custom = skills.general(step)
-        assert len(text) > 400 and not custom and not text.startswith("---")  # front matter stripped
+    tree = {n["id"]: [c["id"] for c in n["children"]] for n in skills.tree()}
+    assert tree["gather"] == ["context", "scenarios", "checklist"]
+    assert "page-objects" in tree["create-tests"] and "triage" in tree["run-tests"] and "writing" in tree["jira-comment"]
+    for node in skills.NODE_IDS:
+        text = skills.general(node)
+        assert len(text) > 300 and not text.startswith("---"), node        # front matter stripped
+    assert skills.NODES["scenarios"]["parent"] == "gather" and skills.NODES["gather"]["parent"] is None
 
 
-def test_project_skill_adds_or_replaces_and_general_can_be_edited_and_reset(store):
-    base = skills.general("gather")[0]
-    assert skills.effective("gather", "SCRUM") == (base, "general")
-    skills.save_project("SCRUM", "gather", "Our API is GraphQL. Always include a mobile viewport item.")
-    text, source = skills.effective("gather", "SCRUM")
-    assert source == "general + SCRUM" and text.startswith(base) and text.endswith("Always include a mobile viewport item.")
-    assert skills.effective("gather", "OTHER")[1] == "general"  # other projects are untouched
-    skills.save_project("SCRUM", "gather", "Only this.", mode="replace")
-    assert skills.effective("gather", "SCRUM") == ("Only this.", "SCRUM")
-    assert skills.projects() == ["OPTR", "SCRUM"]  # OPTR ships with the app
-    skills.delete_project("SCRUM", "gather")
-    assert skills.effective("gather", "SCRUM")[1] == "general" and skills.projects() == ["OPTR"]
-
-    skills.save_general("testrail", "Write cases in Gherkin.")
-    assert skills.general("testrail") == ("Write cases in Gherkin.", True)
-    skills.reset_general("testrail")
-    assert skills.general("testrail")[1] is False and "TestRail" in skills.general("testrail")[0]
-    for bad in (lambda: skills.save_project("../x", "gather", "t"), lambda: skills.save_general("deploy", "t"),
-                lambda: skills.save_general("gather", "x" * 60001)):
-        with pytest.raises(ValueError):
-            bad()
+def test_general_skills_are_product_neutral():
+    for node in skills.NODE_IDS:
+        text = skills.general(node)
+        for eva in ("Admin Suite", "EVA", "euw", "andrei.luca", "on-eva.io", "callEvaApi", "OPTR-", "Luca"):
+            assert eva not in text, (node, eva)
+    assert "state and action matrix" in skills.general("scenarios").lower()
+    assert "Find by identity" in skills.general("page-objects") and "<connected_apps>" in skills.general("gather")
 
 
-def test_each_step_sends_its_skill_to_claude(store, monkeypatch, tmp_path):
-    skills.save_project("SCRUM", "gather", "SCRUM: test on Safari too.")
-    skills.save_project("SCRUM", "jira-comment", "SCRUM: write the comment in Romanian.", mode="replace")
+def test_a_step_gets_its_whole_branch(store):
+    text, source = skills.effective("create-tests")
+    assert source == "general"
+    for child in ("spec-conventions", "page-objects", "test-data", "ui-timing"):
+        assert skills.general(child)[:60] in text
+    assert text.index(skills.general("create-tests")[:60]) < text.index(skills.general("ui-timing")[:60])
+
+
+def test_general_cannot_be_edited_personal_can_and_each_skill_resets_to_general(store):
+    with pytest.raises(ValueError):
+        skills.save_personal("deploy", "x")
+    assert not skills.has_personal()
+    skills.save_personal("scenarios", "Our scenarios: always add a mobile viewport scenario.")
+    assert skills.has_personal()                                             # the whole tree was copied first
+    assert skills.personal("scenarios").startswith("Our scenarios") and skills.personal("context") == skills.general("context")
+    assert skills.changed("scenarios") and not skills.changed("context")
+    skills.reset_personal("scenarios")
+    assert skills.personal("scenarios") == skills.general("scenarios") and not skills.changed("scenarios")
+    with pytest.raises(ValueError):
+        skills.save_personal("gather", "x" * (skills.MAX_CHARS + 1))
+
+
+def test_each_project_chooses_personal_or_general_and_personal_is_the_default_once_it_exists(store):
+    assert skills.choice("SCRUM") == "general"                              # no personal skills yet
+    skills.create_personal()
+    skills.save_personal("gather", "PERSONAL GATHER")
+    assert skills.choice("SCRUM") == "personal"                             # recommended, so the default
+    assert skills.effective("gather", "SCRUM") == (skills.text("gather", "personal"), "personal")
+    assert skills.effective("gather", "SCRUM")[0].startswith("PERSONAL GATHER")
+    skills.set_choice("OPTR", "general")
+    assert skills.effective("gather", "OPTR")[1] == "general" and "PERSONAL" not in skills.effective("gather", "OPTR")[0]
+    assert skills.choice("SCRUM") == "personal"
+    with pytest.raises(ValueError):
+        skills.set_choice("../x", "personal")
+    with pytest.raises(ValueError):
+        skills.set_choice("SCRUM", "mine")
+    ov = skills.overview("OPTR")
+    assert ov["choice"] == "general" and ov["has_personal"] and ov["recommended"] == "personal"
+    assert ov["nodes"]["gather"]["changed"] and not ov["nodes"]["context"]["changed"]
+    assert "OPTR" in ov["projects"]
+
+
+def test_old_edits_and_project_versions_move_into_personal_once(store):
+    (store / "general").mkdir(parents=True)
+    (store / "general" / "testrail.md").write_text("---\nname: x\n---\nWrite cases in Gherkin.\n")
+    (store / "projects" / "SCRUM").mkdir(parents=True)
+    (store / "projects" / "SCRUM" / "gather.md").write_text("---\nmode: add\n---\nSCRUM: test on Safari too.\n")
+    skills.migrate()
+    assert skills.has_personal()
+    assert "Write cases in Gherkin." in skills.personal("testrail") and skills.personal("testrail").startswith(skills.general("testrail")[:40])
+    assert "For project SCRUM" in skills.personal("gather") and "Safari" in skills.personal("gather")
+    assert not (store / "general").exists() and not (store / "projects").exists()   # moved aside, not lost
+    assert (store / "_before-personal" / "general" / "testrail.md").exists()
+    skills.migrate()                                                          # once only
+    assert skills.personal("gather").count("Safari") == 1
+
+
+def test_each_step_sends_its_chosen_branch_to_claude(store, monkeypatch, tmp_path):
+    skills.save_personal("checklist", "PERSONAL CHECKLIST RULE: test on Safari too.")
+    skills.set_choice("OPTR", "general")
     calls: list[tuple[str, str]] = []
     replies = {
         "gather": json.dumps({"scenarios": "- s", "serial": False, "sections": [{"name": "A", "items": ["x works"]}]}),
@@ -84,12 +133,12 @@ def test_each_step_sends_its_skill_to_claude(store, monkeypatch, tmp_path):
 
     by_step = dict(calls)
     assert list(by_step) == ["gather", "create-tests", "run-tests", "jira-comment", "testrail"]
-    assert 'source="general + SCRUM"' in by_step["gather"] and "Enumerate all states for each affected UI component" in by_step["gather"] \
-        and "SCRUM: test on Safari too." in by_step["gather"]
-    assert 'source="SCRUM"' in by_step["jira-comment"] and "Romanian" in by_step["jira-comment"] \
-        and "First line: `QA result:" not in by_step["jira-comment"]  # replaced, not added
-    assert 'source="general"' in by_step["testrail"] and "Only items that passed" in by_step["testrail"]
-    assert agent.skill_source("jira-comment", cfg) == "SCRUM"
+    assert 'source="personal"' in by_step["gather"] and "PERSONAL CHECKLIST RULE" in by_step["gather"]
+    assert "state and action matrix" in by_step["gather"].lower()             # the children come along
+    assert "Find by identity" in by_step["create-tests"]
+    assert agent.skill_source("gather", cfg) == "personal"
+    cfg.jira_project = "OPTR"
+    assert agent.skill_source("gather", cfg) == "general"
 
 
 def test_without_claude_the_templates_still_work(store, tmp_path):
@@ -101,40 +150,20 @@ def test_without_claude_the_templates_still_work(store, tmp_path):
     assert run(agent.review_results(cfg, t, {})) is False
 
 
-def test_the_general_skills_are_the_teams_rules_without_product_specifics():
-    from qa_app.workflow import skills as sk
-    g = sk.shipped("gather")
-    assert "Enumerate all states for each affected UI component" in g and "<connected_apps>" in g and "Open questions" in g
-    c = sk.shipped("create-tests")
-    assert "## Records and cleanup" in c and "test.step()" in c and "PR" in c
-    assert "Unslop" in sk.shipped("run-tests") and "Unslop" in sk.shipped("jira-comment")
-    assert "capability statement" in sk.shipped("jira-comment") and "Only items that passed" in sk.shipped("testrail")
-    for step in sk.STEP_IDS:
-        text = sk.shipped(step)
-        for eva in ("Admin Suite", "EVA", "euw", "andrei.luca", "on-eva.io", "callEvaApi", "OPTR-4"):
-            assert eva not in text, (step, eva)
-
-
-def test_a_long_skill_can_be_saved(tmp_path, monkeypatch):
-    from qa_app.workflow import skills as sk
-    monkeypatch.setattr(sk, "root", lambda: tmp_path)
-    sk.save_general("create-tests", "x" * 45000)  # the test-specs skill alone is ~28k characters
-    assert len(sk.general("create-tests")[0]) == 45000
-
-
-def test_built_in_project_versions_add_to_general_and_yours_override_them(tmp_path, monkeypatch):
-    from qa_app.workflow import skills as sk
-    monkeypatch.setattr(sk, "root", lambda: tmp_path)
-    p = sk.project("OPTR", "gather")
-    assert p and p["mode"] == "add" and p.get("shipped") and "on-eva.io" in p["text"]   # EVA specifics live here
-    assert "OPTR" in sk.projects()
-    text, source = sk.effective("gather", "OPTR")
-    assert source == "general + OPTR" and "on-eva.io" in text
-    assert "on-eva.io" not in sk.shipped("gather") and "Admin Suite" not in sk.shipped("gather")   # general is product-neutral
-    assert "andrei.luca" not in sk.shipped("create-tests") and "callEvaApi" not in sk.shipped("create-tests")
-    assert "callEvaApi" in sk.project("OPTR", "create-tests")["text"]
-    sk.save_project("OPTR", "gather", "Our own note", mode="add")
-    assert sk.project("OPTR", "gather")["text"] == "Our own note" and not sk.project("OPTR", "gather").get("shipped")
-    sk.delete_project("OPTR", "gather")   # removing yours brings the built-in one back
-    assert "on-eva.io" in sk.project("OPTR", "gather")["text"]
-    assert sk.project("SCRUM", "gather") is None
+def test_the_skills_screen_routes_edit_only_personal(store):
+    try:
+        from fastapi import HTTPException
+        from qa_app.web import server
+    except ImportError:  # the app's web packages aren't installed here
+        return
+    assert server.skills_overview("SCRUM")["has_personal"] is False
+    server.skill_create_personal()
+    server.skill_save_personal("scenarios", server.SkillIn(text="Our scenarios."))
+    assert skills.personal("scenarios") == "Our scenarios."
+    server.skill_reset_personal("scenarios")
+    assert not skills.changed("scenarios")
+    server.skill_choice("scrum", server.SkillChoiceIn(tree="general"))
+    assert skills.choice("SCRUM") == "general"
+    with pytest.raises(HTTPException):
+        server.skill_save_personal("nope", server.SkillIn(text="x"))
+    assert not any(r.path.startswith("/api/skills/general") or r.path.startswith("/api/skills/project") for r in server.app.routes)

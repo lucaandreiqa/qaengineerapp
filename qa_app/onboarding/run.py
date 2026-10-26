@@ -22,18 +22,10 @@ class OnboardingBusy(Exception):
     pass
 
 
-LEARNT_START = "<!-- yourqa:onboarding -->"
-LEARNT_END = "<!-- /yourqa:onboarding -->"
-LEARNT_HEADING = "## Your team's way (learnt during onboarding)"
-
-
-def merge_learnt(general: str, section: str) -> str:
-    """The general skill with the learnt section at its end; a section from an earlier onboarding is replaced."""
-    text = general
-    if LEARNT_START in text and LEARNT_END in text:
-        a, rest = text.split(LEARNT_START, 1)
-        text = a + rest.split(LEARNT_END, 1)[1]
-    return f"{text.rstrip()}\n\n{LEARNT_START}\n{LEARNT_HEADING}\n\n{section.strip()}\n{LEARNT_END}\n"
+def added_lines(before: str, after: str) -> list[str]:
+    """The lines a skill gained, for the summary (blank lines left out)."""
+    old = {l.strip() for l in before.splitlines()}
+    return [l for l in after.splitlines() if l.strip() and l.strip() not in old][:80]
 
 
 class Onboarding:
@@ -84,8 +76,8 @@ class Onboarding:
                 for c in apply.load(d)]}
         if last and last.get("status") == "finished":  # how each step's skill changed, to accept or revert
             fin = self._finish_record(d)
-            last["finish"] = {"merged": [{k: v for k, v in m.items() if k not in ("before", "before_custom", "after", "removed")} for m in fin.get("merged", [])],
-                              "left": fin.get("left", [])}
+            last["finish"] = {"merged": [{k: v for k, v in m.items() if k not in ("before", "after")} for m in fin.get("merged", [])],
+                              "projects": fin.get("projects", [])}
         if last and last.get("status") in ("done", "finished") and self.progress["percent"] < 100 and not self._busy():
             self.progress = {**self.progress, "percent": 100}
         return {"running": self._busy() and self.progress["phase"] == "study", "finishing": self._busy() and self.progress["phase"] == "finish",
@@ -297,50 +289,47 @@ class Onboarding:
         except (OSError, ValueError):
             return {}
 
-    def _merge(self, step: str) -> tuple[Path, dict, dict]:
+    def _merge(self, node: str) -> tuple[Path, dict, dict]:
         d = self._last_dir()
         fin = self._finish_record(d) if d else {}
-        m = next((x for x in fin.get("merged", []) if x["step"] == step), None)
+        m = next((x for x in fin.get("merged", []) if x.get("node") == node), None)
         if not m:
-            raise KeyError(step)
+            raise KeyError(node)
         return d, fin, m
 
     def _save_finish(self, d: Path, fin: dict) -> None:
         (d / "finish.json").write_text(json.dumps(fin, indent=1, ensure_ascii=False), encoding="utf-8")
 
-    def accept_merge(self, step: str) -> str:
-        d, fin, m = self._merge(step)
+    def accept_merge(self, node: str) -> str:
+        d, fin, m = self._merge(node)
         if m.get("state") == "reverted":
             return "already reverted"
         m["state"] = "accepted"
         self._save_finish(d, fin)
         return "accepted"
 
-    def revert_merge(self, step: str) -> str:
-        """The general skill back to how it was before Finish, and onboarding's project versions back; only while the
-        general skill still holds what Finish wrote ('changed since' otherwise, and it stays)."""
+    def revert_merge(self, node: str) -> str:
+        """The personal skill back to how it was before Finish (the general one, if it had no personal version); only
+        while it still holds what Finish wrote ('changed since' otherwise, and it stays)."""
         from ..workflow import skills
-        d, fin, m = self._merge(step)
+        d, fin, m = self._merge(node)
         if m.get("state") == "reverted":
             return "already reverted"
-        if skills.general(step)[0].strip() != m["after"].strip():
+        if (skills.personal(node) or "").strip() != m["after"].strip():
             return "changed since"
-        if m.get("before_custom", True):
-            skills.save_general(step, m["before"])
-        else:  # it was the built-in skill: back to following the built-in one
-            skills.reset_general(step)
-        for r in m.get("removed", []):
-            v = r.get("value") or {}
-            if v.get("text"):
-                skills.save_project(r["project"], step, v["text"], mode=v.get("mode", "add"))
+        if m.get("before_file"):
+            skills.save_personal(node, m["before"])
+        else:
+            skills.reset_personal(node)
         m["state"] = "reverted"
         self._save_finish(d, fin)
         return "reverted"
 
     # ---------------------------------------------------------------------- finish
     async def finish(self) -> None:
-        """Every change kept or undone: the kept skill changes are merged into the general skills, the run becomes
-        final, and the Onboarding screen is hidden (a new study brings it back)."""
+        """Every change kept or undone: the personal skills are built from the general ones and the kept lessons, the
+        studied projects switch to them, the run becomes final, and the Onboarding screen is hidden (a new study brings
+        it back)."""
         if self._busy():
             raise OnboardingBusy("Onboarding is busy. Wait for it to finish.")
         d = self._last_dir()
@@ -353,50 +342,53 @@ class Onboarding:
         await self.task
 
     async def _finish(self, d: Path) -> None:
-        """Merge every kept skill change into the general skill for its step (one Claude pass per step, in a section
-        of its own), then remove onboarding's project versions unless you edited them since."""
+        """Personal skills: a copy of the general tree (an existing personal tree is kept and built on), with every
+        skill under a step that has kept lessons improved by one Claude pass per step. The general tree never changes."""
         from ..workflow import skills
         cfg = self.sources()["cfg"]
         kept = [c for c in apply.load(d) if c["kind"] == "skill" and c.get("kept") and not c.get("undone")]
         steps: dict[str, list[dict]] = {}
         for c in kept:
             steps.setdefault(c["target"].split("/", 1)[1], []).append(c)
-        self._progress_start("finish", len(steps) or 1, "Adding what was learnt to your skills")
+        self._progress_start("finish", len(steps) + 1, "Building your personal skills")
+        had_files = {n for n in skills.NODE_IDS if (skills.personal_dir() / f"{n}.md").exists()}
+        skills.create_personal()
+        self._tick("Copied the general skills into your personal skills")
         knowledge = (self.company / "knowledge.md").read_text(encoding="utf-8") if (self.company / "knowledge.md").exists() else ""
         profile = (self.company / "profile.json").read_text(encoding="utf-8") if (self.company / "profile.json").exists() else ""
         summary = self._summary(d)
-        merged, failed, left = [], {}, []
+        merged, failed = [], {}
         for step, cs in steps.items():
-            label = f"{apply.STEP_LABELS.get(step, step)} skill"
+            label = f"{apply.STEP_LABELS.get(step, step)} skills"
             texts: dict[str, list[str]] = {}
-            for c in cs:  # the same text for several projects is merged once
+            for c in cs:  # the same text for several projects is used once
                 texts.setdefault(c["after"].strip(), []).append(c["target"].split("/", 1)[0])
             learned = "\n\n".join(t if len(texts) == 1 else f"In {', '.join(ps)}:\n{t}" for t, ps in texts.items())
-            before, before_custom = skills.general(step)
+            nodes = {n: {"name": skills.NODES[n]["name"], "text": skills.personal(n) or skills.general(n)} for n in skills.branch(step)}
             try:
-                section = await analyze.polish(cfg, step, before, learned, knowledge, profile if step == "create-tests" else "")
-            except Exception as e:  # what was kept goes in as it is
+                improved = await analyze.improve(cfg, step, nodes, learned, knowledge, profile if step == "create-tests" else "")
+            except Exception as e:  # what was kept goes into the step's own skill as it is
                 failed[step] = (str(e).splitlines() or ["error"])[0][:200]
-                section = learned
-            after = merge_learnt(before, section)
-            skills.save_general(step, after)
-            removed = []
-            for c in cs:
-                project = c["target"].split("/", 1)[0]
-                current = apply._read(c["target"], self.company)
-                if apply._same(current, c.get("applied")):
-                    skills.delete_project(project, step)
-                    removed.append({"project": project, "value": current})
-                else:
-                    left.append(c["target"])  # you edited it after the study: it stays
-            merged.append({"step": step, "name": apply.STEP_LABELS.get(step, step), "from": [c["target"].split("/", 1)[0] for c in cs],
-                           "section": section, "before": before, "before_custom": before_custom, "after": after, "removed": removed, "state": "pending",
-                           "fallback": step in failed})
-            self._emit("line", text=f"Added what was learnt to the {label}")
-            self._tick(f"Added what was learnt to the {label}")
-        (d / "finish.json").write_text(json.dumps({"at": time.time(), "merged": merged, "failed": failed, "left": left},
+                improved = {step: nodes[step]["text"].rstrip() + "\n\n## Your team's way\n\n" + learned}
+            projects_from = sorted({c["target"].split("/", 1)[0] for c in cs})
+            for node, after in improved.items():
+                before = nodes[node]["text"]
+                if after.strip() == before.strip():
+                    continue
+                skills.save_personal(node, after)
+                merged.append({"node": node, "step": step, "name": skills.NODES[node]["name"],
+                               "step_name": apply.STEP_LABELS.get(step, step), "from": projects_from,
+                               "added": added_lines(before, after), "before": before, "before_file": node in had_files,
+                               "after": after, "state": "pending", "fallback": step in failed})
+            self._emit("line", text=f"Improved the {label} with what was learnt")
+            self._tick(f"Improved the {label} with what was learnt")
+        projects = sorted({p for p in (summary.get("choices") or {}).get("projects") or [] if skills.KEY_RE.match(str(p))}
+                          | {c["target"].split("/", 1)[0] for c in kept if skills.KEY_RE.match(c["target"].split("/", 1)[0])})
+        for p in projects:
+            skills.set_choice(p, "personal")
+        (d / "finish.json").write_text(json.dumps({"at": time.time(), "merged": merged, "failed": failed, "projects": projects},
                                                   indent=1, ensure_ascii=False), encoding="utf-8")
-        summary.update(status="finished", finished_at=time.time(), merge_failed=failed, kept_project_versions=left)
+        summary.update(status="finished", finished_at=time.time(), merge_failed=failed, personal_for=projects)
         self._save_summary(d, summary)
         config.save_section("app", {"onboarding_done": True})
         self._progress_end("Onboarding finished")

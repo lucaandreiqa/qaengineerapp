@@ -144,6 +144,10 @@ class Services:
         self.auth_pending: dict[str, dict] = {}  # Google sign-ins in progress, by OAuth state
         from ..onboarding.run import Onboarding
         self.onboarding = Onboarding(_onboarding_sources)
+        try:  # one time: edits to the old skills move into your personal skills
+            skill_store.migrate()
+        except OSError as e:
+            print(f"Could not move your old skill edits into personal skills: {e}")
 
     def seed_demo(self) -> None:
         store = self.workflow.demo_store
@@ -605,7 +609,7 @@ def onboarding_keep_all() -> dict:
 
 @app.post("/api/onboarding/merge/{step}/{decision}")
 def onboarding_merge_decision(step: str, decision: str) -> dict:
-    """After Finish: accept a step's skill update, or revert it (general skill and project versions as they were)."""
+    """After Finish: accept one personal skill's update, or revert it (the personal skill as it was before Finish)."""
     ob = S().onboarding
     if decision not in ("accept", "revert"):
         raise HTTPException(404, "Accept or revert")
@@ -618,7 +622,7 @@ def onboarding_merge_decision(step: str, decision: str) -> dict:
 
 @app.post("/api/onboarding/finish")
 async def onboarding_finish() -> dict:
-    """Merge the kept skills into the general skills, make the run final and hide the Onboarding screen; progress arrives as live events."""
+    """Build the personal skills from the general ones and the kept lessons, make the run final and hide the Onboarding screen; progress arrives as live events."""
     from ..onboarding.run import OnboardingBusy
     ob = S().onboarding
     st = ob.state()
@@ -1164,7 +1168,10 @@ from ..workflow import skills as skill_store  # noqa: E402
 
 class SkillIn(BaseModel):
     text: str
-    mode: str = "add"
+
+
+class SkillChoiceIn(BaseModel):
+    tree: str
 
 
 def _skill_call(fn, *args):
@@ -1176,6 +1183,7 @@ def _skill_call(fn, *args):
 
 @app.get("/api/skills")
 def skills_overview(project: str = "") -> dict:
+    """Both trees (general read-only, personal editable) and which one each project uses."""
     key = project.strip().upper() or (WorkflowConfig.load().jira_project if not WorkflowConfig.load().is_mock else "")
     try:
         return skill_store.overview(key or None)
@@ -1183,27 +1191,29 @@ def skills_overview(project: str = "") -> dict:
         raise HTTPException(400, str(e))
 
 
-@app.put("/api/skills/general/{step}")
-def skill_save_general(step: str, body: SkillIn) -> dict:
-    _skill_call(skill_store.save_general, step, body.text)
+@app.post("/api/skills/personal")
+def skill_create_personal() -> dict:
+    """Copy the general tree into personal skills (skills you already have stay)."""
+    skill_store.create_personal()
     return {"ok": True}
 
 
-@app.delete("/api/skills/general/{step}")
-def skill_reset_general(step: str) -> dict:
-    _skill_call(skill_store.reset_general, step)
+@app.put("/api/skills/personal/{node}")
+def skill_save_personal(node: str, body: SkillIn) -> dict:
+    _skill_call(skill_store.save_personal, node, body.text)
     return {"ok": True}
 
 
-@app.put("/api/skills/project/{key}/{step}")
-def skill_save_project(key: str, step: str, body: SkillIn) -> dict:
-    _skill_call(skill_store.save_project, key.upper(), step, body.text, body.mode)
+@app.delete("/api/skills/personal/{node}")
+def skill_reset_personal(node: str) -> dict:
+    """Back to the general version of this one skill."""
+    _skill_call(skill_store.reset_personal, node)
     return {"ok": True}
 
 
-@app.delete("/api/skills/project/{key}/{step}")
-def skill_delete_project(key: str, step: str) -> dict:
-    _skill_call(skill_store.delete_project, key.upper(), step)
+@app.put("/api/skills/choice/{project}")
+def skill_choice(project: str, body: SkillChoiceIn) -> dict:
+    _skill_call(skill_store.set_choice, project.upper(), body.tree)
     return {"ok": True}
 
 

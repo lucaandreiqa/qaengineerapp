@@ -60,7 +60,7 @@ def test_a_study_collects_analyses_applies_and_reports(home):
     assert (tmp / "company" / "onboarding" / run_id / "collected" / "tracker.json").exists()   # what was studied is kept
     assert any(e.get("type") == "onboarding" and e.get("event") == "done" for e in events)
     o.undo_all()
-    assert config.load_settings()["workflow"]["jira_column"] == "Testing" and skills.project("SCRUM", "gather") is None
+    assert config.load_settings()["workflow"]["jira_column"] == "Testing" and not skills.has_personal()
 
 
 def test_a_missing_source_is_skipped_and_listed(home):
@@ -146,7 +146,7 @@ def test_progress_goes_from_0_to_100_and_counts_each_project(home):
     assert o.state()["progress"]["percent"] == 100
 
 
-def test_finishing_merges_what_was_learnt_into_the_general_skills_and_hides_onboarding(home):
+def test_finishing_builds_the_personal_skills_from_general_plus_what_was_learnt_and_hides_onboarding(home):
     tmp, events, calls = home
     factory, repo = _sources(tmp, with_repo=False)
     o = ob.Onboarding(factory)
@@ -155,35 +155,65 @@ def test_finishing_merges_what_was_learnt_into_the_general_skills_and_hides_onbo
     with pytest.raises(ob.OnboardingBusy, match="Keep or undo"):
         go(o.finish())
     gather_optr = next(c for c in changes if c["target"] == "OPTR/gather")
-    o.undo(gather_optr["id"])                                             # undone: never merged
-    skills.save_project("SCRUM", "jira-comment", "My own SCRUM comment rules", mode="add")   # your edit after the study
+    o.undo(gather_optr["id"])                                             # undone: left out of Finish
     o.keep_all()
-    general_before = skills.general("gather")[0]
+    general = {n: skills.general(n) for n in skills.NODE_IDS}
     calls.clear()
     go(o.finish())
-    assert calls.count("polish") == 2                                      # one per step: gather, jira-comment
-    gather = skills.general("gather")[0]
-    assert gather.startswith(general_before.rstrip()[:200])               # the general skill is kept as it was…
-    assert ob.LEARNT_START in gather and "## Polished" in gather          # …with what was learnt added in its own section
-    assert skills.project("SCRUM", "gather") is None                      # onboarding's project versions are folded in
-    assert "## Polished" in skills.general("jira-comment")[0]
-    assert skills.project("SCRUM", "jira-comment")["text"] == "My own SCRUM comment rules"   # your edit stays
-    optr = skills.project("OPTR", "gather")
-    assert optr is None or optr.get("shipped")
-    go_again = skills.general("gather")[0]
-    assert go_again.count(ob.LEARNT_START) == 1
+    assert calls.count("improve") == 2                                     # one per step: gather, jira-comment
+    assert {n: skills.general(n) for n in skills.NODE_IDS} == general       # the general tree never changes
+    assert skills.has_personal()
+    assert "Our team's way for gather" in skills.personal("gather")         # the step's skill and its children improved…
+    assert "Our team's way for context" in skills.personal("context")
+    assert skills.personal("scenarios") == general["scenarios"]             # …the rest copied from general
+    assert skills.personal("create-tests") == general["create-tests"]
+    assert skills.choice("SCRUM") == "personal" and skills.choice("OPTR") == "personal"   # the studied projects use them
+    assert skills.effective("gather", "SCRUM")[1] == "personal"
     assert config.load_settings()["app"]["onboarding_done"] is True
     st = o.state()
     assert st["last"]["status"] == "finished" and st["finished"] and st["progress"]["percent"] == 100
+    assert st["last"]["finish"]["projects"] == ["OPTR", "SCRUM"]
     with pytest.raises(KeyError):
         o.undo(changes[0]["id"])                                           # finished: no more undo
 
 
-def test_merging_again_replaces_the_learnt_section():
-    once = ob.merge_learnt("# Gather\nGeneral rules.\n", "Learnt A")
-    twice = ob.merge_learnt(once, "Learnt B")
-    assert twice.startswith("# Gather\nGeneral rules.") and twice.count(ob.LEARNT_START) == 1
-    assert "Learnt B" in twice and "Learnt A" not in twice
+def test_finishing_builds_on_personal_skills_you_already_have(home):
+    tmp, events, calls = home
+    factory, repo = _sources(tmp, with_repo=False)
+    skills.save_personal("gather", "My own gather rules")
+    skills.set_choice("SCRUM", "general")                                  # chosen by hand before
+    o = ob.Onboarding(factory)
+    go(o.study({"projects": ["SCRUM"], "spaces": [], "repo": ""}))
+    o.keep_all()
+    seen = []
+    real = agent.ask_claude
+
+    async def spy(cfg, system, prompt, max_tokens=4000, step=None):
+        if "[onboarding:improve]" in system:
+            seen.append(prompt)
+        return await real(cfg, system, prompt, max_tokens)
+    agent.ask_claude = spy
+    try:
+        go(o.finish())
+    finally:
+        agent.ask_claude = real
+    assert any("My own gather rules" in p for p in seen)                   # Claude improves your version, not general
+    assert skills.choice("SCRUM") == "personal"
+    m = {x["node"]: x for x in json.loads(next((tmp / "company" / "onboarding").glob("*/finish.json")).read_text())["merged"]}
+    assert m["gather"]["before"] == "My own gather rules" and m["gather"]["before_file"] is True
+    assert o.revert_merge("gather") == "reverted" and skills.personal("gather") == "My own gather rules"
+
+
+def test_if_claude_fails_the_lessons_go_into_the_steps_own_skill_as_they_are(home):
+    tmp, events, calls = home
+    factory, repo = _sources(tmp, with_repo=False)
+    o = ob.Onboarding(factory)
+    go(o.study({"projects": ["SCRUM"], "spaces": [], "repo": ""}))
+    o.keep_all()
+    agent.ask_claude = fake_claude(calls, bad=("improve",))
+    go(o.finish())
+    assert "## Your team's way" in skills.personal("gather") and skills.personal("gather").startswith(skills.general("gather")[:100])
+    assert all(m["fallback"] for m in o.state()["last"]["finish"]["merged"])
 
 
 def test_the_finished_page_explains_what_was_found_and_each_skill_update_can_be_reverted(home):
@@ -192,26 +222,26 @@ def test_the_finished_page_explains_what_was_found_and_each_skill_update_can_be_
     o = ob.Onboarding(factory)
     go(o.study({"projects": ["SCRUM", "OPTR"], "spaces": [], "repo": ""}))
     o.keep_all()
-    before = {s: skills.general(s)[0] for s in ("gather", "jira-comment")}
     go(o.finish())
     last = o.state()["last"]
     assert last["sources"]["tracker"].startswith("Read")                          # what was read
     assert any(c["evidence"] for c in last["changes"])                            # what it was based on
-    merged = {m["step"]: m for m in last["finish"]["merged"]}
-    assert set(merged) == {"gather", "jira-comment"}
+    merged = {m["node"]: m for m in last["finish"]["merged"]}
+    assert {"gather", "context", "jira-comment", "qa-summary"} == set(merged)
     g = merged["gather"]
-    assert g["state"] == "pending" and "## Polished" in g["section"] and g["from"] == ["SCRUM", "OPTR"]
-    assert g["name"] == "Gather requirements" and "before" not in g                # the screen gets the change, not whole files
+    assert g["state"] == "pending" and any("Our team's way" in l for l in g["added"]) and g["from"] == ["OPTR", "SCRUM"]
+    assert g["name"] == "Gather requirements" and g["step"] == "gather" and "before" not in g and "after" not in g
+    assert merged["context"]["step_name"] == "Gather requirements"
 
     o.accept_merge("jira-comment")
-    assert {m["step"]: m["state"] for m in o.state()["last"]["finish"]["merged"]}["jira-comment"] == "accepted"
-    assert o.revert_merge("gather") == "reverted"
-    assert skills.general("gather")[0] == before["gather"]                        # the general skill as it was
-    assert "## Polished" not in skills.project("SCRUM", "gather")["text"] and not skills.project("SCRUM", "gather").get("shipped")  # project versions are back
-    assert skills.project("OPTR", "gather") is not None
-    assert {m["step"]: m["state"] for m in o.state()["last"]["finish"]["merged"]}["gather"] == "reverted"
-    assert o.revert_merge("gather") == "already reverted"
+    assert {m["node"]: m["state"] for m in o.state()["last"]["finish"]["merged"]}["jira-comment"] == "accepted"
+    assert o.revert_merge("context") == "reverted"
+    assert skills.personal("context") == skills.general("context")                # back to the general version
+    assert {m["node"]: m["state"] for m in o.state()["last"]["finish"]["merged"]}["context"] == "reverted"
+    assert o.revert_merge("context") == "already reverted"
 
-    skills.save_general("jira-comment", "I rewrote it myself")                     # edited after finishing
-    assert o.revert_merge("jira-comment") == "changed since"
-    assert skills.general("jira-comment")[0] == "I rewrote it myself"
+    skills.save_personal("qa-summary", "I rewrote it myself")                     # edited after finishing
+    assert o.revert_merge("qa-summary") == "changed since"
+    assert skills.personal("qa-summary") == "I rewrote it myself"
+    with pytest.raises(KeyError):
+        o.revert_merge("testrail")                                                # Finish didn't touch it

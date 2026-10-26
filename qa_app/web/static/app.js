@@ -172,7 +172,7 @@ const S = {
   app: { onboarding_done: false },
   setup: { tab: {}, busy: false, err: '' },
   mcp: { servers: null, adding: false, form: { name: '', url: '', auth: 'oauth', token: '', header: '' }, draft: {}, open: {}, busy: '', err: {}, cc: null, reveal: false },
-  skills: { data: null, sel: 'gather', tab: 'general', project: '', draft: {}, mode: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
+  skills: { data: null, sel: 'gather', tab: '', project: '', draft: {}, busy: '', err: '', saved: '', preview: false, newKey: '' },
 };
 
 /* ------------------------------------------------------------------ api */
@@ -538,73 +538,84 @@ function viewTicketContext(t) {
   return (tags || rows.length ? foldSection(t.key + '|ctx', 'Ticket details', null, inner) : '') + warn;
 }
 
-/* ------------------------------------------------------------------ Skills: how Claude does each board step */
-const skillKey = (K) => `${K.sel}|${K.tab}|${K.tab === 'project' ? K.data.project : ''}`;
+/* ------------------------------------------------------------------ Skills: how Claude does each board step
+   Two trees with the same shape. General ships with YourQA and works for any product: read-only. Personal is a copy
+   that onboarding shapes with what it learnt about the team: editable, and recommended. Each project picks one. */
+const skillKey = (K) => `${K.sel}|personal`;
+const skillTab = (K) => K.tab || (K.data && K.data.has_personal ? 'personal' : 'general');
+function skillBranchText(d, step, tree) {
+  const n = d.tree.find((x) => x.id === step);
+  return [step, ...((n && n.children) || []).map((c) => c.id)]
+    .map((id) => (tree === 'personal' && d.nodes[id].personal != null ? d.nodes[id].personal : d.nodes[id].general)).join('\n\n---\n\n');
+}
 
 function viewSkills() {
   const K = S.skills, d = K.data;
   if (!d) return `<main class="main"><h1 style="margin:0;font-size:18px;font-weight:600">Skills</h1><div class="${K.err ? 'callout c-err' : 'notice'}">${K.err ? esc(K.err) : 'Loading…'}</div></main>`;
-  const step = d.steps.find((x) => x.id === K.sel) || d.steps[0];
-  const proj = d.project;
+  const node = d.nodes[K.sel] || d.nodes[d.tree[0].id];
+  const step = node.parent || node.id;
+  const tab = skillTab(K), mine = tab === 'personal', has = d.has_personal;
   const key = skillKey(K);
-  const isProject = K.tab === 'project' && proj;
-  const savedText = isProject ? (step.project ? step.project.text : '') : step.general.text;
-  const text = K.draft[key] != null ? K.draft[key] : savedText;
-  const mode = K.mode[step.id + '|' + proj] || (step.project && step.project.mode) || 'add';
-  const dirty = text !== savedText || (isProject && step.project && mode !== step.project.mode) || (isProject && !step.project && text.trim());
-  const list = d.steps.map((x, i) => {
-    const badge = x.project ? `<span class="tag sk-badge">${x.project.mode === 'replace' ? `${esc(proj)} replaces` : `+ ${esc(proj)}`}</span>` : '';
-    return `<button type="button" class="sk-step" aria-current="${x.id === step.id}" data-act="skSel" data-v="${x.id}">
-<span class="step" aria-hidden="true">${i + 1}</span><span style="flex:1;min-width:0"><span class="sk-name">${esc(x.name)}</span>
-${x.general.customised ? '<span class="sk-sub">Edited</span>' : ''}</span>${badge}</button>`;
+  const saved = node.personal != null ? node.personal : node.general;
+  const text = mine && K.draft[key] != null ? K.draft[key] : (mine ? saved : node.general);
+  const dirty = mine && has && text !== saved;
+  const proj = d.project;
+  const list = d.tree.map((x, i) => {
+    const row = (n, child) => `<button type="button" class="sk-step${child ? ' sk-child' : ''}" aria-current="${n.id === node.id}" data-act="skSel" data-v="${n.id}">
+${child ? '<span class="sk-twig" aria-hidden="true"></span>' : `<span class="step" aria-hidden="true">${i + 1}</span>`}<span style="flex:1;min-width:0"><span class="sk-name">${esc(n.name)}</span></span>
+${d.nodes[n.id].changed ? '<span class="sk-dot" title="Your personal version differs from the general one" aria-label="changed in personal"></span>' : ''}</button>`;
+    return `<div class="sk-group">${row(x, false)}${(x.children || []).map((c) => row(c, true)).join('')}</div>`;
   }).join('');
   const projects = [...new Set([proj, ...d.projects].filter(Boolean))];
   const projSel = `<label class="lbl" for="sk-proj" style="margin:0">Project</label>
-<select id="sk-proj" class="inp" style="width:auto;min-width:120px" data-in="skProject">
+<select id="sk-proj" class="inp" style="width:auto;min-width:110px" data-in="skProject">
 ${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}>${esc(p)}</option>`).join('')}
 <option value="" ${!proj ? 'selected' : ''}>${projects.length ? 'No project' : 'Choose…'}</option></select>
-${K.adding ? `<input class="inp" style="width:120px" placeholder="Project key" value="${esc(K.newKey)}" data-in="skNewKey" aria-label="Jira project key" maxlength="20">
+${K.adding ? `<input class="inp" style="width:110px" placeholder="Project key" value="${esc(K.newKey)}" data-in="skNewKey" aria-label="Jira project key" maxlength="20">
 <button type="button" class="btn btn-sm" data-act="skAddProject" ${/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(K.newKey) ? '' : 'disabled'}>Add</button>`
   : '<button type="button" class="btn btn-quiet btn-sm" data-act="skAdding">Add project</button>'}`;
-  const tabs = `<div class="seg" role="tablist" aria-label="Skill version">
-<button type="button" role="tab" aria-pressed="${!isProject}" data-act="skTab" data-v="general">General</button>
-<button type="button" role="tab" aria-pressed="${!!isProject}" data-act="skTab" data-v="project" ${proj ? '' : 'disabled title="Choose a project first"'}>Project ${esc(proj || '')}</button></div>`;
-  const modeCtl = isProject ? `<div class="sk-mode" role="radiogroup" aria-label="How the project version is used">
-<label class="cb"><input type="radio" name="sk-mode" value="add" ${mode === 'add' ? 'checked' : ''} data-in="skMode">Add to the general skill</label>
-<label class="cb"><input type="radio" name="sk-mode" value="replace" ${mode === 'replace' ? 'checked' : ''} data-in="skMode">Replace the general skill</label></div>` : '';
-  const ph = isProject
-    ? `What's different in ${proj}? For example:\n- The API is GraphQL at /graphql; check errors in the "errors" array.\n- Always add an item for the mobile viewport.\n- Test data lives in the "QA-Store" tenant.`
-    : '';
-  const status = isProject
-    ? (step.project ? `${step.project.shipped ? 'Built-in version. ' : ''}${step.project.mode === 'replace' ? 'Replaces' : 'Adds to'} the general skill for ${esc(proj)}` : `${esc(proj)} uses the general skill as is`)
-    : (step.general.customised ? 'Edited, used for every project' : 'Built in, used for every project');
-  const actions = isProject
-    ? `${step.project && !step.project.shipped ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDelete" ${K.busy ? 'disabled' : ''}>${(K.data.builtin || []).includes(proj) ? `Reset to the built-in ${esc(proj)} version` : `Remove ${esc(proj)} version`}</button>` : ''}`
-    : `${step.general.customised ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skReset" ${K.busy ? 'disabled' : ''}>Reset to default</button>` : ''}`;
-  return `<main class="main">
-<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
-<div style="min-width:0;flex:1"><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Skills</h1>
-<p style="margin:2px 0 0;color:var(--muted);max-width:760px">How Claude does each board step: the general skill, plus anything you add for a project.</p></div>
-<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${projSel}</div>
-</header>
-<div class="sk-wrap">
-<nav class="sk-list" aria-label="Board steps">${list}</nav>
-<section class="card sk-edit" aria-labelledby="sk-title">
-<div class="sk-head"><div style="min-width:0;flex:1"><h2 id="sk-title" style="margin:0;font-size:15px;font-weight:600">${esc(step.name)}</h2>
-<div style="color:var(--muted);font-size:12px">${status}</div></div>${tabs}</div>
-<div class="sk-body">
-${modeCtl}
-<label class="sr-only" for="sk-text">Skill text</label>
-<textarea id="sk-text" class="inp sk-text" spellcheck="true" data-in="skText" data-keep="sk-text" placeholder="${esc(ph)}">${esc(text)}</textarea>
+  const use = proj ? `<div class="sk-use"><span class="lbl" style="margin:0">${esc(proj)} uses</span><div class="seg" role="radiogroup" aria-label="Skills ${esc(proj)} uses">
+<button type="button" role="radio" aria-pressed="${d.choice === 'personal'}" aria-checked="${d.choice === 'personal'}" data-act="skChoice" data-v="personal" ${has ? '' : 'disabled title="Make personal skills first"'}>Personal</button>
+<button type="button" role="radio" aria-pressed="${d.choice === 'general'}" aria-checked="${d.choice === 'general'}" data-act="skChoice" data-v="general">General</button></div></div>` : '';
+  const tabs = `<div class="seg" role="tablist" aria-label="Skill tree">
+<button type="button" role="tab" aria-pressed="${mine}" aria-selected="${mine}" data-act="skTab" data-v="personal">Personal<span class="sk-rec">Recommended</span></button>
+<button type="button" role="tab" aria-pressed="${!mine}" aria-selected="${!mine}" data-act="skTab" data-v="general">${svg(IC.lock, 'ic ic-s')}General</button></div>`;
+  const status = !mine ? 'Ships with YourQA and works for any product. Read-only.'
+    : !has ? 'You have no personal skills yet.'
+    : node.changed ? 'Your version. It differs from the general skill.' : 'Your version, still the same as the general skill.';
+  let body, foot;
+  if (mine && !has) {
+    body = `<div class="sk-empty"><h3>Make your personal skills</h3>
+<p>Personal skills start as a copy of the general ones. Finishing onboarding builds them for you and works in what YourQA learnt about your team: how your tickets are written, how your tests and cases look. That's the best option. You can also copy the general skills now and edit them yourself.</p>
+<div class="sk-empty-acts"><a class="btn btn-primary" href="#/onboarding">Go to onboarding</a><button type="button" class="btn" data-act="skCreate" ${K.busy ? 'disabled' : ''}>${K.busy === 'create' ? svg(IC.spin, 'ic spin') : ''}Copy the general skills</button></div></div>`;
+    foot = '';
+  } else {
+    body = `<label class="sr-only" for="sk-text">Skill text</label>
+<textarea id="sk-text" class="inp sk-text${mine ? '' : ' is-locked'}" spellcheck="${mine}" ${mine ? 'data-in="skText"' : 'readonly'} data-keep="sk-text-${tab}">${esc(text)}</textarea>
 ${K.err ? `<div class="callout c-err" role="alert">${svg(IC.err)}<span>${esc(K.err)}</span></div>` : ''}
 <details class="sk-preview" ${K.preview ? 'open' : ''} data-act="skPreview"><summary>What Claude gets for this step${proj ? ` in ${esc(proj)}` : ''}</summary>
-<pre class="mono" data-keep="sk-prev">${esc(step.effective)}</pre></details>
-</div>
-<div class="sk-foot">${actions}<span style="flex:1"></span>
+<pre class="mono" data-keep="sk-prev">${esc(skillBranchText(d, step, d.choice))}</pre></details>`;
+    foot = mine
+      ? `${node.changed ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skReset" ${K.busy ? 'disabled' : ''}>Reset to general</button>` : ''}<span style="flex:1"></span>
 ${K.saved === key && !dirty ? `<span class="tres tres-ok">${svg(IC.check, 'ic', 'style="width:14px;height:14px"')}Saved</span>` : ''}
-${dirty ? `<button type="button" class="btn btn-quiet btn-sm" data-act="skDiscard">Discard changes</button>` : ''}
-<button type="button" class="btn btn-primary" data-act="skSave" ${dirty && !K.busy && (isProject ? text.trim() : text.trim()) ? '' : 'disabled'}>${K.busy === 'save' ? svg(IC.spin, 'ic spin') : ''}Save${isProject ? ` for ${esc(proj)}` : ' for all projects'}</button>
-</div></section></div></main>`;
+${dirty ? '<button type="button" class="btn btn-quiet btn-sm" data-act="skDiscard">Discard changes</button>' : ''}
+<button type="button" class="btn btn-primary" data-act="skSave" ${dirty && !K.busy && text.trim() ? '' : 'disabled'}>${K.busy === 'save' ? svg(IC.spin, 'ic spin') : ''}Save</button>`
+      : `<span class="sk-note">To change how Claude does this, edit your personal version.</span><span style="flex:1"></span>
+<button type="button" class="btn btn-sm" data-act="skTab" data-v="personal">${has ? 'Edit personal version' : 'Make personal skills'}</button>`;
+  }
+  return `<main class="main">
+<header style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+<div class="sk-headline"><h1 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em">Skills</h1>
+<p style="margin:2px 0 0;color:var(--muted);max-width:760px">How Claude does each board step. General skills work for any product; personal skills are your team's copy, shaped by onboarding. Each project uses one of them.</p></div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${projSel}${use}</div>
+</header>
+<div class="sk-wrap">
+<nav class="sk-list" aria-label="Skills by board step">${list}</nav>
+<section class="card sk-edit" aria-labelledby="sk-title">
+<div class="sk-head"><div style="min-width:0;flex:1"><h2 id="sk-title" style="margin:0;font-size:15px;font-weight:600">${esc(node.name)}</h2>
+<div style="color:var(--muted);font-size:12px">${node.parent ? `Part of ${esc(d.nodes[node.parent].name)}. ` : ''}${status}</div></div>${tabs}</div>
+<div class="sk-body">${body}</div>
+${foot ? `<div class="sk-foot">${foot}</div>` : ''}</section></div></main>`;
 }
 
 async function loadSkills() {
@@ -1009,26 +1020,32 @@ function viewOnbFinished(head, last) {
   }).join('');
   const setup = changes.filter((c) => c.kind !== 'skill').map((c) => `<li class="${c.undone ? 'is-undone' : ''}"><span>${esc(c.label)}</span><span class="onbf-st">${c.undone ? 'Undone' : 'In use'}</span></li>`).join('');
   const pending = fin.merged.filter((m) => m.state === 'pending').length;
-  const skillCards = fin.merged.map((m) => {
-    const open = !!O.open['merge|' + m.step];
-    const from = m.from.length > 1 ? m.from.slice(0, -1).join(', ') + ' and ' + m.from[m.from.length - 1] : m.from[0];
+  const card = (m) => {
+    const key = 'merge|' + m.node, open = !!O.open[key];
+    const from = m.from.length > 1 ? m.from.slice(0, -1).join(', ') + ' and ' + m.from[m.from.length - 1] : (m.from[0] || 'your tools');
     const st = m.state === 'accepted' ? `<span class="onbf-chip ok">${svg(IC.check, 'ic ic-s')}Accepted</span>` : m.state === 'reverted' ? '<span class="onbf-chip">Reverted</span>' : '<span class="onbf-chip new">To review</span>';
-    const acts = m.state === 'reverted' ? '' : `${m.state === 'pending' ? `<button type="button" class="btn btn-sm btn-primary" data-act="onbMerge" data-key="${esc(m.step)}" data-v="accept">Accept</button>` : ''}
-<button type="button" class="btn btn-sm btn-quiet" data-act="onbMerge" data-key="${esc(m.step)}" data-v="revert">Revert</button>`;
+    const acts = m.state === 'reverted' ? '' : `${m.state === 'pending' ? `<button type="button" class="btn btn-sm btn-primary" data-act="onbMerge" data-key="${esc(m.node)}" data-v="accept">Accept</button>` : ''}
+<button type="button" class="btn btn-sm btn-quiet" data-act="onbMerge" data-key="${esc(m.node)}" data-v="revert">Revert</button>`;
+    const added = (m.added || []).join('\n');
     return `<article class="onbf-skill${m.state === 'reverted' ? ' is-reverted' : ''}">
-<header><div><h4>${esc(m.name)}</h4><p>Learnt from ${esc(from)}. Added to the general skill as "Your team's way", so it applies to every project.${m.fallback ? ' Claude couldn\'t tidy it, so it was added as you kept it.' : ''}</p></div>${st}</header>
-<button type="button" class="fold" data-act="onbOpen" data-key="${esc('merge|' + m.step)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s')}${open ? 'Hide' : 'Show'} what was added</button>
-${open ? `<div class="onbf-added">${mdLite(m.section)}</div>` : ''}
-${acts ? `<div class="onbf-acts">${acts}</div>` : ''}</article>`;
+<header><div><h4>${esc(m.name)}</h4><p>Learnt from ${esc(from)}.${m.fallback ? ' Claude couldn\'t work it in, so it was added as you kept it.' : ''}</p></div>${st}</header>
+${added ? `<button type="button" class="fold" data-act="onbOpen" data-key="${esc(key)}" aria-expanded="${open}">${svg(IC.chev, 'ic ic-s')}${open ? 'Hide' : 'Show'} what's new (${m.added.length} line${m.added.length === 1 ? '' : 's'})</button>
+${open ? `<div class="onbf-added">${mdLite(added)}</div>` : ''}` : ''}
+<div class="onbf-acts">${acts}<a class="btn btn-sm btn-quiet" href="#/skills?step=${esc(m.node)}">Open in Skills</a></div></article>`;
+  };
+  const bySteps = [...new Set(fin.merged.map((m) => m.step))];
+  const skillCards = bySteps.map((step) => {
+    const ms = fin.merged.filter((m) => m.step === step);
+    return `<div class="onbf-step"><h4 class="onbf-step-h">${esc(ms[0].step_name || step)}</h4>${ms.map(card).join('')}</div>`;
   }).join('');
-  const left = (fin.left || []).length ? `<p class="onb-hint">${fin.left.length} project version${fin.left.length === 1 ? '' : 's'} you edited yourself after the study stayed as ${fin.left.length === 1 ? 'it was' : 'they were'}: ${esc(fin.left.join(', '))}.</p>` : '';
+  const usedBy = (fin.projects || []).length ? ` ${esc(fin.projects.join(', '))} ${fin.projects.length === 1 ? 'now uses' : 'now use'} them.` : '';
   return `<main class="main onb">${head}<div class="onbf">
 <section class="card onbf-top"><div class="onb-done-ic">${svg(IC.check)}</div><div style="flex:1;min-width:0"><h2>Onboarding is finished</h2>
 <p>Studied on ${esc(fmt(last.started))}${mins ? `, in ${mins} minute${mins === 1 ? '' : 's'}` : ''}. ${pending ? `${pending} skill update${pending === 1 ? '' : 's'} to review below.` : 'Everything is reviewed.'}</p></div>
 <a class="btn btn-primary" href="#/board">Open the board</a></section>
 ${read ? `<section class="card onbf-sec"><h3>What YourQA read</h3><ul class="onbf-read">${read}</ul></section>` : ''}
 ${found ? `<section class="card onbf-sec"><h3>What it found</h3><div class="onbf-found">${found}</div></section>` : ''}
-${skillCards ? `<section class="onbf-sec onbf-skills"><h3>How your skills changed</h3><p class="onb-hint">Each update is already in use. Accept it, or revert it to put the skill back exactly as it was.</p>${skillCards}${left}</section>` : ''}
+${skillCards ? `<section class="onbf-sec onbf-skills"><h3>Your personal skills</h3><p class="onb-hint">YourQA copied the general skills and worked what it learnt into the ones below. The general skills didn't change.${usedBy} Each update is already in use: accept it, or revert it to put that skill back as it was.</p>${skillCards}</section>` : ''}
 ${setup ? `<section class="card onbf-sec"><h3>What else was set up</h3><ul class="onbf-setup">${setup}</ul><p class="onb-hint">Change these any time on the Integrations and Skills screens.</p></section>` : ''}
 <p class="onb-hint">Your tools changed a lot? <button type="button" class="linkish" data-act="onbStudyAgain">Study again</button>; the Onboarding screen comes back until you finish.</p>
 </div></main>`;
@@ -1076,10 +1093,10 @@ ${x.undone ? '<span class="onb-undone">Undone</span>' : finished ? '<span class=
         : `${x.kept ? `<span class="onb-kept">${svg(IC.check, 'ic ic-s')}Kept</span>` : `<button type="button" class="btn btn-sm" data-act="onbKeep" data-key="${esc(x.id)}">Keep</button>`}<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndo" data-key="${esc(x.id)}">Undo</button>`}
 ${open ? `<ul class="onb-ev">${(x.evidence || []).map((e) => `<li>${esc(e)}</li>`).join('') || '<li>No evidence recorded.</li>'}</ul>` : ''}</div>`;
     }).join('')}</div>`).join('')}
-${finished ? '' : d.finishing ? `<div class="onb-finish">${onbProgress(d.progress, 'finish')}<p class="onb-hint">${esc((d.progress && d.progress.text) || 'Adding what was learnt to your skills')}</p></div>`
+${finished ? '' : d.finishing ? `<div class="onb-finish">${onbProgress(d.progress, 'finish')}<p class="onb-hint">${esc((d.progress && d.progress.text) || 'Building your personal skills')}</p></div>`
       : `<div class="onb-finish">
 <div class="onb-acts">${d.undecided ? `<button type="button" class="btn btn-sm" data-act="onbKeepAll">Keep all ${d.undecided}</button>` : ''}${live.length ? '<button type="button" class="btn btn-quiet btn-sm" data-act="onbUndoAll">Undo all</button>' : ''}</div>
-<p class="onb-hint">${d.undecided ? `Keep or undo each change (${d.undecided} left). Then finish: what you kept is merged into your general skills, so it applies to every project, and this screen is put away.` : 'Everything is decided. Finish: what you kept is merged into your general skills, so it applies to every project, and this screen is put away.'}</p>
+<p class="onb-hint">${d.undecided ? `Keep or undo each change (${d.undecided} left). Then finish: YourQA builds your personal skills from the general ones and what you kept, and this screen is put away.` : 'Everything is decided. Finish: YourQA builds your personal skills from the general ones and what you kept, and this screen is put away.'}</p>
 <button type="button" class="btn btn-primary" data-act="onbFinish" ${d.undecided || O.busy || !['done', 'stopped'].includes(last.status) ? 'disabled' : ''}>Finish onboarding</button></div>`}`;
   }
   const hasRun = !!last;
@@ -2177,20 +2194,17 @@ const ACTS = {
   skSel: (el) => { S.skills.sel = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
   skTab: (el) => { S.skills.tab = el.dataset.v; S.skills.err = ''; S.skills.saved = ''; },
   skPreview: (el, ev) => { if (ev.target.tagName === 'SUMMARY') { ev.preventDefault(); S.skills.preview = !S.skills.preview; } },
-  skDiscard: () => { const K = S.skills; delete K.draft[skillKey(K)]; delete K.mode[K.sel + '|' + K.data.project]; },
+  skDiscard: () => { delete S.skills.draft[skillKey(S.skills)]; },
   skAdding: () => { S.skills.adding = true; },
-  skAddProject: () => { const K = S.skills; K.project = K.newKey.toUpperCase(); K.newKey = ''; K.adding = false; K.tab = 'project'; loadSkills(); },
+  skAddProject: () => { const K = S.skills; K.project = K.newKey.toUpperCase(); K.newKey = ''; K.adding = false; loadSkills(); },
   skSave: async () => {
-    const K = S.skills, step = K.data.steps.find((x) => x.id === K.sel), k = skillKey(K);
-    const text = K.draft[k] != null ? K.draft[k] : (K.tab === 'project' ? (step.project ? step.project.text : '') : step.general.text);
-    if (K.tab === 'project') {
-      const mode = K.mode[K.sel + '|' + K.data.project] || (step.project && step.project.mode) || 'add';
-      await skillCall('PUT', `/api/skills/project/${encodeURIComponent(K.data.project)}/${K.sel}`, { text, mode }, 'save');
-      delete K.mode[K.sel + '|' + K.data.project];
-    } else await skillCall('PUT', `/api/skills/general/${K.sel}`, { text }, 'save');
+    const K = S.skills, k = skillKey(K);
+    if (K.draft[k] == null) return;
+    await skillCall('PUT', `/api/skills/personal/${encodeURIComponent(K.sel)}`, { text: K.draft[k] }, 'save');
   },
-  skReset: () => skillCall('DELETE', `/api/skills/general/${S.skills.sel}`, null, 'reset'),
-  skDelete: () => skillCall('DELETE', `/api/skills/project/${encodeURIComponent(S.skills.data.project)}/${S.skills.sel}`, null, 'delete'),
+  skReset: () => skillCall('DELETE', `/api/skills/personal/${encodeURIComponent(S.skills.sel)}`, null, 'reset'),
+  skCreate: async () => { await skillCall('POST', '/api/skills/personal', null, 'create'); S.skills.tab = 'personal'; },
+  skChoice: (el) => skillCall('PUT', `/api/skills/choice/${encodeURIComponent(S.skills.data.project)}`, { tree: el.dataset.v }, 'choice'),
   // jira connect
   jiraConnect: () => jiraConnect(),
   jiraReconnect: () => {
@@ -2306,9 +2320,8 @@ const INPUTS = {
   chatDraft: (el) => { S.board.chatDraft[el.dataset.key] = el.value; const b = document.querySelector('button[data-act=chatSend]'); if (b) b.disabled = !el.value.trim(); },
   azPat: (el) => { S.azure.pat = el.value; S.azure.err = ''; },
   skText: (el) => { S.skills.draft[skillKey(S.skills)] = el.value; S.skills.saved = ''; },
-  skMode: (el) => { S.skills.mode[S.skills.sel + '|' + S.skills.data.project] = el.value; },
   skNewKey: (el) => { S.skills.newKey = el.value.trim(); },
-  skProject: (el) => { S.skills.project = el.value; if (!el.value) S.skills.tab = 'general'; loadSkills(); },
+  skProject: (el) => { S.skills.project = el.value; loadSkills(); },
   integVal: (el) => {
     S.integ.vals[el.dataset.key][el.dataset.v] = el.value; S.integ.saved[el.dataset.key] = false;
     if (el.dataset.v === 'mode') delete S.integ.results[el.dataset.key];  // a different connection needs a new test
@@ -2404,7 +2417,7 @@ function route() {
   if (S.route === 'integrations') { loadJira(); loadAzure(); loadMcp(); }
   if (S.route === 'skills') {
     const p = new URLSearchParams(query || '');
-    if (STEP_SKILL.includes(p.get('step'))) S.skills.sel = p.get('step');
+    if (/^[a-z-]{2,30}$/.test(p.get('step') || '')) S.skills.sel = p.get('step');
     if (p.get('project')) S.skills.project = p.get('project').toUpperCase();
     loadSkills();
   }

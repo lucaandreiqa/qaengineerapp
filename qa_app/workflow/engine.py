@@ -532,9 +532,14 @@ class Workflow:
         if a["kind"] == "learn_move":
             if a.get("outcome") not in move_rules.OUTCOMES or not str(a.get("state") or "").strip():
                 raise GateError("That suggestion is incomplete")
-            text, _ = skills.general("jira-comment")
-            skills.save_general("jira-comment", move_rules.with_rule(text, a["outcome"], str(a["state"])))
-            note = f"Skill updated: when {move_rules.OUTCOMES[a['outcome']]}, I'll pick \"{a['state']}\". You can edit it on the Skills screen."
+            text = skills.personal("jira-comment") or skills.general("jira-comment")
+            skills.save_personal("jira-comment", move_rules.with_rule(text, a["outcome"], str(a["state"])))
+            project = self.cfg.jira_project
+            switched = bool(project) and skills.KEY_RE.match(project) and skills.choice(project) != "personal"
+            if switched:
+                skills.set_choice(project, "personal")
+            note = (f"Your personal skill is updated: when {move_rules.OUTCOMES[a['outcome']]}, I'll pick \"{a['state']}\"."
+                    + (f" {project} now uses your personal skills." if switched else "") + " You can edit it on the Skills screen.")
         else:
             note = "OK, the skill stays as it is."
         chat = [dict(m) for m in t.chat]
@@ -642,7 +647,7 @@ class Workflow:
         transitions = [tr["name"] for tr in await self._call(jira.get_transitions, t.key)]
         target, target_from = (t.target, "") if t.target in transitions else ("", "")
         if not target:  # nothing planned: the state the skill learned for this kind of result
-            target = move_rules.pick(skills.general("jira-comment")[0], move_rules.outcome(t.items()), transitions)
+            target = move_rules.pick(skills.effective("jira-comment", self.cfg.jira_project)[0], move_rules.outcome(t.items()), transitions)
             target_from = "skill" if target else ""
         t = self.patch(t.key, sub="transition", comment=text, comment_at=now_hhmm(), transitions=transitions, target=target,
                        target_from=target_from)
@@ -676,11 +681,11 @@ class Workflow:
     def _offer_to_learn(self, t: Ticket, target: str) -> None:
         """After a move: if the skill wouldn't have picked this state, ask whether to learn it for next time."""
         result = move_rules.outcome(t.items())
-        if move_rules.rules(skills.general("jira-comment")[0]).get(result) == target:
+        if move_rules.rules(skills.effective("jira-comment", self.cfg.jira_project)[0]).get(result) == target:
             return
         line = move_rules.rule_line(result, target)
-        text = (f"You moved {t.key} to **{target}** after {move_rules.DESCRIBE[result]}. Should I update the "
-                f"**Jira comment & move** skill so I pick this state myself next time, on every board?\n\nRule: `{line[2:]}`")
+        text = (f"You moved {t.key} to **{target}** after {move_rules.DESCRIBE[result]}. Should I add this to your personal "
+                f"**Jira comment & move** skill so I pick this state myself next time?\n\nRule: `{line[2:]}`")
         acts = [{"kind": "learn_move", "label": "Update the skill", "outcome": result, "state": target},
                 {"kind": "skip_learn", "label": "No thanks"}]
         cur = self.tickets.get(t.key)

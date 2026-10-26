@@ -28,6 +28,10 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
+def saved_changes(run_dir):
+    return json.loads((run_dir / "changes.json").read_text())
+
+
 def _apply(home):
     changes = ap.plan(FINDINGS, ["SCRUM"])
     run_dir = home / "run1"
@@ -39,9 +43,12 @@ def test_apply_writes_everything_and_records_before(home):
     w = config.load_settings()["workflow"]
     assert (w["jira_column"], w["fe_components"], w["be_components"], w["env_hints"]) == ("QA", "Web", "Core, API", "preview")
     assert config.load_settings()["testrail"]["section_map"] == {"Web": "Finance › Gift cards"}
-    assert skills.project("SCRUM", "gather")["text"].startswith("## SCRUM tickets") and skills.project("SCRUM", "gather")["mode"] == "add"
-    assert {"jira-comment", "testrail", "create-tests"} <= {s for s in skills.STEP_IDS if skills.project("SCRUM", s)}
-    assert move_rules.rules(skills.general("jira-comment")[0]) == {"failed": "Reopened"}
+    lessons = {c["target"]: c for c in saved_changes(run_dir) if c["kind"] == "skill"}
+    assert lessons["SCRUM/gather"]["after"].startswith("## SCRUM tickets")    # skill lessons are recorded for Finish…
+    assert {"SCRUM/jira-comment", "SCRUM/testrail", "SCRUM/create-tests"} <= set(lessons)
+    assert not skills.changed("gather") and not skills.changed("testrail")    # …and written nowhere yet
+    assert move_rules.rules(skills.personal("jira-comment")) == {"failed": "Reopened"}   # move rules go in the personal skill
+    assert move_rules.rules(skills.general("jira-comment")) == {}             # the general one never changes
     assert (home / "company" / "knowledge.md").read_text().startswith("# Company")
     assert json.loads((home / "company" / "profile.json").read_text())["framework"] == "Playwright"
     saved = json.loads((run_dir / "changes.json").read_text())
@@ -55,7 +62,7 @@ def test_undo_restores_exactly(home):
         assert ap.undo(run_dir, c["id"], home / "company") == "undone"
     w = config.load_settings()["workflow"]
     assert (w["jira_column"], w["fe_components"]) == ("Testing", "Frontend")
-    assert skills.project("SCRUM", "gather") is None and skills.general("jira-comment")[1] is False
+    assert not skills.changed("jira-comment") and move_rules.rules(skills.personal("jira-comment") or "") == {}
     assert not (home / "company" / "knowledge.md").exists() and not (home / "company" / "profile.json").exists()
 
 
@@ -74,13 +81,16 @@ def test_undo_all_restores_the_run(home):
     assert all(c.get("undone") for c in json.loads((run_dir / "changes.json").read_text()))
 
 
-def test_replacing_your_own_project_skill_is_marked(home):
-    skills.save_project("SCRUM", "gather", "My own SCRUM notes", mode="replace")
+def test_a_move_rule_builds_on_your_own_personal_comment_skill_and_undo_brings_it_back(home):
+    skills.save_personal("jira-comment", "My own comment rules")
     applied, run_dir = _apply(home)
-    c = next(c for c in applied if c["target"] == "SCRUM/gather")
-    assert c["replaced_edit"] is True
+    c = next(c for c in applied if c["target"] == "move_rule.failed")
+    assert skills.personal("jira-comment").startswith("My own comment rules")
+    assert move_rules.rules(skills.personal("jira-comment")) == {"failed": "Reopened"}
     ap.undo(run_dir, c["id"], home / "company")
-    assert skills.project("SCRUM", "gather") == {"text": "My own SCRUM notes", "mode": "replace", "shipped": False}
+    assert skills.personal("jira-comment") == "My own comment rules"
+    lesson = next(c for c in applied if c["target"] == "SCRUM/gather")
+    assert lesson["replaced_edit"] is False and ap.undo(run_dir, lesson["id"], home / "company") == "undone"
 
 
 def test_each_change_is_kept_or_undone_before_finishing(home):
