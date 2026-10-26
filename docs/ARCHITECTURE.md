@@ -3,7 +3,7 @@
 How YourQA is put together and why. Keep this file current: every change that adds or changes a module, a data flow,
 a connection, a file on disk, or a safety rule updates the matching section here in the same commit (see `CLAUDE.md`).
 
-Last updated: 2026-10-26 (General and personal skill trees; onboarding builds the personal tree).
+Last updated: 2026-10-26 (Layout consistency pass: equal lane headers, one size per button kind, consistency audit).
 
 
 ## 1. What it is
@@ -352,6 +352,7 @@ faked: a fake Atlassian MCP server, fake GitHub/Confluence/TestRail objects, and
 
 Newest first. Specs live in `docs/superpowers/specs/`.
 
+- 2026-10-26: Layout consistency: the form-control reset is `.qa :where(button, …)` so it never outweighs a class (it made `button.btn-sm` take its parent's font size while `a.btn-sm` got 12px); buttons in one row share a size; lane headers always take two lines; card titles and notes clamp at two lines; card titles are 14px. `design/consistency_audit.py` reports rows whose items or controls differ in height.
 - 2026-10-26: Skills become two trees with sub-skills under each step: general (ships with the app, read-only, product-neutral, rewritten from the team's improved skills) and personal (editable copy). Finish onboarding builds the personal tree by improving each skill the kept lessons bear on, and switches the studied projects to it; each project chooses its tree, personal recommended. Project versions and editing the general skills are gone; old edits migrate into personal. Spec: `2026-10-26-general-and-personal-skills-design.md`.
 - 2026-10-21: New look: orange on cream with atmospheric backgrounds instead of flat colours; fonts Instrument Sans, Bricolage Grotesque and JetBrains Mono (no Inter or Roboto).
 - 2026-10-21: The finished Onboarding screen summarises what was read, what was found and how each skill changed; each skill update can be accepted or reverted.

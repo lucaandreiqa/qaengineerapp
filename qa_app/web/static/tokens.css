@@ -8,14 +8,14 @@ body{margin:0}
 .qa[data-theme=light]{color-scheme:light;--bg:#F7F1E7;--side:rgba(245,237,224,.66);--lane:rgba(240,231,216,.6);--panel:rgba(255,252,246,.9);--raised:#F1E9DB;--hover:#EBE1D1;--border:rgba(95,62,30,.13);--border2:rgba(95,62,30,.22);--fg:#24190F;--muted:#6D5C49;--faint:#9C8A75;--accent:#C24A14;--accent-h:#A83E0F;--accent-fg:#FFFFFF;--link:#A8400F;--focus:#D2591F;--shadow:rgba(70,40,12,.13);--crit:#C62A2F;--crit-bg:#FDECEC;--crit-dot:#E5484D;--major:#A23A1E;--major-bg:#FBE6DD;--major-dot:#D9562F;--minor:#855400;--minor-bg:#FFF6D9;--minor-dot:#FFB224;--info:#585D66;--info-bg:#EEEFF2;--info-dot:#8B8D98;--pass:#17734A;--pass-bg:#E2F2E6;--pass-dot:#30A46C;--fe:#3C47B5;--fe-bg:#ECEEFD;--fe-dot:#5865E0;--be:#0B6E63;--be-bg:#DFF4F1;--be-dot:#12A594;--jt-story:#63BA3C;--jt-bug:#E5493A;--jt-task:#4BADE8;--jt-epic:#904EE2;--jt-sub:#4BADE8;--jt-imp:#36B37E;--jt-other:#8590A2;--jp-highest:#CD1317;--jp-high:#E9494A;--jp-medium:#E97F33;--jp-low:#2D8738;--jp-lowest:#57A55A;--lz-new-bg:#DFE1E6;--lz-new:#42526E;--lz-prog-bg:#DEEBFF;--lz-prog:#0747A6;--lz-done-bg:#E3FCEF;--lz-done:#006644;--jl-bg:#F1F2F4;--jl:#44546F;--atmo:radial-gradient(1100px 700px at 2% -16%,rgba(255,168,104,.34),transparent 62%),radial-gradient(900px 660px at 106% 112%,rgba(232,120,82,.18),transparent 60%),radial-gradient(620px 440px at 58% 38%,rgba(255,255,255,.55),transparent 70%),linear-gradient(170deg,#FAF3E8 0%,#F6EFE4 55%,#F2E8DA 100%);--font:'Instrument Sans',ui-sans-serif,-apple-system,'Segoe UI',system-ui,sans-serif}
 .qa a{color:var(--link);text-decoration:none}
 .qa a:hover{text-decoration:underline}
-.qa button,.qa input,.qa select,.qa textarea{font:inherit;color:inherit}
+.qa :where(button,input,select,textarea){font:inherit;color:inherit}
 .qa :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .mono{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
 .ic-s{width:13px;height:13px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 12px;border-radius:7px;border:1px solid color-mix(in srgb,var(--accent) 50%,var(--border2));background:var(--panel);color:var(--link)!important;font-weight:500;cursor:pointer;white-space:nowrap;text-decoration:none!important}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 12px;font-size:13.5px;border-radius:7px;border:1px solid color-mix(in srgb,var(--accent) 50%,var(--border2));background:var(--panel);color:var(--link)!important;font-weight:500;cursor:pointer;white-space:nowrap;text-decoration:none!important}
 .btn:hover{background:color-mix(in srgb,var(--accent) 12%,var(--panel));border-color:var(--accent)}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
 .btn-primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)!important}
@@ -58,7 +58,7 @@ textarea.inp{height:auto;min-height:250px;padding:10px;line-height:1.55;resize:v
 .tk.is-sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .tk-open{border:0;background:transparent;padding:10px 12px 8px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:6px;width:100%;border-radius:9px 9px 0 0}
 .tk-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
-.tk-title{font-weight:500;line-height:1.35;color:var(--fg);font-size:13px}
+.tk-title{font-weight:500;line-height:1.35;color:var(--fg);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tk-stage{padding:0 12px 10px;display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--muted)}
 .tk-foot{display:flex;align-items:center;gap:8px;padding:7px 8px 7px 12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--faint);min-height:41px}
 .ttype{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:5px;font-size:10.5px;font-weight:650;letter-spacing:.03em;line-height:1;white-space:nowrap}

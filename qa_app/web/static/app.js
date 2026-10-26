@@ -444,7 +444,7 @@ function viewBoard() {
     const cards = visible.filter((t) => t.stage === i);
     return `<section class="lane" role="listitem" aria-labelledby="lane-${i + 1}">
 <div class="lane-head">
-<div style="display:flex;align-items:center;gap:8px"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" style="margin:0;font-size:13px;font-weight:600">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span>
+<div class="lane-row"><span class="step" aria-hidden="true">${i + 1}</span><h2 id="lane-${i + 1}" class="lane-name" title="${esc(l.name)}">${l.name}</h2><span class="cnt" aria-label="${cards.length} tickets">${cards.length}</span>
 <button type="button" class="lane-info" data-tip="${i}" aria-label="What ${esc(l.name)} does" aria-describedby="lane-tip-${i + 1}">${svg(IC.info, 'ic ic-s')}</button>
 <a class="lane-info" style="margin-left:auto" href="#/skills?step=${STEP_SKILL[i]}" title="How Claude does this step (its skill)" aria-label="${esc(l.name)} skill">${svg(IC.skill, 'ic ic-s')}</a></div>
 <p class="lane-tip${B.tip === i ? ' is-open' : ''}" id="lane-tip-${i + 1}" role="tooltip">${l.desc} ${l.gate}.</p>
@@ -483,11 +483,11 @@ function viewCard(t) {
   return `<article class="${cls}">
 <button type="button" class="tk-open" data-act="open" data-key="${esc(t.key)}" aria-label="${esc(t.key + ', ' + (t.type || 'no type') + ', ' + t.title + ', ' + d.stateLabel)}">
 <span class="tk-meta">${issueTypeIcon(t.issue_type)}<span class="tkey">${esc(t.key)}</span>${typeBadge(t)}<span class="tk-jira">${isHighPrio(t) ? priorityIcon(t.priority) : ''}${statusTag(t)}</span></span>
-<span class="tk-title">${esc(t.title)}</span>
+<span class="tk-title" title="${esc(t.title)}">${esc(t.title)}</span>
 </button>
 <div class="tk-stage">
 <span class="${d.cls}">${d.working ? svg(IC.spin, 'ic spin', 'style="width:11px;height:11px"') : ''}${d.you && d.cls.includes('state-you') ? svg(IC.person, 'ic ic-s') : ''}${esc(d.stateLabel)}</span>
-<span class="trunc" style="white-space:normal">${esc(d.summary)}</span>
+<span class="clamp2">${esc(d.summary)}</span>
 </div>
 ${d.you ? `<div class="tk-foot"><button type="button" class="btn btn-sm" style="margin-left:auto" data-act="open" data-key="${esc(t.key)}">${esc(d.act)}</button></div>` : ''}
 </article>`;
@@ -572,8 +572,8 @@ ${d.nodes[n.id].changed ? '<span class="sk-dot" title="Your personal version dif
 ${projects.map((p) => `<option value="${esc(p)}" ${p === proj ? 'selected' : ''}>${esc(p)}</option>`).join('')}
 <option value="" ${!proj ? 'selected' : ''}>${projects.length ? 'No project' : 'Choose…'}</option></select>
 ${K.adding ? `<input class="inp" style="width:110px" placeholder="Project key" value="${esc(K.newKey)}" data-in="skNewKey" aria-label="Jira project key" maxlength="20">
-<button type="button" class="btn btn-sm" data-act="skAddProject" ${/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(K.newKey) ? '' : 'disabled'}>Add</button>`
-  : '<button type="button" class="btn btn-quiet btn-sm" data-act="skAdding">Add project</button>'}`;
+<button type="button" class="btn" data-act="skAddProject" ${/^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(K.newKey) ? '' : 'disabled'}>Add</button>`
+  : '<button type="button" class="btn btn-quiet" data-act="skAdding">Add project</button>'}`;
   const use = proj ? `<div class="sk-use"><span class="lbl" style="margin:0">${esc(proj)} uses</span><div class="seg" role="radiogroup" aria-label="Skills ${esc(proj)} uses">
 <button type="button" role="radio" aria-pressed="${d.choice === 'personal'}" aria-checked="${d.choice === 'personal'}" data-act="skChoice" data-v="personal" ${has ? '' : 'disabled title="Make personal skills first"'}>Personal</button>
 <button type="button" role="radio" aria-pressed="${d.choice === 'general'}" aria-checked="${d.choice === 'general'}" data-act="skChoice" data-v="general">General</button></div></div>` : '';
@@ -612,7 +612,7 @@ ${dirty ? '<button type="button" class="btn btn-quiet btn-sm" data-act="skDiscar
 <div class="sk-wrap">
 <nav class="sk-list" aria-label="Skills by board step">${list}</nav>
 <section class="card sk-edit" aria-labelledby="sk-title">
-<div class="sk-head"><div style="min-width:0;flex:1"><h2 id="sk-title" style="margin:0;font-size:15px;font-weight:600">${esc(node.name)}</h2>
+<div class="sk-head"><div style="min-width:0;flex:1"><h2 id="sk-title" style="margin:0;font-size:14px;font-weight:600">${esc(node.name)}</h2>
 <div style="color:var(--muted);font-size:12px">${node.parent ? `Part of ${esc(d.nodes[node.parent].name)}. ` : ''}${status}</div></div>${tabs}</div>
 <div class="sk-body">${body}</div>
 ${foot ? `<div class="sk-foot">${foot}</div>` : ''}</section></div></main>`;
@@ -639,7 +639,7 @@ function redoButton(t) {
   const label = armed ? 'Discard results and redo?' : 'Redo step 1';
   const tip = risky ? 'Read the ticket again and rebuild the checklist. The results of this run are discarded.'
     : 'Read the ticket again (description, comments, links…) and rebuild the environment, scenarios and checklist.';
-  return `<button type="button" class="btn ${armed ? 'btn-stop' : 'btn-quiet'} btn-sm" data-act="redo" data-key="${esc(t.key)}" title="${esc(tip)}" ${B.busy ? 'disabled' : ''}>${svg(IC.sync, 'ic ic-s')}${label}</button>`;
+  return `<button type="button" class="btn ${armed ? 'btn-stop' : 'btn-quiet'}" data-act="redo" data-key="${esc(t.key)}" title="${esc(tip)}" ${B.busy ? 'disabled' : ''}>${svg(IC.sync, 'ic ic-s')}${label}</button>`;
 }
 
 /* Every link on the ticket, the suggested one first and pre-filled; pick one or type the address.
@@ -833,8 +833,8 @@ ${file ? `<a class="btn btn-quiet btn-sm" style="margin-left:auto" href="/api/ti
 <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
 <div style="display:flex;align-items:center;gap:8px">
 ${issueTypeIcon(t.issue_type)}<span class="tkey" style="color:var(--muted)">${esc(t.key)}</span>${typeBadge(t)}${isHighPrio(t) ? priorityIcon(t.priority) : ''}${statusTag(t)}
-<a class="btn btn-quiet btn-sm" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
-${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet btn-sm" data-act="chatToggle" title="Chat with Claude about this ticket">${svg(INTEG_ICON.claude, 'ic ic-s')}Ask Claude${nChat ? `<span class="seg-n">${nChat}</span>` : ''}${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}</button>`}
+<a class="btn btn-quiet" href="${esc(t.jiraUrl)}" target="_blank" rel="noopener" style="margin-left:auto">Open in ${esc(t.tracker || 'Jira')}${svg(IC.ext, 'ic ic-s')}</a>
+${B.chatOpen ? '' : `<button type="button" class="btn btn-quiet" data-act="chatToggle" title="Chat with Claude about this ticket">${svg(INTEG_ICON.claude, 'ic ic-s')}Ask Claude${nChat ? `<span class="seg-n">${nChat}</span>` : ''}${t.chat_busy ? svg(IC.spin, 'ic ic-s spin') : ''}</button>`}
 <button type="button" class="btn btn-quiet btn-icon" aria-label="${B.full ? 'Exit full screen' : 'Full screen'}" title="${B.full ? 'Exit full screen' : 'Full screen'}" aria-pressed="${!!B.full}" data-act="drawerFull">${svg(B.full ? IC.shrink : IC.expand)}</button>
 <button type="button" class="btn btn-quiet btn-icon" aria-label="Close details" title="Close (Esc)" data-act="close">${svg(IC.close)}</button>
 </div>
@@ -1210,7 +1210,7 @@ ${open ? g.items.map(([m]) => progRow(m)).join('') : `<div class="feed-line feed
   return `<div class="drawer-body chat-body" data-keep="chat-${esc(key)}" data-stick="bottom" aria-live="polite">${empty}${rows}
 ${t.chat_busy ? `<div class="chat-msg chat-assistant"><span class="chat-who">${svg(INTEG_ICON.claude, 'ic ic-s')}Claude</span><div class="chat-bubble chat-typing">${svg(IC.spin, 'ic ic-s spin')}Thinking…</div></div>` : ''}</div>
 ${err}<div class="chat-compose">${starters}${ready ? `<textarea id="chat-input" class="inp" rows="2" placeholder="Ask Claude about this ticket… (Enter to send, Shift+Enter for a new line)" data-in="chatDraft" data-key="${esc(key)}">${esc(draft)}</textarea>
-<div class="chat-row">${msgs.length ? `<button type="button" class="btn btn-quiet btn-sm" data-act="chatClear" data-key="${esc(key)}">Clear chat</button>` : ''}<button type="button" class="btn btn-primary" style="margin-left:auto" data-act="chatSend" data-key="${esc(key)}" ${draft.trim() && !t.chat_busy ? '' : 'disabled'}>Send${svg(IC.arrow, 'ic ic-s')}</button></div>`
+<div class="chat-row">${msgs.length ? `<button type="button" class="btn btn-quiet" data-act="chatClear" data-key="${esc(key)}">Clear chat</button>` : ''}<button type="button" class="btn btn-primary" style="margin-left:auto" data-act="chatSend" data-key="${esc(key)}" ${draft.trim() && !t.chat_busy ? '' : 'disabled'}>Send${svg(IC.arrow, 'ic ic-s')}</button></div>`
     : `<div class="notice" style="margin:0">${svg(IC.info)}<span>Connect Claude to chat about tickets.</span><a class="btn btn-sm" href="#/integrations" style="margin-left:auto">Integrations${svg(IC.arrow, 'ic ic-s')}</a></div>`}</div>`;
 }
 
